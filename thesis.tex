@@ -1,0 +1,96 @@
+\documentclass[12pt,a4paper,twoside,draft]{book}
+\usepackage[utf8]{inputenc}
+
+\usepackage[utf8]{inputenc}
+\usepackage[inline]{enumitem}
+\usepackage{parskip} % disable indentation for new paragraphs, increased margin-bottom instead
+\usepackage[ngerman,american]{babel}
+\usepackage{csquotes}
+
+\usepackage{kit_style/kitthesiscover}
+
+\usepackage[style=alphabetic]{biblatex}
+\addbibresource{bib.bib}
+\setcounter{biburlnumpenalty}{100}
+\setcounter{biburllcpenalty}{7000}
+\setcounter{biburlucpenalty}{8000}
+
+\usepackage{todonotes}
+\usepackage{blindtext}
+
+\usepackage{xparse}
+
+\usepackage{xspace}
+
+\usepackage{listings}
+
+% for core allocation pseudo-code mostly...
+\usepackage{amsmath}
+\usepackage{algorithmicx}
+\usepackage{varwidth}
+\usepackage{calc} % for \widthof
+%\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{mathtools}
+\DeclarePairedDelimiter\ceil{\lceil}{\rceil}
+\DeclarePairedDelimiter\floor{\lfloor}{\rfloor}
+\usepackage{amsfonts}
+\usepackage{setspace}
+
+% pandas to_latex tables look good this way
+\usepackage{booktabs}
+\usepackage{multirow}
+
+\usepackage{subcaption}
+
+\usepackage{placeins}
+
+\usepackage{hyperref}
+
+\widowpenalty100000
+\clubpenalty100000
+\raggedbottom
+
+\begin{document}
+\frontmatter
+\unitlength1cm
+\selectlanguage{american}
+
+\title{Low-Latency Synchronous I/O For OpenZFS Using Persistent Memory}
+\author{Christian Schwarz}
+\thesistype{ma}
+\primaryreviewer{Prof.\ Dr.\ Frank Bellosa}
+\advisor{M.\ Sc.\ Lukas Werling}{}
+\thesisbegindate{TODO}
+\thesisenddate{TODO}
+\maketitle
+
+\input{kit_style/declaration}
+
+\chapter{Abstract}
+
+\mainmatter
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Contents}
+\tableofcontents
+
+\chapter{Introduction}
+
+\chapter{Design \& Implementation}
+
+\chapter{Evaluation}\label{ch:eval}
+
+\chapter{Related Work}
+
+\backmatter
+
+\chapter{Appendix}\label{ch:appendix}
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Bibliography}
+\emergencystretch=1em
+\printbibliography
+
+\end{document}
