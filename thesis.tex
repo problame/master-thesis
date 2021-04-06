@@ -91,6 +91,51 @@
 
 \section{Goals \& Non-Goals}
 \section{High-Level Overview}
+We introduce the concept of ZIL kinds to ZFS.
+The ZIL kind is a pool-scoped variable that determines the strategy for persisting ZIL entries.
+A zpool's ZIL kind is determined by the following rule:
+if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is "ZIL-PMEM". Oterwise, it is "ZIL-LWB".
+ZIL-LWB is the current ZIL's persistence implementation. It uses the SPA's metaslab allocator to allocate log-write blocks ("LWB"s) from the storage pool with a bias towards SLOG devices.
+ZIL-PMEM disables metaslab allocation for its PMEM SLOG deviceand uses the resulting free PMEM space directy.
+
+The PMEM space is partitioned into fixed-size segments.
+Each segment has a corresponding in-DRAM data structure called "chunk" that tracks the segment's kernel-virtual base address and length.
+Chunks are organized in a pool-wide in-DRAM data structure called PRB.
+The PRB is the central code module of ZIL-PMEM.
+PRB implements a high-performance crash-consistent, scalable, append-only, data-corruption-checking and garbage-collected write-ahead log that uses the PMEM chunks' segments for persistence.
+After a system crash, a new instance of PRB is instantiated with the same chunks/segments that were used by the PRB instance that wrote the log before the crash.
+A chunk that contains non-obsolete ("claimed") log entries is not re-used for logging until all of its entries have been obsoleted by replay.
+
+PRB is a pool-wide resource but the ZIL is a per-head-dataset log.
+Each ZIL is written replayed independently.
+PRB thus maintains a per-log in-DRAM data structure called HDL in which it stores per-log state such as the log's globally unique ID, claims on chunks and replay progress.
+HDLs are allocated for each of the pool's datasets on pool import.
+When a dataset is created or destroyed, its HDL is allocated or freed as well.
+HDL state persisted to the head dataset's ZIL header during txg sync, allowing for crash-safe replay.
+
+PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
+A log entry is always written to exactly one of the PRBs chunks' PMEM segment.
+The PMEM segment is organized as a contiguous append-only sequence of entries.
+Starting at offset zero, the sequence can be traversed using the length information stored in the entry header.
+It is terminated by an invalid header.
+If a chunk's remaining space is too small to fit an entry, the writer puts the chunk on a "full list" where it sits until all of the full chunk's entries are obsoleted by txg sync.
+Once all entries are obsolete, the full chunk is moved to the "free list" for re-use by a writer.
+Each entry header sotres sufficient metadata to
+\begin{itemize}
+\item attribute entries to a dataset, % via an ID repeated in the ZIL header and each entry's header
+\item detect data corruption and missing entries,
+\item order entries for replay based on sequence numbers.
+\end{itemize}
+The physical location of entries in PMEM is irrelevant for replay.
+Instead, replay traverses each chunk's entries, filters them for the given dataset and constructs a replay sequence in DRAM using the ordering information stored in the entry headers.
+
+PRB is integrated into the existing ZIL by \lstinline{zilog_pmem_t} which acts as an adaptor between PRB/HDL and the ZIL's "ITX layer".
+The ITX layer is shared among all ZIL kinds.
+It defines the format of individual log records (i.e. the content of the PRB entry's body) and manages the in-DRAM structures that track which log entries need to be persisted when sync semantics are requested by a syscall.
+% for a whole dataset (\lstinline{sync()}), a single file (\lstinline{fsync()}) or an individual syscall (e.g. \lstinline{write()} on an \lstinline{O_SYNC} file descriptors).
+However, the actual work of persisting entries is delegated to a ZIL-kind-specific object, i.e., \lstinline{zilog_lwb_t} for ZIL-LWB and \lstinline{zilog_pmem_t} for ZIL-PMEM.
+Whereas \lstinline{zilog_lwb_t} implements all of its persistence logic in-line, \lstinline{zilog_pmem_t} is a thin wrapper around the methods of PRB/HDL.
+
 \section{PMEM-aware SPA \& VDEV layer}
 \section{ZIL kinds}
 \section{PRB/HDL: A generic logical WAL for a zpool}
