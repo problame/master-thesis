@@ -50,6 +50,10 @@
 
 \usepackage{hyperref}
 
+
+% custom commands
+\newcommand{\impl}[0]{$\Rightarrow$}
+
 \widowpenalty100000
 \clubpenalty100000
 \raggedbottom
@@ -71,6 +75,7 @@
 \input{kit_style/declaration}
 
 \chapter{Abstract}
+\blindtext
 
 \mainmatter
 \cleardoublepage
@@ -89,7 +94,77 @@
 
 \chapter{ZIL-PMEM: Design \& Implementation}
 
-\section{Goals \& Non-Goals}
+\section{Project Scope}
+
+\subsection{Goals}
+
+\newcommand{\csgoal}[1]{\textbf{#1}}
+
+\csgoal{Coexistence}
+ZIL-PMEM must be able to coexist with ZIL-LWB due to limited availability of PMEM and limitations of the ZIL-PMEM design.
+
+\csgoal{Same Guarantees}
+ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB.
+
+\csgoal{Simple Administration \& Pooled Storage}
+Pooling of storage resources and simple administration are central to ZFS's design.\cite{zfspaper}
+ZFS should automatically detect that a SLOG device is PMEM and, if so, use ZIL-PMEM for all of the pool’s datasets.
+No further administrative action should be required to fully benefit from ZIL-PMEM.
+
+\csgoal{Data Integrity}
+Data integrity is a core feature of ZFS.\cite{zfspaper}
+ZIL-PMEM must be able to detect and handle metadata and data errors as well as PMEM media failures.
+
+\csgoal{Low Latency}
+The latency overhead that ZIL-PMEM adds to the raw latency of the PMEM device should be minimal.
+
+\csgoal{Multi-Dataset Concurrency}
+Threads that run on different cores should be able to log entries to ZIL-PMEM in parallel with moderate overhead.
+
+\csgoal{Maximum Performance on Intel Optane DC Persistent Memory}
+Whereas battery-backed NVDIMMs have existed for decades, Intel Optane DC Persistent Memory is currently the only broadly available flash-based persistent memory product.
+We develop ZIL-PMEM on an Intel Optane DC Persistent Memory platform and want to determine the maximum performance that can be achieved with it.
+
+\csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
+PMEM applies backpressure through the CPU execution pipeline if its bandwidth limits are exceeded.
+Such pipeline stalls waste on-CPU time that might be used more productively by other runnable threads.
+Further, \citeauthor{yang_empirical_2020} have shown that PMEM write throughput decreases at high concurrency.
+Since ZIL-PMEM shares PMEM among many datasets, we expect that such overload situtations will happen in practice.
+ZIL-PMEM should thus provide a mechanism to shift excessive wait time for PMEM off the CPU.
+
+\csgoal{Testability}
+ZIL-PMEM must be architected for testability.
+The core algorithms presented in this chapter must be covered by unit tests.
+Further, ZIL-PMEM should be integrated into the ztest user-space stress test as well as the SLOG tests of the ZFS Test Suite.
+
+\subsection{Out Of Scope}
+
+\csgoal{Data Redundancy}
+While ZIL-PMEM must provide data integrity protections we do not require mechanisms for data redundancy.
+We believe that our design can be extended to accomodate this feature.
+
+\csgoal{Support For OpenZFS Native Encryption}
+The ZIL-PMEM design presented in this section does not account for OpenZFS native encryption.
+Presently, log records for encrypted datasets are stored in plain text.
+However, we believe that our design can be trivially extended to accomodate this feature, albeit at possibly significant performance costs.
+
+\subsection{Non-Goals}
+
+\csgoal{Support For \lstinline{WR_INDIRECT}}
+ZIL-LWB logs large write records' data directly to the main pool devices.
+The ZIL record then only contains metadata (e.g. mtime) and a block pointer to the location in the main pool.
+This technique avoids double-writes if the pool does not have a SLOG.
+If the pool has a SLOG, indirect writes do not benefit from the SLOGs latency, but reduce SLOG bandwidth requirements.
+The functionality is exposed to the administrator as the \lstinline{logbias} property.
+We do not believe that the potential benefits of \lstinline{WR_INDIRECT} justify the additional implementation complexity.
+\footnote{In fact, we identified several edge-cases with \lstinline{WR_INDIRECT} where ZIL-LWB leaks the unreplayed data blocks.\cite{zil_lwb_block_leak_edge_case}} % https://github.com/openzfs/zfs/issues/11363
+
+
+\csgoal{Space Efficiency}
+ZIL-PMEM should trade space for time and simplicity whenever presented with the option.
+Our rationale is that PMEM capacities are significantly higher than DRAM.
+For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128GiB in size.\cite{optanepricing_missing}
+
 \section{High-Level Overview}
 We introduce the concept of ZIL kinds to ZFS.
 The ZIL kind is a pool-scoped variable that determines the strategy for persisting ZIL entries.
