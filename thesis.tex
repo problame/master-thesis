@@ -80,9 +80,32 @@
 
 \chapter{Introduction}
 
-\chapter{Design \& Implementation}
+\chapter{Background}
+\section{Synchronous I/O}
+\section{Persistent Memory}
+\section{OpenZFS}
+
+\chapter{Why ZIL-LWB Is Slow On PMEM}
+
+\chapter{ZIL-PMEM: Design \& Implementation}
+
+\section{Goals \& Non-Goals}
+\section{High-Level Overview}
+\section{PMEM-aware SPA \& VDEV layer}
+\section{ZIL kinds}
+\section{PRB/HDL: A generic logical WAL for a zpool}
+\section{ZIL-PMEM}
+\section{ITXG Bypass For ZVOL}
 
 \chapter{Evaluation}\label{ch:eval}
+\section{Correctness}
+\subsection{PRB}
+\subsection{ZIL-PMEM}
+\section{Performance}
+\subsection{Write Performance}
+\subsubsection{4k Random Sync Writes}
+\subsubsection{Application Benchmarks}
+\subsection{Replay Performance}
 
 \chapter{Related Work}
 
