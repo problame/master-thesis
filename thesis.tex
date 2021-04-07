@@ -12,7 +12,7 @@
 
 \usepackage{kit_style/kitthesiscover}
 
-\usepackage[style=alphabetic]{biblatex}
+\usepackage[style=alphabetic,backend=biber]{biblatex}
 \addbibresource{bib.bib}
 \setcounter{biburlnumpenalty}{100}
 \setcounter{biburllcpenalty}{7000}
@@ -50,6 +50,8 @@
 
 \usepackage{hyperref}
 
+\usepackage{siunitx}
+
 
 % custom commands
 \newcommand{\impl}[0]{$\Rightarrow$}
@@ -86,134 +88,199 @@
 \chapter{Introduction}
 
 \chapter{Background}
+Foo \cite{kwon_strata_2017}.
 \section{Synchronous I/O}
 \section{Persistent Memory}
 \section{OpenZFS}
 
-\chapter{Why ZIL-LWB Is Slow On PMEM}
+\chapter{Why ZIL-LWB Is Slow On PMEM}\label{ch:lwb_analysis}
 
-\chapter{ZIL-PMEM: Design \& Implementation}
+\chapter{Design \& Implementation}
 
 \section{Project Scope}
-
-\subsection{Goals}
+In this section we define the scope of the ZIL-PMEM project.
 
 \newcommand{\csgoal}[1]{\textbf{#1}}
 
+\subsection{Requirements}
+The following features are success criteria for the ZIL-PMEM design.
+We focus on the functionality and defer our evaluation to chapter~\ref{ch:eval}.
+
 \csgoal{Coexistence}
-ZIL-PMEM must be able to coexist with ZIL-LWB due to limited availability of PMEM and limitations of the ZIL-PMEM design.
+ZIL-PMEM must coexist with ZIL-LWB due to limited availability of PMEM and limitations of the ZIL-PMEM design.
 
 \csgoal{Same Guarantees}
-ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB.
+ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB for both ZPL and ZVOL.
 
 \csgoal{Simple Administration \& Pooled Storage}
-Pooling of storage resources and simple administration are central to ZFS's design.\cite{zfspaper}
+Pooling of storage resources and simple administration are central to ZFS's design.~\cite{zfspaper}
 ZFS should automatically detect that a SLOG device is PMEM and, if so, use ZIL-PMEM for all of the pool’s datasets.
 No further administrative action should be required to fully benefit from ZIL-PMEM.
 
+\csgoal{Correctness}
+In the absence of PMEM media errors and data corruption, ZIL-PMEM must be able to replay all data that it reported as committed.
+The result must be the same as if ZIL-LWB would have been used in lieu.
+Specifically:
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
+\item Replay must respect the logical dependencies of log entries.
+\item Logging must be crash-consistent, i.e., the in-PMEM state must always be such that replay is correct.
+\item Replay must be crash-consistent, i.e., if the system crashes or loses power replay must be able to resume. Resumed replay must continue to respect logical dependencies of log entries.
+\end{itemize}
+
 \csgoal{Data Integrity}
-Data integrity is a core feature of ZFS.\cite{zfspaper}
-ZIL-PMEM must be able to detect and handle metadata and data errors as well as PMEM media failures.
+Data integrity is a core feature of ZFS.~\cite{zfspaper}
+ZIL-PMEM must be able to detect corrupted log entries using an error-detecting code.
+Detected corruption must be handled correctly in the sense outlined above.
+Further, corruption must also be handled gracefully with the following behavior as the baseline.
+Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
+Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$.
 
 \csgoal{Low Latency}
-The latency overhead that ZIL-PMEM adds to the raw latency of the PMEM device should be minimal.
+The latency overhead of ZIL-PMEM compared to raw PMEM device latency should be minimal for single threaded workloads.
+Multi-threaded workloads are addressed below.
 
-\csgoal{Multi-Dataset Concurrency}
-Threads that run on different cores should be able to log entries to ZIL-PMEM in parallel with moderate overhead.
+\csgoal{Multi-Core Scalability}
+As a pool-wide resource, ZIL-PMEM should scale well to multiple cores.
+Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speedups for threads that perform synchronous I/O operations on separate CPU cores:
+{
+\setlength{\parskip}{0pt}
+\begin{description}[topsep=0pt, noitemsep, leftmargin=1cm, labelindent=1cm, widest=1 private dataset per thread]
+    \item[1 private dataset per thread] always near-linear speedup
+    \item[1 shared dataset] \mbox{}
+        \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL file system]
+            \item[ZPL file system] no speedup
+            \item[ZVOL] up to linear speedup, depending on workload
+        \end{description}
+\end{description}
+}
 
 \csgoal{Maximum Performance on Intel Optane DC Persistent Memory}
-Whereas battery-backed NVDIMMs have existed for decades, Intel Optane DC Persistent Memory is currently the only broadly available flash-based persistent memory product.
-We develop ZIL-PMEM on an Intel Optane DC Persistent Memory platform and want to determine the maximum performance that can be achieved with it.
+Whereas battery-backed NVDIMMs have existed for decades\todo{reference}, Intel Optane DC Persistent Memory is currently the only broadly available flash-based persistent memory product\todo{proof}.
+We develop ZIL-PMEM on this platform and want to determine the maximum performance that can be achieved with it.
 
 \csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
-PMEM applies backpressure through the CPU execution pipeline if its bandwidth limits are exceeded.
-Such pipeline stalls waste on-CPU time that might be used more productively by other runnable threads.
-Further, \citeauthor{yang_empirical_2020} have shown that PMEM write throughput decreases at high concurrency.
-Since ZIL-PMEM shares PMEM among many datasets, we expect that such overload situtations will happen in practice.
-ZIL-PMEM should thus provide a mechanism to shift excessive wait time for PMEM off the CPU.
+PMEM I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
+\citeauthor{yang_empirical_2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
+Write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
+In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at \SI{15}{threads}.~\cite[fig.4]{yang_empirical_2020}
+In practice, these results imply that on-CPU time is wasted as soon as the system writes to PMEM at higher than maximum device bandwidth.
+Since ZIL-PMEM shares PMEM among all datasets in the pool, we expect that such overload situtations will happen in practice.
+ZIL-PMEM should thus provide a mechanism to shift excessive PMEM I/O wait time off the CPU.
 
 \csgoal{Testability}
 ZIL-PMEM must be architected for testability.
 The core algorithms presented in this chapter must be covered by unit tests.
 Further, ZIL-PMEM should be integrated into the ztest user-space stress test as well as the SLOG tests of the ZFS Test Suite.
 
-\subsection{Out Of Scope}
-
-\csgoal{Data Redundancy}
-While ZIL-PMEM must provide data integrity protections we do not require mechanisms for data redundancy.
-We believe that our design can be extended to accomodate this feature.
+\subsection{Out Of Scope For The Thesis}
+The following features were omitted to constrain the scope of the thesis.
+We believe that our design can accomodate them without major changes.
 
 \csgoal{Support For OpenZFS Native Encryption}
-The ZIL-PMEM design presented in this section does not account for OpenZFS native encryption.
-Presently, log records for encrypted datasets are stored in plain text.
-However, we believe that our design can be trivially extended to accomodate this feature, albeit at possibly significant performance costs.
+The ZIL-PMEM design presented in this section does not support OpenZFS native encryption.
+Intel Optane DC Persistent Memory supports transparent hardware encryption per DIMM at zero overhead\todo{cite spec}.
+In contrast, OpenZFS native encryption is per dataset and software-based.
+Given these significant differences in data and threat model, ZIL-PMEM cannot rely on Optane hardware encryption.
+Instead, ZIL-PMEM would need to invoke OpenZFS native encryption and decryption routines when writing or replaying log entries.
 
-\subsection{Non-Goals}
+\csgoal{Protection Against Scribbles}
+Scribbles are bugs in the system that accidentally overwrite PMEM, e.g., due to incorrect address calculation or out-of-bounds access in the kernel.
+PMEM file systems such as NOVA-Fortis have already presented highly-performant mechanisms to protect againt scribbles.~\cite{xu_nova-fortis_2017}
+We believe that our design can be trivially extended with similar mechanisms.
 
-\csgoal{Support For \lstinline{WR_INDIRECT}}
+\subsection{Limitations}
+The following features were deliberately left out of our design.
+More experimentation and practical experience with ZIL-PMEM is necessary to determine which features are useful in practice, how they can be realized and how they interact with the existing requirements.
+
+\csgoal{No NUMA Awareness}
+\citeauthor{yang_empirical_2020} recommend to "avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yang_empirical_2020}.
+Given the latency contribution of ZIL-PMEM to overall syscall latency (ref~\ref{ch:eval}\todo{precise ref}), variations of this magnitude would be significant.
+
+\csgoal{No Data Redundancy}
+ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.
+
+\csgoal{Only Works With SLOGs}
+ZIL-PMEM only works with PMEM SLOGs, not for a zpool with PMEM as main pool vdevs.
+Such pools continue to use ZIL-LWB.
+
+\csgoal{No Software Striping}
+Our design only supports a single PMEM SLOG device.
+Users may wish to use multiple PMEM dimms to increase log write bandwidth.
+With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup.~\cite{yang_empirical_2020}
+Whereas software striping would be the natural approach to ZFS, it will be non-trivial to achieve the same speedup as hardware-based interleaving.
+
+\csgoal{No Support For \lstinline{WR_INDIRECT}}
 ZIL-LWB logs large write records' data directly to the main pool devices.
-The ZIL record then only contains metadata (e.g. mtime) and a block pointer to the location in the main pool.
-This technique avoids double-writes if the pool does not have a SLOG.
-If the pool has a SLOG, indirect writes do not benefit from the SLOGs latency, but reduce SLOG bandwidth requirements.
-The functionality is exposed to the administrator as the \lstinline{logbias} property.
-We do not believe that the potential benefits of \lstinline{WR_INDIRECT} justify the additional implementation complexity.
-\footnote{In fact, we identified several edge-cases with \lstinline{WR_INDIRECT} where ZIL-LWB leaks the unreplayed data blocks.\cite{zil_lwb_block_leak_edge_case}} % https://github.com/openzfs/zfs/issues/11363
-
+The ZIL record then only contains metadata such as \lstinline{mtime} and a block pointer to the location in the main pool.
+This technique avoids double-writes which is particularly advantageous if the pool does not have a SLOG, but ZIL-PMEM pools by design always has one.
+Further, if the pool has a PMEM SLOG, \lstinline{WR_INDIRECT} log record write latency is likely to be dominated by the main pool's IO latency which likely consists of regular block devices.
+If the main pool's IO latency were acceptable, a fast NVMe-based ZIL-LWB SLOG or even no SLOG at all would likely be sufficient for the setup in question.
 
 \csgoal{Space Efficiency}
 ZIL-PMEM should trade space for time and simplicity whenever presented with the option.
 Our rationale is that PMEM capacities are significantly higher than DRAM.
-For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128GiB in size.\cite{optanepricing_missing}
+For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128GiB in size.~\cite{optanepricing_missing}
 
-\section{High-Level Overview}
-We introduce the concept of ZIL kinds to ZFS.
-The ZIL kind is a pool-scoped variable that determines the strategy for persisting ZIL entries.
+\section{Overview}
+This section summarizes the ZIL-PMEM design at a high level.
+The subsequent sections then provide more detail on each abstractions' design and implementation.
+
+\subsection{Concepts}
+We introduce the concept of \textit{ZIL kinds} to ZFS.
+The ZIL kind is a pool-scoped variable that determines the pool's strategy for persisting ZIL entries.
 A zpool's ZIL kind is determined by the following rule:
-if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is "ZIL-PMEM". Oterwise, it is "ZIL-LWB".
-ZIL-LWB is the current ZIL's persistence implementation. It uses the SPA's metaslab allocator to allocate log-write blocks ("LWB"s) from the storage pool with a bias towards SLOG devices.
-ZIL-PMEM disables metaslab allocation for its PMEM SLOG deviceand uses the resulting free PMEM space directy.
+if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is ZIL-PMEM. Oterwise, it is ZIL-LWB.
+ZIL-LWB is the current ZIL's persistence implementation.
+It uses the SPA's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
+ZIL-PMEM disables metaslab allocation for its PMEM SLOG device and uses the PMEM space directy.
 
 The PMEM space is partitioned into fixed-size segments.
-Each segment has a corresponding in-DRAM data structure called "chunk" that tracks the segment's kernel-virtual base address and length.
-Chunks are organized in a pool-wide in-DRAM data structure called PRB.
-The PRB is the central code module of ZIL-PMEM.
-PRB implements a high-performance crash-consistent, scalable, append-only, data-corruption-checking and garbage-collected write-ahead log that uses the PMEM chunks' segments for persistence.
-After a system crash, a new instance of PRB is instantiated with the same chunks/segments that were used by the PRB instance that wrote the log before the crash.
-A chunk that contains non-obsolete ("claimed") log entries is not re-used for logging until all of its entries have been obsoleted by replay.
+Each segment has a corresponding in-DRAM data structure called \textit{chunk} that tracks the segment's kernel-virtual base address and length.
+Chunks are organized in a pool-wide in-DRAM data structure called \textit{PRB}.
+PRB implements a high-performance, scalable, crash-consistent, data-corruption-checking and garbage-collected write-ahead log.
+It stores log entries in the PMEM chunk's segments as a contiguous append-only sequence.
+Full chunks are stashed away and become reusable for logging when the youngest entry's transaction group has synced to the main pool.
+After a system crash, a new instance of PRB is instantiated with the same chunks (segments) that the pre-crash PRB instance used.
+The new instance scans each chunk for log entries that need to be replayed.
+This process is called \textit{claiming}.
+The entries' physical location in PMEM is irrelevant for replay.
+Instead, each entry stores sufficient metadata to determine whether an entry needs to be replayed, to detect missing entries, and to find a deterministic a replay order.
+Once claiming is complete, the new PRB instance is ready for replay and logging by datasets.
+It only uses those chunks for logging that do not have a replay claim.
 
-PRB is a pool-wide resource but the ZIL is a per-head-dataset log.
-Each ZIL is written replayed independently.
-PRB thus maintains a per-log in-DRAM data structure called HDL in which it stores per-log state such as the log's globally unique ID, claims on chunks and replay progress.
-HDLs are allocated for each of the pool's datasets on pool import.
-When a dataset is created or destroyed, its HDL is allocated or freed as well.
-HDL state persisted to the head dataset's ZIL header during txg sync, allowing for crash-safe replay.
+PRB is a pool-wide data structure but the ZIL is written and replayed on a per-dataset basis.
+For this purpose, PRB defines a data structure called HDL that holds the per-dataset PRB state, such as the log's GUID, dependency-tracking state and replay position.
+All interaction that is scoped to a dataset happens through the HDL, not PRB.
+Whereas PRB/HDL implements PMEM persistence, it is the HDL user's responsibility to persist HDL state in the main pool.
 
-PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
-A log entry is always written to exactly one of the PRBs chunks' PMEM segment.
-The PMEM segment is organized as a contiguous append-only sequence of entries.
-Starting at offset zero, the sequence can be traversed using the length information stored in the entry header.
-It is terminated by an invalid header.
-If a chunk's remaining space is too small to fit an entry, the writer puts the chunk on a "full list" where it sits until all of the full chunk's entries are obsoleted by txg sync.
-Once all entries are obsolete, the full chunk is moved to the "free list" for re-use by a writer.
-Each entry header sotres sufficient metadata to
-\begin{itemize}
-\item attribute entries to a dataset, % via an ID repeated in the ZIL header and each entry's header
-\item detect data corruption and missing entries,
-\item order entries for replay based on sequence numbers.
-\end{itemize}
-The physical location of entries in PMEM is irrelevant for replay.
-Instead, replay traverses each chunk's entries, filters them for the given dataset and constructs a replay sequence in DRAM using the ordering information stored in the entry headers.
-
-PRB is integrated into the existing ZIL by \lstinline{zilog_pmem_t} which acts as an adaptor between PRB/HDL and the ZIL's "ITX layer".
-The ITX layer is shared among all ZIL kinds.
-It defines the format of individual log records (i.e. the content of the PRB entry's body) and manages the in-DRAM structures that track which log entries need to be persisted when sync semantics are requested by a syscall.
-% for a whole dataset (\lstinline{sync()}), a single file (\lstinline{fsync()}) or an individual syscall (e.g. \lstinline{write()} on an \lstinline{O_SYNC} file descriptors).
-However, the actual work of persisting entries is delegated to a ZIL-kind-specific object, i.e., \lstinline{zilog_lwb_t} for ZIL-LWB and \lstinline{zilog_pmem_t} for ZIL-PMEM.
-Whereas \lstinline{zilog_lwb_t} implements all of its persistence logic in-line, \lstinline{zilog_pmem_t} is a thin wrapper around the methods of PRB/HDL.
+The keystone to the ZIL-PMEM architecture is the per-dataset in-DRAM struct \lstinline{zilog_t}.
+Before the introduction of ZIL kinds, \lstinline{zilog_t} implemented all ZIL-related functionality.
+With ZIL kinds, \lstinline{zilog_t} acts as an abstract base class that encapsulates shared ZIL functionality.
+This includes the definitions of the ZIL log record format and the data structures that track which log entries need to be persisted when sync semantics are requested by a syscall.
+% % for a whole dataset (\lstinline{sync()}), a single file (\lstinline{fsync()}) or an individual syscall (e.g. \lstinline{write()} on an \lstinline{O_SYNC} file descriptors).
+The code that is responsible for persisting log entries and for updating the ZIL header resides in ZIL-kind-specific subclasses.
+The pool's ZIL kind determines which subclass is instantiated at runtime.
+The subclass for ZIL-LWB is \lstinline{zilog_lwb_t} which contains the original LWB code.
+The subclass for ZIL-PMEM is \lstinline{zilog_pmem_t}.
+It is a thin wrapper around HDL's logging and replay methods.
+\lstinline{zilog_pmem_t} persists HDL state in the dataset's ZIL header.
+The \lstinline{zil_pmem} module --- which defines \lstinline{zilog_pmem_t} --- is the component that integrates PRB/HDL into ZFS:
+it allocates the chunks, constructs the PRB and creates and destroys HDLs in synchrony with their datasets.
 
 \section{PMEM-aware SPA \& VDEV layer}
 \section{ZIL kinds}
 \section{PRB/HDL: A generic logical WAL for a zpool}
+
+% PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
+% A log entry is always written to exactly one chunk's PMEM segment.
+% The segment is organized as a contiguous append-only sequence of entries that is terminated by an invalid header.
+% %Starting with the first entry's header at offset zero, the sequence can be traversed using length information stored in the headers.
+% If a chunk's remaining space is too small to fit an entry, the writer puts the chunk on a "full list" where it sits until all of the full chunk's entries are obsoleted by txg sync.
+% Once all entries are obsolete, the full chunk is moved to the "free list" for reuse by a writer.
+% Each entry header stores sufficient metadata to attribute entries to a dataset, detect data corruption and missing entries, and order entries for replay based on sequence numbers.
+% The physical location of entries in PMEM is irrelevant for replay.
+% Instead, replay traverses each chunk's entries, filters them for the given dataset and constructs a replay sequence in DRAM using the ordering information stored in the entry headers.
+
 \section{ZIL-PMEM}
 \section{ITXG Bypass For ZVOL}
 
