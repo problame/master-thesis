@@ -86,33 +86,91 @@
 \tableofcontents
 
 \chapter{Introduction}
-Synchronous file system These performance characteristics make PMEM an attractive choice for write-ahead logs in databases and file systems which are 
+The task of a filesystem is to provide non-volatile storage to applications in the form of the \textit{file} abstraction.
+Applications modify files through system calls such as \lstinline{write()} which generally does not provide any durability guarantees.
+Instead, the system call modifies a buffer in DRAM such as a page in the Linux page cache and returns to userspace.
+Synchronization of the dirty in-DRAM data to persistent storage is thus deferred to a --- generally implementation-defined --- point in the future.
 
-Persistent Memory (PMEM) is an emerging storage technology that provides low-latency memory-mapped byte-addressable persistent storage.
+However, many applications have more specific durability requirements.
+For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted to non-volatile storage before clearing the transaction.
+Otherwise, a system crash and recovery after clearing could result in the pre-purchase balance being restored, enabling double-spending by the account holder.
+These \textbf{synchronous I/O} semantics must be requested through APIs auch as \lstinline{fsync()} which "assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk."~\cite{posix_fsync_opengroup}.
+
+The \textbf{Zettabyte File System (ZFS)} is a combined volume manager and filesystem.
+It pools many block devices into a single storage pool (\textit{zpool}) which can hold thousands of sparsely allocated filesystems.
+The ZFS on-disk format is a merkle tree that is rooted in the \textit{uberblock} which is ZFS's equivalent of a superblock.
+ZFS on-disk state is always consistent and moves forward in so-called \textit{transaction groups} (txg), using copy-on-write to apply updates.
+Whenever a new version of the on-disk state needs to be synced to disk, ZFS traverses its logical structure bottom up and builds a new merkle tree.
+The updated parts of the tree are stored in newly allocated disk blocks while unmodified parts are re-use the existing block written in a prior txg.
+Once all updates have been written out, the new uberblock is written, thereby atomically moving the on-disk format to its new state.
+This procedure is called \textit{txg sync} and is triggered periodically (default: every \SI{5}{s}) or if the amount of dirty data exceeds a configurable threshold.
+
+Synchronous I/O semantics cannot be reasonably implemented through txg sync due to the write amplification and CPU overhead inherent to the txg sync procedure.
+Instead ZFS maintains the \textbf{ZFS Intent Log (ZIL)} which is a per-filesystem write-ahead log.
+Unlike systems such as Linux's \textit{journaling block device 2} (JBD2), the ZIL is a logical log:
+the ZIL's records describe the \textit{logical} changes that need to applied in order to achieve the state that was reported committed to userspace.
+On disk, the log records are written into a chain of \textit{log-write blocks} (LWBs), each containing many records.
+The LWB chain is rooted in the \textit{ZIL header} within the filesystem's representation within the merkle tree.
+New LWBs are appended to the chain independently of txg sync.
+
+By default, LWBs are allocated on\todo{from?} the zpool's main storage devices.
+Consequently, the lower bound for synchronous I/O latency in ZFS is the time required to write the LWBs that contains the synchronous I/O operation's ZIL records.
+For the case where this latency is insufficient, ZFS provides the ability to add a \textit{separate log device} (SLOG) to the zpool.
+The SLOG is typically a single (or mirrored) block device that provides lower latency than the main pool's devices.
+A typical configuration today is to add a fast NVMe drive to an HDD-based pool.
+Adding a fast SLOG accelerates LWB writes because LWBs are preferentially allocated from the SLOG.
+Note that SLOGs only need very limited capacity since LWBs are generally obsolete after three txgs.
+
+\textbf{Persistent Memory (PMEM)} is an emerging storage technology that provides low-latency memory-mapped byte-addressable persistent storage.
 The Linux kernel can expose PMEM as a pseudo block device whose sectors map directly to the PMEM space.
 Thereby existing block devices consumers can benefit from PMEM' low latency without modification.
 Block device consumers that wish to bypass block device emulation use the kernel-internal \textit{DAX} API which translates sector numbers to kernel virtual addresses, giving software \textbf{d}irect \textbf{ac}cess to PMEM.
 
+The motivation for this thesis is to accelerate synchronous I/O in ZFS by using PMEM as a ZFS SLOG device.
+A single DIMM of the current\todo{product name} Intel Optane PMEM product line can sustain 530k random 4k write IOPS which corresponds to a write latency of \SI{1.88}{us}.
+However, when configuring the Linux PMEM block device as a SLOG in OpenZFS 2.0, a single thread only achieves 12k random 4k synchronous write IOPS~($\sim$~\SI{83}{us}), scaling up to 100k IOPS at 16 threads (8 cores, 2xSMT) at doubled latency.
+In contrast, the same workload applied directly to the PMEM block device is able to achieve 500k IOPS with two threads~($\sim$~\SI{4}{us} per thread).
+And Linux 5.9's ext4 on the PMEM block device achieves 100k random 4k write IOPS ($\sim$~\SI{}) with a single thread and scales approximately linearly to up to 466k IOPS at four threads.
+\todo{review numbers in this paragraph}
 
-The current\todo{product name} Intel Optane PMEM product line can sustain 530k random 4k write IOPS which corresponds to a write latency of \SI{1.88}{us}.
+Our investigation of the latency distribution for the OpenZFS PMEM SLOG configuration shows that the ZIL implementation contributes \SI{48}{us} in the single-threaded case and up to \SI{95}{us} at eight threads.
+More specifically, up to \SI{50}{\%}\todo{run this again without ebpf} of total syscall latency is spent waiting for the \textit{ZIO pipeline}, excluding the time spent in the PMEM block device driver.
 
+ZIO is ZFS's abstraction for performing IO to the pool's storage devices.
+The pipeline-oriented design has proven extremely flexible and extensible over ZFS's lifetime.
+Many of ZFS’s distinguishing features are implemented in ZIO, including physical block allocation, transparent data and metadata checksumming, compression, deduplication and encryption as well as redundancy mechanisms such as raidz.
+CPU-intensive processing steps are parallelized to all of the system's CPUs using \textit{taskq}s.
 
+It is our impression that ZIO is biased towards throughput, not latency.
+For example, ZIO's main consumer is \textit{txg sync} which issues the updates to the on-disk merkle tree as a large tree of dependent ZIOs.
+Other consumers such as periodic data integrity checking (\textit{scrubbing}) are also throughput-oriented.
+In contrast, the ZIL is the only component that is latency-oriented.
+ZIO's latency overhead with fast block devices such as NVMe drives is a well known problem among ZFS developers.\todo{ref, gh issue, cite private conversation with brian?}
 
-Block device consumers can use it    that implements block IO  through memcpy.
-These performance characteristics make PMEM an attractive storage medium for write-ahead logs in databases and file systems and block-level write-back caches.\todo{ref}
+Given
+\begin{itemize}[noitemsep]
+    \item the abysmal\todo{too harsh?} out-of-the-box performance of the PMEM block device as a SLOG, and
+    \item our findings on\todo{right prep?} the ZIL's and ZIO pipeline's significant latency overhead, as well as the fact that
+    \item grouping log records into log-write \textit{blocks} is unnecessary with byte-addressable PMEM,
+\end{itemize}
+we believe that the current ZIL design is fundamentally unfit to reap the performance available with PMEM.
+We present \textbf{ZIL-PMEM}, a new implementation of the ZIL that bypasses the ZIO pipeline completely and persists log entries directly to PMEM.
+It coexists with the existing ZIL which we refer to as \textit{ZIL-LWB} in the remainder of this document.
+ZIL-PMEM achieves 140k random 4k sync write IOPS with a single thread~($\sim$~\SI{7.1}{us}) and scales up to 400k IOPS at 8 threads before it becomes CPU-bound.
+This corresponds to a speedup of 6.8x (or 4x, respectively) over ZIL-LWB.\todo{review numbers}
+Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
-We propose ZIL-PMEM, a new implementation of the ZFS Intent Log that bypasses the ZIO pipeline completely and persists log entries to PMEM. ZIL-PMEM targets PMEM exclusively in order to reap the maximum performance possible. ZIL-PMEM coexists with the existing ZIL, which we refer to as ZIL-LWB in this document.
-
-In the following sections, we present
-the user experience of configuring a pool with ZIL-PMEM,
-our strategy for code-sharing between ZIL-PMEM and ZIL-LWB and
-the design of ZIL-PMEM, including
-our strategy for how we integrate PMEM log VDEVs into the vdev / zpool config layer
-ZIL-PMEM’s physical data structure,
-its insertion and garbage collection algorithm,
-its claiming & replay algorithm and
-its integration into the existing OpenZFS software architecture.
-
+The remainder of this thesis is structured as follows:\todo{related work mid or end}
+in chapter~\ref{ch:lwb_analysis}...
+%In the following sections, we present
+%the user experience of configuring a pool with ZIL-PMEM,
+%our strategy for code-sharing between ZIL-PMEM and ZIL-LWB and
+%the design of ZIL-PMEM, including
+%our strategy for how we integrate PMEM log VDEVs into the vdev / zpool config layer
+%ZIL-PMEM’s physical data structure,FEe
+%its insertion and garbage collection algorithm,
+%its claiming & replay algorithm and
+%its integration into the existing OpenZFS software architecture.
 
 \chapter{Background}
 Foo \cite{kwon_strata_2017}.
@@ -149,9 +207,9 @@ In the absence of PMEM media errors and data corruption, ZIL-PMEM must be able t
 The result must be the same as if ZIL-LWB would have been used in lieu.
 Specifically:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
-\item Replay must respect the logical dependencies of log entries.
-\item Logging must be crash-consistent, i.e., the in-PMEM state must always be such that replay is correct.
-\item Replay must be crash-consistent, i.e., if the system crashes or loses power replay must be able to resume. Resumed replay must continue to respect logical dependencies of log entries.
+    \item Replay must respect the logical dependencies of log entries.
+    \item Logging must be crash-consistent, i.e., the in-PMEM state must always be such that replay is correct.
+    \item Replay must be crash-consistent, i.e., if the system crashes or loses power replay must be able to resume. Resumed replay must continue to respect logical dependencies of log entries.
 \end{itemize}
 
 \csgoal{Data Integrity}
@@ -174,10 +232,10 @@ Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speed
 \begin{description}[topsep=0pt, noitemsep, leftmargin=1cm, labelindent=1cm, widest=1 private dataset per thread]
     \item[1 private dataset per thread] always near-linear speedup
     \item[1 shared dataset] \mbox{}
-        \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL file system]
-            \item[ZPL file system] no speedup
-            \item[ZVOL] up to linear speedup, depending on workload
-        \end{description}
+          \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL file system]
+              \item[ZPL file system] no speedup
+              \item[ZVOL] up to linear speedup, depending on workload
+          \end{description}
 \end{description}
 }
 
