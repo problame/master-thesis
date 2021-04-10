@@ -86,6 +86,33 @@
 \tableofcontents
 
 \chapter{Introduction}
+Synchronous file system These performance characteristics make PMEM an attractive choice for write-ahead logs in databases and file systems which are 
+
+Persistent Memory (PMEM) is an emerging storage technology that provides low-latency memory-mapped byte-addressable persistent storage.
+The Linux kernel can expose PMEM as a pseudo block device whose sectors map directly to the PMEM space.
+Thereby existing block devices consumers can benefit from PMEM' low latency without modification.
+Block device consumers that wish to bypass block device emulation use the kernel-internal \textit{DAX} API which translates sector numbers to kernel virtual addresses, giving software \textbf{d}irect \textbf{ac}cess to PMEM.
+
+
+The current\todo{product name} Intel Optane PMEM product line can sustain 530k random 4k write IOPS which corresponds to a write latency of \SI{1.88}{us}.
+
+
+
+Block device consumers can use it    that implements block IO  through memcpy.
+These performance characteristics make PMEM an attractive storage medium for write-ahead logs in databases and file systems and block-level write-back caches.\todo{ref}
+
+We propose ZIL-PMEM, a new implementation of the ZFS Intent Log that bypasses the ZIO pipeline completely and persists log entries to PMEM. ZIL-PMEM targets PMEM exclusively in order to reap the maximum performance possible. ZIL-PMEM coexists with the existing ZIL, which we refer to as ZIL-LWB in this document.
+
+In the following sections, we present
+the user experience of configuring a pool with ZIL-PMEM,
+our strategy for code-sharing between ZIL-PMEM and ZIL-LWB and
+the design of ZIL-PMEM, including
+our strategy for how we integrate PMEM log VDEVs into the vdev / zpool config layer
+ZIL-PMEM’s physical data structure,
+its insertion and garbage collection algorithm,
+its claiming & replay algorithm and
+its integration into the existing OpenZFS software architecture.
+
 
 \chapter{Background}
 Foo \cite{kwon_strata_2017}.
@@ -190,7 +217,7 @@ We believe that our design can be trivially extended with similar mechanisms.
 
 \subsection{Limitations}
 The following features were deliberately left out of our design.
-More experimentation and practical experience with ZIL-PMEM is necessary to determine which features are useful in practice, how they can be realized and how they interact with the existing requirements.
+More experimentation and experience with ZIL-PMEM is necessary to determine which features are useful in practice, how they can be realized and how they interact with the existing requirements.
 
 \csgoal{No NUMA Awareness}
 \citeauthor{yang_empirical_2020} recommend to "avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yang_empirical_2020}.
@@ -205,7 +232,7 @@ Such pools continue to use ZIL-LWB.
 
 \csgoal{No Software Striping}
 Our design only supports a single PMEM SLOG device.
-Users may wish to use multiple PMEM dimms to increase log write bandwidth.
+Users may wish to use multiple PMEM DIMMs to increase log write bandwidth.
 With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup.~\cite{yang_empirical_2020}
 Whereas software striping would be the natural approach to ZFS, it will be non-trivial to achieve the same speedup as hardware-based interleaving.
 
@@ -217,7 +244,7 @@ Further, if the pool has a PMEM SLOG, \lstinline{WR_INDIRECT} log record write l
 If the main pool's IO latency were acceptable, a fast NVMe-based ZIL-LWB SLOG or even no SLOG at all would likely be sufficient for the setup in question.
 
 \csgoal{Space Efficiency}
-ZIL-PMEM should trade space for time and simplicity whenever presented with the option.
+ZIL-PMEM tends to trade PMEM space for time and simplicity.
 Our rationale is that PMEM capacities are significantly higher than DRAM.
 For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128GiB in size.~\cite{optanepricing_missing}
 
@@ -225,7 +252,6 @@ For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Inte
 This section summarizes the ZIL-PMEM design at a high level.
 The subsequent sections then provide more detail on each abstractions' design and implementation.
 
-\subsection{Concepts}
 We introduce the concept of \textit{ZIL kinds} to ZFS.
 The ZIL kind is a pool-scoped variable that determines the pool's strategy for persisting ZIL entries.
 A zpool's ZIL kind is determined by the following rule:
@@ -258,7 +284,7 @@ Before the introduction of ZIL kinds, \lstinline{zilog_t} implemented all ZIL-re
 With ZIL kinds, \lstinline{zilog_t} acts as an abstract base class that encapsulates shared ZIL functionality.
 This includes the definitions of the ZIL log record format and the data structures that track which log entries need to be persisted when sync semantics are requested by a syscall.
 % % for a whole dataset (\lstinline{sync()}), a single file (\lstinline{fsync()}) or an individual syscall (e.g. \lstinline{write()} on an \lstinline{O_SYNC} file descriptors).
-The code that is responsible for persisting log entries and for updating the ZIL header resides in ZIL-kind-specific subclasses.
+The code that is responsible for persisting log entries resides in ZIL-kind-specific subclasses.
 The pool's ZIL kind determines which subclass is instantiated at runtime.
 The subclass for ZIL-LWB is \lstinline{zilog_lwb_t} which contains the original LWB code.
 The subclass for ZIL-PMEM is \lstinline{zilog_pmem_t}.
@@ -268,8 +294,13 @@ The \lstinline{zil_pmem} module --- which defines \lstinline{zilog_pmem_t} --- i
 it allocates the chunks, constructs the PRB and creates and destroys HDLs in synchrony with their datasets.
 
 \section{PMEM-aware SPA \& VDEV layer}
+In this section we describe how we change ZFS to handle PMEM devices.
+
 \section{ZIL kinds}
+In this section we describe how we refactor ZFS to allow for different ZIL implementations at runtime.
+
 \section{PRB/HDL: A generic logical WAL for a zpool}
+In this section we describe the PRB/HDL data structure in detail.
 
 % PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
 % A log entry is always written to exactly one chunk's PMEM segment.
@@ -282,13 +313,18 @@ it allocates the chunks, constructs the PRB and creates and destroys HDLs in syn
 % Instead, replay traverses each chunk's entries, filters them for the given dataset and constructs a replay sequence in DRAM using the ordering information stored in the entry headers.
 
 \section{ZIL-PMEM}
+In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
+
 \section{ITXG Bypass For ZVOL}
+In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
 
 \chapter{Evaluation}\label{ch:eval}
 \section{Correctness}
+We evaluate the correctness of our work through unit and integration tests.
 \subsection{PRB}
 \subsection{ZIL-PMEM}
 \section{Performance}
+We evaluate the performance of ZIL-PMEM with a variety I/O benchmarks.
 \subsection{Write Performance}
 \subsubsection{4k Random Sync Writes}
 \subsubsection{Application Benchmarks}
