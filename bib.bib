@@ -1,899 +1,1094 @@
-@inproceedings{kwon_strata_2017,
-	location = {New York, {NY}, {USA}},
-	title = {Strata: A Cross Media File System},
-	isbn = {978-1-4503-5085-3},
-	url = {https://doi.org/10.1145/3132747.3132770},
-	doi = {10.1145/3132747.3132770},
-	series = {{SOSP} '17},
-	shorttitle = {Strata},
-	abstract = {Current hardware and application storage trends put immense pressure on the operating system's storage subsystem. On the hardware side, the market for storage devices has diversified to a multi-layer storage topology spanning multiple orders of magnitude in cost and performance. Above the file system, applications increasingly need to process small, random {IO} on vast data sets with low latency, high throughput, and simple crash consistency. File systems designed for a single storage layer cannot support all of these demands together. We present Strata, a cross-media file system that leverages the strengths of one storage media to compensate for weaknesses of another. In doing so, Strata provides performance, capacity, and a simple, synchronous {IO} model all at once, while having a simpler design than that of file systems constrained by a single storage device. At its heart, Strata uses a log-structured approach with a novel split of responsibilities among user mode, kernel, and storage layers that separates the concerns of scalable, high-performance persistence from storage layer management. We quantify the performance benefits of Strata using a 3-layer storage hierarchy of emulated {NVM}, a flash-based {SSD}, and a high-density {HDD}. Strata has 20-30\% better latency and throughput, across several unmodified applications, compared to file systems purpose-built for each layer, while providing synchronous and unified access to the entire storage hierarchy. Finally, Strata achieves up to 2.8x better throughput than a block-based 2-layer cache provided by Linux's logical volume manager.},
-	pages = {460--477},
-	booktitle = {Proceedings of the 26th Symposium on Operating Systems Principles},
-	publisher = {Association for Computing Machinery},
-	author = {Kwon, Youngjin and Fingler, Henrique and Hunt, Tyler and Peter, Simon and Witchel, Emmett and Anderson, Thomas},
-	urldate = {2020-10-01},
-	date = {2017-10-14},
-	keywords = {File system, Multi-layer storage, Non-volatile memory, read},
-	file = {Full Text PDF:/home/cs/Zotero/storage/CVSKMZDN/Kwon et al. - 2017 - Strata A Cross Media File System.pdf:application/pdf}
-}
-
-@inproceedings{kadekodi_splitfs_2019,
-	location = {New York, {NY}, {USA}},
-	title = {{SplitFS}: reducing software overhead in file systems for persistent memory},
-	isbn = {978-1-4503-6873-5},
-	url = {https://doi.org/10.1145/3341301.3359631},
-	doi = {10.1145/3341301.3359631},
-	series = {{SOSP} '19},
-	shorttitle = {{SplitFS}},
-	abstract = {We present {SplitFS}, a file system for persistent memory ({PM}) that reduces software overhead significantly compared to state-of-the-art {PM} file systems. {SplitFS} presents a novel split of responsibilities between a user-space library file system and an existing kernel {PM} file system. The user-space library file system handles data operations by intercepting {POSIX} calls, memory-mapping the underlying file, and serving the read and overwrites using processor loads and stores. Metadata operations are handled by the kernel {PM} file system (ext4 {DAX}). {SplitFS} introduces a new primitive termed relink to efficiently support file appends and atomic data operations. {SplitFS} provides three consistency modes, which different applications can choose from, without interfering with each other. {SplitFS} reduces software overhead by up-to 4x compared to the {NOVA} {PM} file system, and 17x compared to ext4 {DAX}. On a number of micro-benchmarks and applications such as the {LevelDB} key-value store running the {YCSB} benchmark, {SplitFS} increases application performance by up to 2x compared to ext4 {DAX} and {NOVA} while providing similar consistency guarantees.},
-	pages = {494--508},
-	booktitle = {Proceedings of the 27th {ACM} Symposium on Operating Systems Principles},
-	publisher = {Association for Computing Machinery},
-	author = {Kadekodi, Rohan and Lee, Se Kwon and Kashyap, Sanidhya and Kim, Taesoo and Kolli, Aasheesh and Chidambaram, Vijay},
-	urldate = {2020-10-01},
-	date = {2019-10-27},
-	keywords = {crash consistency, direct access, file systems, persistent memory},
-	file = {Submitted Version:/home/cs/Zotero/storage/6NSNU5Z8/Kadekodi et al. - 2019 - SplitFS reducing software overhead in file system.pdf:application/pdf}
-}
-
-%@inproceedings{wu_towards_2019,
-%	title = {Towards an Unwritten Contract of Intel Optane \$\{\${SSD}\$\}\$},
-%	booktitle = {11th \$\{\${USENIX}\$\}\$ Workshop on Hot Topics in Storage and File Systems ({HotStorage} 19)},
-%	author = {Wu, Kan and Arpaci-Dusseau, Andrea and Arpaci-Dusseau, Remzi},
-%	date = {2019},
-%	file = {Full Text:/home/cs/Zotero/storage/IZIEK7CR/Wu et al. - 2019 - Towards an Unwritten Contract of Intel Optane \$\{\$S.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/3H2CX55X/wu-kan.html:text/html}
-%}
-
-@inproceedings{zheng_ziggurat_2019,
-	title = {Ziggurat: a tiered file system for non-volatile main memories and disks},
-	shorttitle = {Ziggurat},
-	pages = {207--219},
-	booktitle = {17th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 19)},
-	author = {Zheng, Shengan and Hoseinzadeh, Morteza and Swanson, Steven},
-	date = {2019},
-	keywords = {nvmm-zil},
-	file = {Full Text:/home/cs/Zotero/storage/TULT5AZ5/Zheng et al. - 2019 - Ziggurat a tiered file system for non-volatile ma.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/6FU9ST28/zheng.html:text/html}
-}
-
-@article{arulraj_multi-tier_2019,
-	title = {Multi-tier buffer management and storage system design for non-volatile memory},
-	journaltitle = {{arXiv} preprint {arXiv}:1901.10938},
-	author = {Arulraj, Joy and Pavlo, Andy and Malladi, Krishna Teja},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/IKF29IQS/Arulraj et al. - 2019 - Multi-tier buffer management and storage system de.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/L7UL3JLD/1901.html:text/html}
-}
-
-@inproceedings{kannan_designing_2018,
-	title = {Designing a true direct-access file system with {DevFS}},
-	pages = {241--256},
-	booktitle = {16th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 18)},
-	author = {Kannan, Sudarsun and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Wang, Yuangang and Xu, Jun and Palani, Gopinath},
-	date = {2018},
-	file = {Full Text:/home/cs/Zotero/storage/5JHVEDEN/Kannan et al. - 2018 - Designing a true direct-access file system with De.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/H2IK9PQ6/kannan.html:text/html}
-}
-
-@inproceedings{xu_nova_2016,
-	title = {\$\{\${NOVA}\$\}\$: A log-structured file system for hybrid volatile/non-volatile main memories},
-	shorttitle = {\$\{\${NOVA}\$\}\$},
-	pages = {323--338},
-	booktitle = {14th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 16)},
-	author = {Xu, Jian and Swanson, Steven},
-	date = {2016},
-	file = {Full Text:/home/cs/Zotero/storage/VFUR53TR/Xu and Swanson - 2016 - \$\{\$NOVA\$\}\$ A log-structured file system for hybri.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/YHQAUC9V/xu.html:text/html}
-}
-
-@inproceedings{volos_aerie_2014,
-	title = {Aerie: Flexible file-system interfaces to storage-class memory},
-	shorttitle = {Aerie},
-	pages = {1--14},
-	booktitle = {Proceedings of the Ninth European Conference on Computer Systems},
-	author = {Volos, Haris and Nalli, Sanketh and Panneerselvam, Sankarlingam and Varadarajan, Venkatanathan and Saxena, Prashant and Swift, Michael M.},
-	date = {2014},
-	file = {Full Text:/home/cs/Zotero/storage/FVIKGF9J/Volos et al. - 2014 - Aerie Flexible file-system interfaces to storage-.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/RFFG42TW/2592798.html:text/html}
-}
-
-@inproceedings{liu_nvmtfs_2018,
-	title = {{NVMTFS}: A Non-Volatile Memory Adaptive File System for Tiered Storage System},
-	doi = {10.1109/BIGCOM.2018.00039},
-	shorttitle = {{NVMTFS}},
-	abstract = {Tiered storages have been widely used for large scale data to achieve high read/write performance while keeping low costs. However, most of their managements are implemented in block level and it is transparent to file system and high level applications, which cannot have clean and accurate information about data usage and temperature. Thereby there may be low performance and high resources usage. In this paper, we propose a new file system - {NVMTFS}, which is {NVM} adaptive and achieves file system level data management for tiered storage. {NVM} replaces {DRAM} as the whole system memory, such that part of the data and metadata can be permanently stored on {NVM} without flushing back to tiered storage. {NVMTFS} uses {NVM} not only as memory, but also a ghost tier to store data, there will be no data duplication between {NVM} and tiered storage. More accurate and less migration operation can be achieved in {NVMTFS} by using {NVM} as one more tier and no cache tier in the system. We have designed {NVMTFS} and described its system architecture, file system layout and data operation. {NVMTFS} shows its great potential for tiered storage to store big data while guaranteeing read/write performance. In the future, the prototype will implemented within a Linux Kernel and its performance can be compared with other file system such as {EXT}3, btrfs, {NILFS}2 and {NVMFS}.},
-	eventtitle = {2018 4th International Conference on Big Data Computing and Communications ({BIGCOM})},
-	pages = {201--206},
-	booktitle = {2018 4th International Conference on Big Data Computing and Communications ({BIGCOM})},
-	author = {Liu, Shiyong and Cao, Zhichao and Guo, Zhongwen and Wang, Guohua and Wang, Xupeng and Qiu, Zhijin and Qin, Xukun},
-	date = {2018-08},
-	keywords = {Adaptive systems, Big Data, cache storage, cache tier, data duplication, Data Temperature, {DRAM} chips, file system layout, ghost tier, Linux, Memory management, Nonvolatile memory, nonvolatile memory adaptive file system, {NVM}, {NVM} adaptive, {NVMTFS}, Phase change materials, Random access memory, random-access storage, Reliability, storage management, system architecture, system memory, Tiered Storage, tiered storage system},
-	file = {IEEE Xplore Full Text PDF:/home/cs/Zotero/storage/2ABT6FFF/Liu et al. - 2018 - NVMTFS A Non-Volatile Memory Adaptive File System.pdf:application/pdf;IEEE Xplore Abstract Record:/home/cs/Zotero/storage/54K84KQ6/8488649.html:text/html}
-}
-
-@inproceedings{liu_pmtest_2019,
-	title = {{PMTest}: A fast and flexible testing framework for persistent memory programs},
-	shorttitle = {{PMTest}},
-	pages = {411--425},
-	booktitle = {Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems},
-	author = {Liu, Sihang and Wei, Yizhou and Zhao, Jishen and Kolli, Aasheesh and Khan, Samira},
-	date = {2019},
-	file = {Snapshot:/home/cs/Zotero/storage/GS8249PQ/3297858.html:text/html}
-}
-
-@inproceedings{xu_nova-fortis_2017,
-	title = {{NOVA}-Fortis: A fault-tolerant non-volatile main memory file system},
-	shorttitle = {{NOVA}-Fortis},
-	pages = {478--496},
-	booktitle = {Proceedings of the 26th Symposium on Operating Systems Principles},
-	author = {Xu, Jian and Zhang, Lu and Memaripour, Amirsaman and Gangadharaiah, Akshatha and Borase, Amit and Da Silva, Tamires Brito and Swanson, Steven and Rudoff, Andy},
-	date = {2017},
-	file = {Full Text:/home/cs/Zotero/storage/NHPC68FM/Xu et al. - 2017 - NOVA-Fortis A fault-tolerant non-volatile main me.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/U4JCZF9B/3132747.html:text/html}
-}
-
-@inproceedings{eisenman_reducing_2018,
-	title = {Reducing {DRAM} footprint with {NVM} in Facebook},
-	pages = {1--13},
-	booktitle = {Proceedings of the Thirteenth {EuroSys} Conference},
-	author = {Eisenman, Assaf and Gardner, Darryl and {AbdelRahman}, Islam and Axboe, Jens and Dong, Siying and Hazelwood, Kim and Petersen, Chris and Cidon, Asaf and Katti, Sachin},
-	date = {2018},
-	file = {Full Text:/home/cs/Zotero/storage/69KFBY5P/Eisenman et al. - 2018 - Reducing DRAM footprint with NVM in Facebook.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/M7BUUIVW/3190508.html:text/html}
-}
-
-@inproceedings{zhang_flashshare_2018,
-	title = {{FlashShare}: Punching through server storage stack from kernel to firmware for ultra-low latency {SSDs}},
-	shorttitle = {{FlashShare}},
-	pages = {477--492},
-	booktitle = {13th \$\{\${USENIX}\$\}\$ Symposium on Operating Systems Design and Implementation (\$\{\${OSDI}\$\}\$ 18)},
-	author = {Zhang, Jie and Kwon, Miryeong and Gouk, Donghyun and Koh, Sungjoon and Lee, Changlim and Alian, Mohammad and Chun, Myoungjun and Kandemir, Mahmut Taylan and Kim, Nam Sung and Kim, Jihong},
-	date = {2018},
-	file = {Full Text:/home/cs/Zotero/storage/FXMHXBEH/Zhang et al. - 2018 - FlashShare Punching through server storage stack .pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/398SWW4M/zhang.html:text/html}
-}
-
-@inproceedings{yang_empirical_2020,
-	title = {An empirical guide to the behavior and use of scalable persistent memory},
-	pages = {169--182},
-	booktitle = {18th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 20)},
-	author = {Yang, Jian and Kim, Juno and Hoseinzadeh, Morteza and Izraelevitz, Joseph and Swanson, Steve},
-	date = {2020},
-	keywords = {nvmm-zil},
-	file = {Full Text:/home/cs/Zotero/storage/YCH7P8SK/Yang et al. - 2020 - An empirical guide to the behavior and use of scal.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/74W98TX3/yang.html:text/html}
-}
-
-@inproceedings{xu_finding_2019,
-	title = {Finding and fixing performance pathologies in persistent memory software stacks},
-	pages = {427--439},
-	booktitle = {Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems},
-	author = {Xu, Jian and Kim, Juno and Memaripour, Amirsaman and Swanson, Steven},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/AFN59SFP/Xu et al. - 2019 - Finding and fixing performance pathologies in pers.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/7VE4NJDC/3297858.html:text/html}
-}
-
-@article{jung_frash_2010,
-	title = {{FRASH}: Exploiting storage class memory in hybrid file system for hierarchical storage},
-	volume = {6},
-	issn = {1553-3077},
-	url = {https://doi.org/10.1145/1714454.1714457},
-	doi = {10.1145/1714454.1714457},
-	shorttitle = {{FRASH}},
-	abstract = {In this work, we develop a novel hybrid file system, {FRASH}, for storage-class memory and {NAND} Flash. Despite the promising physical characteristics of storage-class memory, its scale is an order of magnitude smaller than the current storage device scale. This fact makes it less than desirable for use as an independent storage device. We carefully analyze in-memory and on-disk file system objects in a log-structured file system, and exploit memory and storage aspects of the storage-class memory to overcome the drawbacks of the current log-structured file system. {FRASH} provides a hybrid view storage-class memory. It harbors an in-memory data structure as well as a on-disk structure. It provides nonvolatility to key data structures which have been maintained in-memory in a legacy log-structured file system. This approach greatly improves the mount latency and effectively resolves the robustness issue. By maintaining on-disk structure in storage-class memory, {FRASH} provides byte-addressability to the file system object and metadata for page, and subsequently greatly improves the I/O performance compared to the legacy log-structured approach. While storage-class memory offers byte granularity, it is still far slower than its {DRAM} counter part. We develop a copy-on-mount technique to overcome the access latency difference between main memory and storage-class memory. Our file system was able to reduce the mount time by 92\% and file system I/O performance was increased by 16\%.},
-	pages = {3:1--3:25},
-	number = {1},
-	journaltitle = {{ACM} Transactions on Storage},
-	shortjournal = {{ACM} Trans. Storage},
-	author = {Jung, Jaemin and Won, Youjip and Kim, Eunki and Shin, Hyungjong and Jeon, Byeonggil},
-	urldate = {2020-10-01},
-	date = {2010-04-05},
-	keywords = {Flash storage, log-structured file system}
-}
-
-@article{kim_nvwal_2016,
-	title = {{NVWAL}: Exploiting {NVRAM} in write-ahead logging},
-	volume = {51},
-	shorttitle = {{NVWAL}},
-	pages = {385--398},
-	number = {4},
-	journaltitle = {{ACM} {SIGPLAN} Notices},
-	author = {Kim, Wook-Hee and Kim, Jinwoong and Baek, Woongki and Nam, Beomseok and Won, Youjip},
-	date = {2016},
-	note = {Publisher: {ACM} New York, {NY}, {USA}},
-	file = {Full Text:/home/cs/Zotero/storage/JKG86N5Z/Kim et al. - 2016 - NVWAL Exploiting NVRAM in write-ahead logging.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/A9TGIDVM/2954679.html:text/html}
-}
-
-@inproceedings{qiu_nvmfs_2013,
-	title = {{NVMFS}: A hybrid file system for improving random write in nand-flash {SSD}},
-	shorttitle = {{NVMFS}},
-	pages = {1--5},
-	booktitle = {2013 {IEEE} 29th Symposium on Mass Storage Systems and Technologies ({MSST})},
-	publisher = {{IEEE}},
-	author = {Qiu, Sheng and Reddy, {AL} Narasimha},
-	date = {2013},
-	file = {Snapshot:/home/cs/Zotero/storage/Z9HS7DRY/6558434.html:text/html}
-}
-
-@inproceedings{wang_conquest_2002,
-	title = {Conquest: Better Performance Through a Disk/Persistent-{RAM} Hybrid File System.},
-	shorttitle = {Conquest},
-	pages = {15--28},
-	booktitle = {{USENIX} Annual Technical Conference, General Track},
-	author = {Wang, An-I. and Reiher, Peter L. and Popek, Gerald J. and Kuenning, Geoffrey H.},
-	date = {2002},
-	file = {Full Text:/home/cs/Zotero/storage/GTHR9QFC/Wang et al. - 2002 - Conquest Better Performance Through a DiskPersis.pdf:application/pdf}
-}
-
-@inproceedings{wu_scmfs_2011,
-	title = {{SCMFS}: a file system for storage class memory},
-	shorttitle = {{SCMFS}},
-	pages = {1--11},
-	booktitle = {Proceedings of 2011 International Conference for High Performance Computing, Networking, Storage and Analysis},
-	author = {Wu, Xiaojian and Reddy, {AL} Narasimha},
-	date = {2011},
-	file = {Full Text:/home/cs/Zotero/storage/ELJ22E3C/Wu and Reddy - 2011 - SCMFS a file system for storage class memory.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/9J624366/2063384.html:text/html}
-}
-
-@article{traeger_nine_2008,
-	title = {A nine year study of file system and storage benchmarking},
-	volume = {4},
-	pages = {1--56},
-	number = {2},
-	journaltitle = {{ACM} Transactions on Storage ({TOS})},
-	author = {Traeger, Avishay and Zadok, Erez and Joukov, Nikolai and Wright, Charles P.},
-	date = {2008},
-	note = {Publisher: {ACM} New York, {NY}, {USA}},
-	file = {Full Text:/home/cs/Zotero/storage/IY648VP9/Traeger et al. - 2008 - A nine year study of file system and storage bench.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/8Y5ERKHT/1367829.html:text/html}
-}
-
-@article{nightingale_rethink_2008,
-	title = {Rethink the sync},
-	volume = {26},
-	pages = {1--26},
-	number = {3},
-	journaltitle = {{ACM} Transactions on Computer Systems ({TOCS})},
-	author = {Nightingale, Edmund B. and Veeraraghavan, Kaushik and Chen, Peter M. and Flinn, Jason},
-	date = {2008},
-	note = {Publisher: {ACM} New York, {NY}, {USA}},
-	file = {Full Text:/home/cs/Zotero/storage/K5LQZFNB/Nightingale et al. - 2008 - Rethink the sync.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/PR6TSGV8/1394441.html:text/html}
-}
-
-@inproceedings{tadakamadla_accelerating_2019,
-	title = {Accelerating Database Workloads with {DM}-{WriteCache} and Persistent Memory},
-	pages = {255--263},
-	booktitle = {Proceedings of the 2019 {ACM}/{SPEC} International Conference on Performance Engineering},
-	author = {Tadakamadla, Rajesh and Patocka, Mikulas and Kani, Toshi and Norton, Scott J.},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/R6IPSZDS/Tadakamadla et al. - 2019 - Accelerating Database Workloads with DM-WriteCache.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/ZKK4PG3U/3297663.html:text/html}
-}
-
-@inproceedings{yang_reducing_2019,
-	title = {Reducing Write Amplification for Inodes of Journaling File System using Persistent Memory},
-	pages = {866--871},
-	booktitle = {2019 Design, Automation \& Test in Europe Conference \& Exhibition ({DATE})},
-	publisher = {{IEEE}},
-	author = {Yang, Chaoshu and Liu, Duo and Chen, Xianzhang and Zhang, Runyu and Wang, Wenbin and Duan, Moming and Tan, Yujuan},
-	date = {2019},
-	file = {Snapshot:/home/cs/Zotero/storage/F3EK2JUN/8715068.html:text/html}
-}
-
-@inproceedings{chen_fine-grained_2016,
-	title = {Fine-grained metadata journaling on {NVM}},
-	pages = {1--13},
-	booktitle = {2016 32nd Symposium on Mass Storage Systems and Technologies ({MSST})},
-	publisher = {{IEEE}},
-	author = {Chen, Cheng and Yang, Jun and Wei, Qingsong and Wang, Chundong and Xue, Mingdi},
-	date = {2016},
-	file = {Full Text:/home/cs/Zotero/storage/IZ58IYJI/Chen et al. - 2016 - Fine-grained metadata journaling on NVM.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/VCZD6CAQ/7897077.html:text/html}
-}
-
-@inproceedings{tweedie_journaling_1998,
-	title = {Journaling the Linux ext2fs filesystem},
-	booktitle = {The Fourth Annual Linux Expo},
-	publisher = {Durham, North Carolina},
-	author = {Tweedie, Stephen C.},
-	date = {1998},
-	file = {Full Text:/home/cs/Zotero/storage/IQSHK6L3/Tweedie - 1998 - Journaling the Linux ext2fs filesystem.pdf:application/pdf}
-}
-
-@inproceedings{lee_unioning_2013,
-	title = {Unioning of the buffer cache and journaling layers with non-volatile memory},
-	pages = {73--80},
-	booktitle = {Presented as part of the 11th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 13)},
-	author = {Lee, Eunji and Bahn, Hyokyung and Noh, Sam H.},
-	date = {2013},
-	file = {Full Text:/home/cs/Zotero/storage/QZPCRAW7/Lee et al. - 2013 - Unioning of the buffer cache and journaling layers.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/XDG5CW4F/lee.html:text/html}
-}
-
-@inproceedings{shen_journaling_2014,
-	title = {Journaling of journal is (almost) free},
-	pages = {287--293},
-	booktitle = {12th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 14)},
-	author = {Shen, Kai and Park, Stan and Zhu, Men},
-	date = {2014},
-	file = {Full Text:/home/cs/Zotero/storage/QCM2Q5AE/Shen et al. - 2014 - Journaling of journal is (almost) free.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/CB8YEZI8/shen.html:text/html}
-}
-
-@inproceedings{lee_waldio_2015,
-	title = {\$\{\${WALDIO}\$\}\$: Eliminating the Filesystem Journaling in Resolving the Journaling of Journal Anomaly},
-	shorttitle = {\$\{\${WALDIO}\$\}\$},
-	pages = {235--247},
-	booktitle = {2015 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 15)},
-	author = {Lee, Wongun and Lee, Keonwoo and Son, Hankeun and Kim, Wook-Hee and Nam, Beomseok and Won, Youjip},
-	date = {2015},
-	keywords = {unread},
-	file = {Full Text:/home/cs/Zotero/storage/2H3AW2RV/Lee et al. - 2015 - \$\{\$WALDIO\$\}\$ Eliminating the Filesystem Journalin.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/A9G8W2BN/lee_wongun.html:text/html}
-}
-
-@inproceedings{prabhakaran_analysis_2005,
-	location = {{USA}},
-	title = {Analysis and evolution of journaling file systems},
-	series = {{ATEC} '05},
-	abstract = {We develop and apply two new methods for analyzing file system behavior and evaluating file system changes. First, semantic block-level analysis ({SBA}) combines knowledge of on-disk data structures with a trace of disk traffic to infer file system behavior; in contrast to standard benchmarking approaches, {SBA} enables users to understand why the file system behaves as it does. Second, semantic trace playback ({STP}) enables traces of disk traffic to be easily modified to represent changes in the file system implementation; in contrast to directly modifying the file system, {STP} enables users to rapidly gauge the benefits of new policies. We use {SBA} to analyze Linux ext3, {ReiserFS}, {JFS}, and Windows {NTFS}; in the process, we uncover many strengths and weaknesses of these journaling file systems. We also apply {STP} to evaluate several modifications to ext3, demonstrating the benefits of various optimizations without incurring the costs of a real implementation.},
-	pages = {8},
-	booktitle = {Proceedings of the annual conference on {USENIX} Annual Technical Conference},
-	publisher = {{USENIX} Association},
-	author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
-	urldate = {2020-10-02},
-	date = {2005-04-10}
-}
-
-@inproceedings{prabhakaran_analysis_2005-1,
-	title = {Analysis and Evolution of Journaling File Systems.},
-	volume = {194},
-	pages = {196--215},
-	booktitle = {{USENIX} Annual Technical Conference, General Track},
-	author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
-	date = {2005},
-	file = {Full Text:/home/cs/Zotero/storage/HFX2FAI5/prabhakaran_html.html:text/html}
-}
-
-@online{noauthor_future_nodate,
-	title = {The future of the page cache [{LWN}.net]},
-	url = {https://lwn.net/Articles/712467/},
-	urldate = {2020-10-02},
-	file = {The future of the page cache [LWN.net]:/home/cs/Zotero/storage/NXL57AYD/712467.html:text/html}
-}
-
-@inproceedings{fang_high_2011,
-	title = {High performance database logging using storage class memory},
-	doi = {10.1109/ICDE.2011.5767918},
-	abstract = {Storage class memory ({SCM}), a new generation of memory technology, offers non-volatility, high-speed, and byte-addressability, which combines the best properties of current hard disk drives ({HDD}) and main memory. With these extraordinary features, current systems and software stacks need to be redesigned to get significantly improved performance by eliminating disk input/output (I/O) barriers; and simpler system designs by avoiding complicated data format transformations. In current {DBMSs}, logging and recovery are the most important components to enforce the atomicity and durability of a database. Traditionally, database systems rely on disks for logging transaction actions and log records are forced to disks when a transaction commits. Because of the slow disk I/O speed, logging becomes one of the major bottlenecks for a {DBMS}. Exploiting {SCM} as a persistent memory for transaction logging can significantly reduce logging overhead. In this paper, we present the detailed design of an {SCM}-based approach for {DBMSs} logging, which achieves high performance by simplified system design and better concurrency support. We also discuss solutions to tackle several major issues arising during system recovery, including hole detection, partial write detection, and any-point failure recovery. This new logging approach is used to replace the traditional disk based logging approach in {DBMSs}. To analyze the performance characteristics of our {SCM}-based logging approach, we implement the prototype on {IBM} {SolidDB}. In common circumstances, our experimental results show that the new {SCM}-based logging approach provides as much as 7 times throughput improvement over disk-based logging in the Telecommunication Application Transaction Processing ({TATP}) benchmark.},
-	eventtitle = {2011 {IEEE} 27th International Conference on Data Engineering},
-	pages = {1221--1231},
-	booktitle = {2011 {IEEE} 27th International Conference on Data Engineering},
-	author = {Fang, Ru and Hsiao, Hui-I and He, Bin and Mohan, C. and Wang, Yun},
-	date = {2011-04},
-	note = {{ISSN}: 2375-026X},
-	keywords = {nvmm-zil, Phase change materials, Random access memory, any-point failure recovery, Computer crashes, Data structures, database management systems, Databases, {DBMS} logging, disc drives, hard discs, hard disk drives, Hardware, high performance database logging, hole detection, {IBM} {SolidDB}, log records, logging transaction actions, main memory, partial write detection, {SCM}-based approach, storage class memory, telecommunication application transaction processing benchmark, transaction processing, Writing},
-	file = {IEEE Xplore Full Text PDF:/home/cs/Zotero/storage/4AJVU5XC/Fang et al. - 2011 - High performance database logging using storage cl.pdf:application/pdf;IEEE Xplore Abstract Record:/home/cs/Zotero/storage/KH8N7Q76/5767918.html:text/html}
-}
-
-@inproceedings{helland_group_1987,
-	title = {Group commit timers and high volume transaction systems},
-	pages = {301--329},
-	booktitle = {International Workshop on High Performance Transaction Systems},
-	publisher = {Springer},
-	author = {Helland, Pat and Sammer, Harald and Lyon, Jim and Carr, Richard and Garrett, Phil and Reuter, Andreas},
-	date = {1987},
-	file = {Snapshot:/home/cs/Zotero/storage/P67U5ZRA/10.html:text/html;Helland et al. - 1987 - Group commit timers and high volume transaction sy.pdf:/home/cs/Zotero/storage/A97G5SM7/Helland et al. - 1987 - Group commit timers and high volume transaction sy.pdf:application/pdf}
-}
-
-@article{wang_scalable_2014,
-	title = {Scalable logging through emerging non-volatile memory},
-	volume = {7},
-	pages = {865--876},
-	number = {10},
-	journaltitle = {Proceedings of the {VLDB} Endowment},
-	author = {Wang, Tianzheng and Johnson, Ryan},
-	date = {2014},
-	note = {Publisher: {VLDB} Endowment},
-	file = {Full Text:/home/cs/Zotero/storage/QYHMU646/Wang and Johnson - 2014 - Scalable logging through emerging non-volatile mem.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/43WKEM3T/2732951.html:text/html}
-}
-
-@inreference{noauthor_aries_2019,
-	title = {{ARIES}: Algorithms for Recovery and Isolation Exploiting Semantics},
-	rights = {Creative Commons Attribution-{ShareAlike} License},
-	url = {https://en.wikipedia.org/w/index.php?title=Algorithms_for_Recovery_and_Isolation_Exploiting_Semantics&oldid=929385478},
-	abstract = {In computer science, Algorithms for Recovery and Isolation Exploiting Semantics, or {ARIES} is a recovery algorithm designed to work with a no-force, steal database approach; it is used by {IBM} {DB}2, Microsoft {SQL} Server and many other database systems. {IBM} Fellow Dr. C. Mohan is the primary inventor of the {ARIES} family of algo.Three main principles lie behind {ARIES}
-
-Write-ahead logging: Any change to an object is first recorded in the log, and the log must be written to stable storage before changes to the object are written to disk.
-Repeating history during Redo: On restart after a crash, {ARIES} retraces the actions of a database before the crash and brings the system back to the exact state that it was in before the crash.  Then it undoes the transactions still active at crash time.
-Logging changes during Undo: Changes made to the database while undoing transactions are logged to ensure such an action isn't repeated in the event of repeated restarts.},
-	booktitle = {Wikipedia},
-	urldate = {2020-10-02},
-	date = {2019-12-05},
-	langid = {english},
-	note = {Page Version {ID}: 929385478},
-	file = {Snapshot:/home/cs/Zotero/storage/269NG2XQ/index.html:text/html}
-}
-
-@article{pelley_storage_2013,
-	title = {Storage management in the {NVRAM} era},
-	volume = {7},
-	pages = {121--132},
-	number = {2},
-	journaltitle = {Proceedings of the {VLDB} Endowment},
-	author = {Pelley, Steven and Wenisch, Thomas F. and Gold, Brian T. and Bridge, Bill},
-	date = {2013},
-	note = {Publisher: {VLDB} Endowment},
-	file = {Full Text:/home/cs/Zotero/storage/59H2XWB9/Pelley et al. - 2013 - Storage management in the NVRAM era.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/ZTJB67BV/2732228.html:text/html}
-}
-
-@article{huang_nvram-aware_2014,
-	title = {{NVRAM}-aware logging in transaction systems},
-	volume = {8},
-	pages = {389--400},
-	number = {4},
-	journaltitle = {Proceedings of the {VLDB} Endowment},
-	author = {Huang, Jian and Schwan, Karsten and Qureshi, Moinuddin K.},
-	date = {2014},
-	note = {Publisher: {VLDB} Endowment},
-	file = {Snapshot:/home/cs/Zotero/storage/DUWWB4JP/2735496.html:text/html}
-}
-
-@inreference{noauthor_journaling_2020,
-	title = {Journaling block device},
-	rights = {Creative Commons Attribution-{ShareAlike} License},
-	url = {https://en.wikipedia.org/w/index.php?title=Journaling_block_device&oldid=956897787},
-	abstract = {{JBD}, or journaling block device, is a generic block device journaling layer in the Linux kernel written by Stephen Tweedie from Red Hat. {JBD} is filesystem-independent. ext3, ext4 and {OCFS}2 are known to use {JBD}.{JBD} exists in two versions, {JBD} and {JBD}2. {JBD} was created with ext3 in 1998. {JBD}2 was forked from {JBD} in 2006 with ext4, with the goal of supporting a 64-bit (as opposed to 32-bit-only in {JBD}) block number. As a result, the maximum volume size in ext4 is increased to 1 {EiB} compared to 16 {TiB} in ext3 (assuming 4 {KiB} blocks). {JBD}2 is backward-compatible. {OCFS}2 starting from Linux 2.6.28 uses {JBD}2. The old {JBD} was removed with the dedicated ext3 driver in Linux 4.3 (2015).},
-	booktitle = {Wikipedia},
-	urldate = {2020-10-02},
-	date = {2020-05-15},
-	langid = {english},
-	note = {Page Version {ID}: 956897787},
-	file = {Snapshot:/home/cs/Zotero/storage/FRG38KEW/index.html:text/html}
-}
-
-@online{noauthor_linux_2007,
-	title = {Linux: The Journaling Block Device {\textbar} {KernelTrap}},
-	url = {https://web.archive.org/web/20070926223043/http://kerneltrap.org/node/6741},
-	shorttitle = {Linux},
-	urldate = {2020-10-02},
-	date = {2007-09-26},
-	file = {Snapshot:/home/cs/Zotero/storage/SV3XPXPS/6741.html:text/html}
-}
-
-@inproceedings{kim_subzero_2020,
-	location = {New York, {NY}, {USA}},
-	title = {{SubZero}: zero-copy {IO} for persistent main memory file systems},
-	isbn = {978-1-4503-8069-0},
-	url = {https://doi.org/10.1145/3409963.3410489},
-	doi = {10.1145/3409963.3410489},
-	series = {{APSys} '20},
-	shorttitle = {{SubZero}},
-	abstract = {{POSIX}-style read() and write() have long been the standard interface for accessing data in files. However, the data copy into and out of memory these methods require imposes an unnecessary overhead when files are stored in fast persistent memories ({PMEMs}). To avoid the copy, {PMEM}-aware file systems generally provide direct-access ({DAX})-based mmap(), but in doing so force the programmer to manage write-atomicity and concurrent accesses to the file. In this work, we propose two new system calls - peek() and patch(), and collectively called {SubZero} - that read and update {PMEM}-backed files without any copies. To show its potential, we implemented {SubZero} in two state-of-the-art {PMEM} file systems, {XFS}-{DAX} and {NOVA}. Measurements of simple benchmarks show that {SubZero} can outperform copy-based read() and write() by up to 2x and 2.8x, respectively. At the application level, peek() improves {GET} performance of the Apache Web Server by 3.6x, and patch() boosts {SET} performance of Kyoto Cabinet up to 1.3x.},
-	pages = {1--8},
-	booktitle = {Proceedings of the 11th {ACM} {SIGOPS} Asia-Pacific Workshop on Systems},
-	publisher = {Association for Computing Machinery},
-	author = {Kim, Juno and Soh, Yun Joon and Izraelevitz, Joseph and Zhao, Jishen and Swanson, Steven},
-	urldate = {2020-10-02},
-	date = {2020-08-24},
-	keywords = {direct access, file systems, persistent memory, {DAX}, non-volatile memory},
-	file = {Full Text PDF:/home/cs/Zotero/storage/UPJD8K2E/Kim et al. - 2020 - SubZero zero-copy IO for persistent main memory f.pdf:application/pdf}
-}
-
-@inproceedings{li_nitro_2014,
-	title = {Nitro: A Capacity-Optimized \$\{\${SSD}\$\}\$ Cache for Primary Storage},
-	shorttitle = {Nitro},
-	pages = {501--512},
-	booktitle = {2014 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 14)},
-	author = {Li, Cheng and Shilane, Philip and Douglis, Fred and Shim, Hyong and Smaldone, Stephen and Wallace, Grant},
-	date = {2014},
-	file = {Full Text:/home/cs/Zotero/storage/Q8GFUWM3/Li et al. - 2014 - Nitro A Capacity-Optimized \$\{\$SSD\$\}\$ Cache for Pr.pdf:application/pdf}
-}
-
-@inproceedings{yoshimura_evfs_2019,
-	title = {{EvFS}: User-level, Event-Driven File System for Non-Volatile Memory},
-	url = {https://www.usenix.org/conference/hotstorage19/presentation/yoshimura},
-	shorttitle = {{EvFS}},
-	eventtitle = {11th \{{USENIX}\} Workshop on Hot Topics in Storage and File Systems ({HotStorage} 19)},
-	author = {Yoshimura, Takeshi and Chiba, Tatsuhiro and Horii, Hiroshi},
-	urldate = {2020-10-02},
-	date = {2019},
-	langid = {english},
-	file = {Full Text PDF:/home/cs/Zotero/storage/W529PYG9/Yoshimura et al. - 2019 - EvFS User-level, Event-Driven File System for Non.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/KLYJJHQ2/yoshimura.html:text/html}
-}
-
-@online{noauthor_rocksdb_nodate,
-	title = {rocksdb benchmark - Google Search},
-	url = {https://www.google.com/search?client=firefox-b-d&q=rocksdb+benchmark},
-	urldate = {2020-10-03},
-	file = {rocksdb benchmark - Google Search:/home/cs/Zotero/storage/VFATJSMT/search.html:text/html}
-}
-
-@inproceedings{cao_characterizing_2020,
-	title = {Characterizing, modeling, and benchmarking {RocksDB} key-value workloads at Facebook},
-	pages = {209--223},
-	booktitle = {18th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 20)},
-	author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David {HC}},
-	date = {2020},
-	file = {Full Text:/home/cs/Zotero/storage/443MSFNN/Cao et al. - 2020 - Characterizing, modeling, and benchmarking RocksDB.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/CGBGB2U6/cao-zhichao.html:text/html}
-}
-
-@online{noauthor_flushwal_nodate,
-	title = {{FlushWAL}; less fwrite, faster writes},
-	url = {http://rocksdb.org/blog/2017/08/25/flushwal.html},
-	abstract = {When {DB}::Put is called, the data is written to both memtable (to be flushed to {SST} files later) and the {WAL} (write-ahead log) if it is enabled. In the case o...},
-	titleaddon = {{RocksDB}},
-	urldate = {2020-10-03},
-	file = {Snapshot:/home/cs/Zotero/storage/V65GQDVW/flushwal.html:text/html}
-}
-
-@online{noauthor_why_2019,
-	title = {Why we built {CockroachDB} on top of {RocksDB}},
-	url = {https://www.cockroachlabs.com/blog/cockroachdb-on-rocksd/},
-	abstract = {{CockroachDB} uses {RocksDB} for its storage engine because of {RocksDB}'s rich feature set, which is necessary for a complex product like a distributed {SQL} database.},
-	titleaddon = {Cockroach Labs},
-	urldate = {2020-10-03},
-	date = {2019-01-17},
-	langid = {american},
-	note = {Section: systems},
-	file = {Snapshot:/home/cs/Zotero/storage/DFNSVDXC/cockroachdb-on-rocksd.html:text/html}
-}
-
-@online{noauthor_characterizing_nodate,
-	title = {Characterizing, modeling, and benchmarking {RocksDB} key-value workloads at Facebook {\textbar} the morning paper},
-	url = {https://blog.acolyer.org/2020/03/11/rocks-db-at-facebook/},
-	urldate = {2020-10-03},
-	langid = {british}
-}
-
-@article{jeong_androstep_2013,
-	title = {Androstep: Android storage performance analysis tool},
-	shorttitle = {Androstep},
-	journaltitle = {Software Engineering 2013-Workshopband},
-	author = {Jeong, Sooman and Lee, Kisung and Hwang, Jungwoo and Lee, Seongjin and Won, Youjip},
-	date = {2013},
-	note = {Publisher: Gesellschaft für Informatik {eV}}
-}
-
-@inproceedings{zhang_pangolin_2019,
-	title = {Pangolin: A fault-tolerant persistent memory programming library},
-	shorttitle = {Pangolin},
-	pages = {897--912},
-	booktitle = {2019 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 19)},
-	author = {Zhang, Lu and Swanson, Steven},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/ZSL3B5BI/Zhang and Swanson - 2019 - Pangolin A fault-tolerant persistent memory progr.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/VGKV7BIA/zhang-lu.html:text/html}
-}
-
-@online{noauthor_memory_nodate,
-	title = {Memory Barriers Are Like Source Control Operations},
-	url = {https://preshing.com/20120710/memory-barriers-are-like-source-control-operations/},
-	urldate = {2020-10-26},
-	file = {Memory Barriers Are Like Source Control Operations:/home/cs/Zotero/storage/W43UUALC/memory-barriers-are-like-source-control-operations.html:text/html}
-}
-
-@inproceedings{van_renen_persistent_2019,
-	title = {Persistent memory I/O primitives},
-	pages = {1--7},
-	booktitle = {Proceedings of the 15th International Workshop on Data Management on New Hardware},
-	author = {van Renen, Alexander and Vogel, Lukas and Leis, Viktor and Neumann, Thomas and Kemper, Alfons},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/CQN34F4N/van Renen et al. - 2019 - Persistent memory IO primitives.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/EA3ZQZJN/3329785.html:text/html}
-}
-
-@inproceedings{park_ijournaling_2017,
-	title = {{iJournaling}: Fine-grained journaling for improving the latency of fsync system call},
-	shorttitle = {{iJournaling}},
-	pages = {787--798},
-	booktitle = {2017 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 17)},
-	author = {Park, Daejun and Shin, Dongkun},
-	date = {2017},
-	file = {Full Text:/home/cs/Zotero/storage/CM97L6XF/Park and Shin - 2017 - iJournaling Fine-grained journaling for improving.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/5BPBVHLP/park.html:text/html}
-}
-
-@online{noauthor_fast_nodate,
-	title = {Fast commits for ext4 [{LWN}.net]},
-	url = {https://lwn.net/SubscriberLink/842385/ea43ae3921000c72/},
-	urldate = {2021-01-16},
-	file = {Fast commits for ext4 [LWN.net]:/home/cs/Zotero/storage/6VYXBHBD/ea43ae3921000c72.html:text/html}
-}
-
-@inproceedings{park_ijournaling_2017-1,
-	title = {{iJournaling}: Fine-grained journaling for improving the latency of fsync system call},
-	shorttitle = {{iJournaling}},
-	pages = {787--798},
-	booktitle = {2017 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 17)},
-	author = {Park, Daejun and Shin, Dongkun},
-	date = {2017},
-	file = {Full Text:/home/cs/Zotero/storage/CI78G3XV/Park and Shin - 2017 - iJournaling Fine-grained journaling for improving.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/SW2PNCF3/park.html:text/html}
-}
-
-@article{hellwig_xfs_2009,
-	title = {{XFS}: the big storage file system for Linux},
-	volume = {34},
-	shorttitle = {{XFS}},
-	pages = {10--18},
-	number = {5},
-	journaltitle = {; login:: the magazine of {USENIX} \& {SAGE}},
-	author = {Hellwig, Christoph},
-	date = {2009},
-	note = {Publisher: {USENIX} Association},
-	file = {Snapshot:/home/cs/Zotero/storage/WWXVPSGV/articulo.html:text/html}
-}
-
-@inproceedings{sweeney_scalability_1996,
-	title = {Scalability in the {XFS} File System.},
-	volume = {15},
-	booktitle = {{USENIX} Annual Technical Conference},
-	author = {Sweeney, Adam and Doucette, Doug and Hu, Wei and Anderson, Curtis and Nishimoto, Mike and Peck, Geoff},
-	date = {1996},
-	file = {Full Text:/home/cs/Zotero/storage/VQFCWCM4/Sweeney et al. - 1996 - Scalability in the XFS File System.:application/postscript}
-}
-
-@article{hellwig_xfs_2009-1,
-	title = {{XFS}: the big storage file system for Linux},
-	volume = {34},
-	shorttitle = {{XFS}},
-	pages = {10--18},
-	number = {5},
-	journaltitle = {; login:: the magazine of {USENIX} \& {SAGE}},
-	author = {Hellwig, Christoph},
-	date = {2009},
-	note = {Publisher: {USENIX} Association},
-	file = {hellwig.pdf:/home/cs/Zotero/storage/D95IZDBD/hellwig.pdf:application/pdf}
-}
-
-@online{noauthor_introduction_nodate,
-	title = {Introduction to the Linux {XFS} File System},
-	url = {http://landoflinux.com/linux_xfs_filesystem_introduction.html},
-	urldate = {2021-02-03},
-	file = {Introduction to the Linux XFS File System:/home/cs/Zotero/storage/7BPNG7ZE/linux_xfs_filesystem_introduction.html:text/html}
-}
-
-@misc{noauthor_xfs_nodate,
-	title = {{XFS} Algorithms \& Data Structure},
-	file = {XFS Algorithms & Data Structure.pdf:/home/cs/Zotero/storage/E2HRSA4L/XFS Algorithms & Data Structure.pdf:application/pdf}
-}
-
-@article{bornholt_specifying_2016,
-	title = {Specifying and Checking File System Crash-Consistency Models},
-	volume = {51},
-	issn = {0362-1340},
-	url = {https://doi.org/10.1145/2954679.2872406},
-	doi = {10.1145/2954679.2872406},
-	abstract = {Applications depend on persistent storage to recover state after system crashes. But the {POSIX} file system interfaces do not define the possible outcomes of a crash. As a result, it is difficult for application writers to correctly understand the ordering of and dependencies between file system operations, which can lead to corrupt application state and, in the worst case, catastrophic data loss. This paper presents crash-consistency models, analogous to memory consistency models, which describe the behavior of a file system across crashes. Crash-consistency models include both litmus tests, which demonstrate allowed and forbidden behaviors, and axiomatic and operational specifications. We present a formal framework for developing crash-consistency models, and a toolkit, called Ferrite, for validating those models against real file system implementations. We develop a crash-consistency model for ext4, and use Ferrite to demonstrate unintuitive crash behaviors of the ext4 implementation. To demonstrate the utility of crash-consistency models to application writers, we use our models to prototype proof-of-concept verification and synthesis tools, as well as new library interfaces for crash-safe applications.},
-	pages = {83--98},
-	number = {4},
-	journaltitle = {{ACM} {SIGPLAN} Notices},
-	shortjournal = {{SIGPLAN} Not.},
-	author = {Bornholt, James and Kaufmann, Antoine and Li, Jialin and Krishnamurthy, Arvind and Torlak, Emina and Wang, Xi},
-	urldate = {2021-02-03},
-	date = {2016-03-25},
-	keywords = {crash consistency, file systems, verification},
-	file = {Full Text PDF:/home/cs/Zotero/storage/R6ULWW2T/Bornholt et al. - 2016 - Specifying and Checking File System Crash-Consiste.pdf:application/pdf;annotated:/home/cs/Zotero/storage/NSG2JLMN/bornholt.pdf:application/pdf;notes and sketch section 5.1:/home/cs/Zotero/storage/CCYV8272/notes and sketch section 5.1:application/pdf}
-}
-
-@inproceedings{lu_study_2013,
-	title = {A study of Linux file system evolution},
-	pages = {31--44},
-	booktitle = {11th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 13)},
-	author = {Lu, Lanyue and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Lu, Shan},
-	date = {2013},
-	file = {Full Text:/home/cs/Zotero/storage/CBTXGLE2/Lu et al. - 2013 - A study of Linux file system evolution.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/UHREXJME/lu.html:text/html}
-}
-
-@article{yang_using_2006,
-	title = {Using model checking to find serious file system errors},
-	volume = {24},
-	pages = {393--423},
-	number = {4},
-	journaltitle = {{ACM} Transactions on Computer Systems ({TOCS})},
-	author = {Yang, Junfeng and Twohey, Paul and Engler, Dawson and Musuvathi, Madanlal},
-	date = {2006},
-	note = {Publisher: {ACM} New York, {NY}, {USA}},
-	file = {Full Text:/home/cs/Zotero/storage/BH56IM3M/Yang et al. - 2006 - Using model checking to find serious file system e.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/SCGM85HM/1189256.html:text/html}
-}
-
-@inproceedings{yang_explode_2006,
-	title = {Explode: a lightweight, general system for finding serious storage system errors},
-	shorttitle = {Explode},
-	pages = {131--146},
-	booktitle = {Proceedings of the 7th symposium on Operating systems design and implementation},
-	author = {Yang, Junfeng and Sar, Can and Engler, Dawson},
-	date = {2006},
-	file = {Full Text:/home/cs/Zotero/storage/5473WE6V/Yang et al. - 2006 - Explode a lightweight, general system for finding.pdf:application/pdf}
-}
-
-@inproceedings{prabhakaran_model-based_2005,
-	title = {Model-based failure analysis of journaling file systems},
-	pages = {802--811},
-	booktitle = {2005 International Conference on Dependable Systems and Networks ({DSN}'05)},
-	publisher = {{IEEE}},
-	author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
-	date = {2005},
-	file = {Snapshot:/home/cs/Zotero/storage/53YVJD6B/1467854.html:text/html;Prabhakaran et al. - 2005 - Model-based failure analysis of journaling file sy.pdf:/home/cs/Zotero/storage/R8PSBWWG/Prabhakaran et al. - 2005 - Model-based failure analysis of journaling file sy.pdf:application/pdf}
-}
-
-@inproceedings{dulloor_system_2014,
-	location = {New York, {NY}, {USA}},
-	title = {System software for persistent memory},
-	isbn = {978-1-4503-2704-6},
-	url = {https://doi.org/10.1145/2592798.2592814},
-	doi = {10.1145/2592798.2592814},
-	series = {{EuroSys} '14},
-	abstract = {Emerging byte-addressable, non-volatile memory technologies offer performance within an order of magnitude of {DRAM}, prompting their inclusion in the processor memory subsystem. However, such load/store accessible Persistent Memory ({PM}) has implications on system design, both hardware and software. In this paper, we explore system software support to enable low-overhead {PM} access by new and legacy applications. To this end, we implement {PMFS}, a light-weight {POSIX} file system that exploits {PM}'s byte-addressability to avoid overheads of block-oriented storage and enable direct {PM} access by applications (with memory-mapped I/O). {PMFS} exploits the processor's paging and memory ordering features for optimizations such as fine-grained logging (for consistency) and transparent large page support (for faster memory-mapped I/O). To provide strong consistency guarantees, {PMFS} requires only a simple hardware primitive that provides software enforceable guarantees of durability and ordering of stores to {PM}. Finally, {PMFS} uses the processor's existing features to protect {PM} from stray writes, thereby improving reliability. Using a hardware emulator, we evaluate {PMFS}'s performance with several workloads over a range of {PM} performance characteristics. {PMFS} shows significant (up to an order of magnitude) gains over traditional file systems (such as ext4) on a {RAMDISK}-like {PM} block device, demonstrating the benefits of optimizing system software for {PM}.},
-	pages = {1--15},
-	booktitle = {Proceedings of the Ninth European Conference on Computer Systems},
-	publisher = {Association for Computing Machinery},
-	author = {Dulloor, Subramanya R. and Kumar, Sanjay and Keshavamurthy, Anil and Lantz, Philip and Reddy, Dheeraj and Sankaran, Rajesh and Jackson, Jeff},
-	urldate = {2021-02-04},
-	date = {2014-04-14},
-	file = {Full Text PDF:/home/cs/Zotero/storage/I8374IQR/Dulloor et al. - 2014 - System software for persistent memory.pdf:application/pdf}
-}
-
-@inproceedings{lantz_yat_2014,
-	title = {Yat: A validation framework for persistent memory software},
-	shorttitle = {Yat},
-	pages = {433--438},
-	booktitle = {2014 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 14)},
-	author = {Lantz, Philip and Dulloor, Subramanya and Kumar, Sanjay and Sankaran, Rajesh and Jackson, Jeff},
-	date = {2014},
-	file = {Full Text:/home/cs/Zotero/storage/WFITH8HL/Lantz et al. - 2014 - Yat A validation framework for persistent memory .pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/IV3UTHY8/lantz.html:text/html}
-}
-
-@inproceedings{neal_agamotto_2020,
-	title = {\$\{\${AGAMOTTO}\$\}\$: How Persistent is your Persistent Memory Application?},
-	shorttitle = {\$\{\${AGAMOTTO}\$\}\$},
-	pages = {1047--1064},
-	booktitle = {14th \$\{\${USENIX}\$\}\$ Symposium on Operating Systems Design and Implementation (\$\{\${OSDI}\$\}\$ 20)},
-	author = {Neal, Ian and Reeves, Ben and Stoler, Ben and Quinn, Andrew and Kwon, Youngjin and Peter, Simon and Kasikci, Baris},
-	date = {2020},
-	file = {Full Text:/home/cs/Zotero/storage/K577Q97B/Neal et al. - 2020 - \$\{\$AGAMOTTO\$\}\$ How Persistent is your Persistent .pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/TZEAMFP3/neal.html:text/html}
-}
-
-@inproceedings{pillai_all_2014,
-	title = {All file systems are not created equal: On the complexity of crafting crash-consistent applications},
-	shorttitle = {All file systems are not created equal},
-	pages = {433--448},
-	booktitle = {11th \$\{\${USENIX}\$\}\$ Symposium on Operating Systems Design and Implementation (\$\{\${OSDI}\$\}\$ 14)},
-	author = {Pillai, Thanumalayan Sankaranarayana and Chidambaram, Vijay and Alagappan, Ramnatthan and Al-Kiswany, Samer and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
-	date = {2014},
-	file = {Full Text:/home/cs/Zotero/storage/WHNDCRPT/Pillai et al. - 2014 - All file systems are not created equal On the com.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/66ZHW9LP/pillai.html:text/html}
-}
-
-@online{noauthor_pmemio_nodate,
-	title = {pmem.io: An introduction to pmemcheck (part 1) - basics},
-	url = {https://pmem.io/2015/07/17/pmemcheck-basic.html},
-	urldate = {2021-02-04},
-	file = {pmem.io\: An introduction to pmemcheck (part 1) - basics:/home/cs/Zotero/storage/AVR8KBUZ/pmemcheck-basic.html:text/html}
-}
-
-@inproceedings{liu_pmtest_2019-1,
-	title = {Pmtest: A fast and flexible testing framework for persistent memory programs},
-	shorttitle = {Pmtest},
-	pages = {411--425},
-	booktitle = {Proceedings of the Twenty-Fourth International Conference on Architectural Support for Programming Languages and Operating Systems},
-	author = {Liu, Sihang and Wei, Yizhou and Zhao, Jishen and Kolli, Aasheesh and Khan, Samira},
-	date = {2019},
-	file = {Full Text:/home/cs/Zotero/storage/NMKKB7L2/Liu et al. - 2019 - Pmtest A fast and flexible testing framework for .pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/6V9DW78B/3297858.html:text/html}
-}
-
-@inproceedings{condit_better_2009,
-	location = {New York, {NY}, {USA}},
-	title = {Better I/O through byte-addressable, persistent memory},
-	isbn = {978-1-60558-752-3},
-	url = {https://doi.org/10.1145/1629575.1629589},
-	doi = {10.1145/1629575.1629589},
-	series = {{SOSP} '09},
-	abstract = {Modern computer systems have been built around the assumption that persistent storage is accessed via a slow, block-based interface. However, new byte-addressable, persistent memory technologies such as phase change memory ({PCM}) offer fast, fine-grained access to persistent storage. In this paper, we present a file system and a hardware architecture that are designed around the properties of persistent, byteaddressable memory. Our file system, {BPFS}, uses a new technique called short-circuit shadow paging to provide atomic, fine-grained updates to persistent storage. As a result, {BPFS} provides strong reliability guarantees and offers better performance than traditional file systems, even when both are run on top of byte-addressable, persistent memory. Our hardware architecture enforces atomicity and ordering guarantees required by {BPFS} while still providing the performance benefits of the L1 and L2 caches. Since these memory technologies are not yet widely available, we evaluate {BPFS} on {DRAM} against {NTFS} on both a {RAM} disk and a traditional disk. Then, we use microarchitectural simulations to estimate the performance of {BPFS} on {PCM}. Despite providing strong safety and consistency guarantees, {BPFS} on {DRAM} is typically twice as fast as {NTFS} on a {RAM} disk and 4-10 times faster than {NTFS} on disk. We also show that {BPFS} on {PCM} should be significantly faster than a traditional disk-based file system.},
-	pages = {133--146},
-	booktitle = {Proceedings of the {ACM} {SIGOPS} 22nd symposium on Operating systems principles},
-	publisher = {Association for Computing Machinery},
-	author = {Condit, Jeremy and Nightingale, Edmund B. and Frost, Christopher and Ipek, Engin and Lee, Benjamin and Burger, Doug and Coetzee, Derrick},
-	urldate = {2021-02-04},
-	date = {2009-10-11},
-	keywords = {file systems, performance, phase change memory},
-	file = {Full Text PDF:/home/cs/Zotero/storage/2ZHZ7MNS/Condit et al. - 2009 - Better IO through byte-addressable, persistent me.pdf:application/pdf}
-}
-
-@online{noauthor_real-world_nodate,
-	title = {Real-world Performance Advantages of {NVDIMM} and {NVMe}: A Case Study with {OpenZFS} {\textbar} {SNIA}},
-	url = {https://www.snia.org/educational-library/real-world-performance-advantages-nvdimm-and-nvme-case-study-openzfs-2018},
-	urldate = {2021-02-04},
-	file = {Real-world Performance Advantages of NVDIMM and NVMe\: A Case Study with OpenZFS | SNIA:/home/cs/Zotero/storage/GQW36EGX/real-world-performance-advantages-nvdimm-and-nvme-case-study-openzfs-2018.html:text/html}
-}
-
-@online{noauthor_error_nodate,
-	title = {Error Recovery in Persistent Memory Applications},
-	url = {https://www.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html},
-	abstract = {Recovering against memory errors and unsafe shutdowns for persistent memory applications.},
-	titleaddon = {Intel},
-	urldate = {2021-02-05},
-	langid = {english}
-}
-
-@online{noauthor_walking_nodate,
-	title = {Walking the {PMEM} talk {\textbar} {SNIA}},
-	url = {https://www.snia.org/educational-library/walking-pmem-talk-2018},
-	urldate = {2021-02-09},
-	file = {Walking the PMEM talk | SNIA:/home/cs/Zotero/storage/RBSTZ65K/walking-pmem-talk-2018.html:text/html}
-}
-
-@inproceedings{george_go-pmem_2020,
-	title = {go-pmem: Native Support for Programming Persistent Memory in Go},
-	isbn = {978-1-939133-14-4},
-	url = {https://www.usenix.org/conference/atc20/presentation/george},
-	shorttitle = {go-pmem},
-	eventtitle = {2020 \{{USENIX}\} Annual Technical Conference (\{{USENIX}\} \{{ATC}\} 20)},
-	pages = {859--872},
-	author = {George, Jerrin Shaji and Verma, Mohit and Venkatasubramanian, Rajesh and Subrahmanyam, Pratap},
-	urldate = {2021-02-10},
-	date = {2020},
-	langid = {english},
-	file = {Full Text PDF:/home/cs/Zotero/storage/CMITV427/George et al. - 2020 - go-pmem Native Support for Programming Persistent.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/KGBPAMUR/george.html:text/html}
-}
-
-@inproceedings{bittman_twizzler_2020,
-	title = {Twizzler: a Data-Centric \$\{\${OS}\$\}\$ for Non-Volatile Memory},
-	shorttitle = {Twizzler},
-	pages = {65--80},
-	booktitle = {2020 \$\{\${USENIX}\$\}\$ Annual Technical Conference (\$\{\${USENIX}\$\}\$\$\{\${ATC}\$\}\$ 20)},
-	author = {Bittman, Daniel and Alvaro, Peter and Mehra, Pankaj and Long, Darrell {DE} and Miller, Ethan L.},
-	date = {2020},
-	file = {Full Text:/home/cs/Zotero/storage/2ZDRVFPK/Bittman et al. - 2020 - Twizzler a Data-Centric \$\{\$OS\$\}\$ for Non-Volatile.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/QLC8374F/bittman.html:text/html}
-}
-
-@inproceedings{chen_scalable_2021,
-	title = {Scalable Persistent Memory File System with Kernel-Userspace Collaboration},
-	pages = {81--95},
-	booktitle = {19th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 21)},
-	author = {Chen, Youmin and Lu, Youyou and Zhu, Bohong and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Shu, Jiwu},
-	date = {2021},
-	file = {Full Text:/home/cs/Zotero/storage/DF738245/Chen et al. - 2021 - Scalable Persistent Memory File System with Kernel.pdf:application/pdf}
-}
-
-@online{noauthor_way_nodate,
-	title = {A way to do atomic writes [{LWN}.net]},
-	url = {https://lwn.net/Articles/789600/},
-	urldate = {2021-03-11},
-	file = {A way to do atomic writes [LWN.net]:/home/cs/Zotero/storage/QKIXYMTT/789600.html:text/html}
-}
-
-@unpublished{mijin_an_rocksdb_nodate,
-	title = {{RocksDB} detail},
-	url = {https://www.slideshare.net/meeeejin/rocksdb-detail},
-	abstract = {{RocksDB} detail},
-	type = {Software},
-	howpublished = {Software},
-	author = {{MIJIN} {AN}},
-	urldate = {2021-03-17}
-}
-
-@online{noauthor_developers_nodate,
-	title = {Developer's Guide - Write Ahead Log - 《{RocksDB} Document（20191008）》 - 书栈网 · {BookStack}},
-	url = {https://www.bookstack.cn/read/rocksdb-en/3f3fb6919e40cc66.md},
-	urldate = {2021-03-17},
-	file = {Developer's Guide - Write Ahead Log - 《RocksDB Document（20191008）》 - 书栈网 · BookStack:/home/cs/Zotero/storage/GDF5MZC2/3f3fb6919e40cc66.html:text/html}
-}
-
-@online{noauthor_write_nodate,
-	title = {Write Ahead Log - {WAL} Recovery Modes - 《{RocksDB} Document（20191008）》 - 书栈网 · {BookStack}},
-	url = {https://www.bookstack.cn/read/rocksdb-en/b9a194c1b599e946.md},
-	urldate = {2021-03-17}
-}
-
-@online{noauthor_performance_nodate,
-	title = {Performance Benchmarking with {TPC}-C {\textbar} {CockroachDB} Docs},
-	url = {https://www.cockroachlabs.com/docs/stable/performance-benchmarking-with-tpcc-local.html},
-	urldate = {2021-03-17},
-	file = {Performance Benchmarking with TPC-C | CockroachDB Docs:/home/cs/Zotero/storage/CZHBJUB5/performance-benchmarking-with-tpcc-local.html:text/html}
-}
-
-@online{noauthor_linuxlassenet_nodate,
-	title = {linuxlasse.net :: {ISCSI} and {ZFS} {ZVOL}},
-	url = {https://linuxlasse.net/linux/howtos/ISCSI_and_ZFS_ZVOL},
-	urldate = {2021-03-17},
-	file = {linuxlasse.net \:\: ISCSI and ZFS ZVOL:/home/cs/Zotero/storage/FFYXTMPB/ISCSI_and_ZFS_ZVOL.html:text/html}
-}
-
-@inproceedings{cao_characterizing_2020-1,
-	title = {Characterizing, modeling, and benchmarking rocksdb key-value workloads at facebook},
-	pages = {209--223},
-	booktitle = {18th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 20)},
-	author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David {HC}},
-	date = {2020},
-	file = {Full Text:/home/cs/Zotero/storage/DD8ZFRQ8/Cao et al. - 2020 - Characterizing, modeling, and benchmarking rocksdb.pdf:application/pdf;Snapshot:/home/cs/Zotero/storage/KQESKU7J/cao-zhichao.html:text/html}
-}
-
-@inproceedings{cao_characterizing_2020-2,
-	title = {Characterizing, modeling, and benchmarking rocksdb key-value workloads at facebook},
-	pages = {209--223},
-	booktitle = {18th \$\{\${USENIX}\$\}\$ Conference on File and Storage Technologies (\$\{\${FAST}\$\}\$ 20)},
-	author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David {HC}},
-	date = {2020}
+
+@online{AppendixDeviceMapper,
+  title = {Appendix {{A}}. {{The Device Mapper Red Hat Enterprise Linux}} 6},
+  url = {https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/6/html/logical_volume_manager_administration/device_mapper},
+  urldate = {2021-04-13},
+  abstract = {The Red Hat Customer Portal delivers the knowledge, expertise, and guidance available through your Red Hat subscription.},
+  file = {/home/cs/Zotero/storage/DMPIHVLI/device_mapper.html},
+  langid = {english},
+  organization = {{Red Hat Customer Portal}}
+}
+
+@inreference{ARIESAlgorithmsRecovery2019,
+  title = {{{ARIES}}: {{Algorithms}} for {{Recovery}} and {{Isolation Exploiting Semantics}}},
+  booktitle = {Wikipedia},
+  date = {2019-12-05T13:59:27Z},
+  url = {https://en.wikipedia.org/w/index.php?title=Algorithms_for_Recovery_and_Isolation_Exploiting_Semantics&oldid=929385478},
+  urldate = {2020-10-02},
+  abstract = {In computer science, Algorithms for Recovery and Isolation Exploiting Semantics, or ARIES is a recovery algorithm designed to work with a no-force, steal database approach; it is used by IBM DB2, Microsoft SQL Server and many other database systems. IBM Fellow Dr. C. Mohan is the primary inventor of the ARIES family of algo.Three main principles lie behind ARIES Write-ahead logging: Any change to an object is first recorded in the log, and the log must be written to stable storage before changes to the object are written to disk. Repeating history during Redo: On restart after a crash, ARIES retraces the actions of a database before the crash and brings the system back to the exact state that it was in before the crash.  Then it undoes the transactions still active at crash time. Logging changes during Undo: Changes made to the database while undoing transactions are logged to ensure such an action isn't repeated in the event of repeated restarts.},
+  annotation = {Page Version ID: 929385478},
+  file = {/home/cs/Zotero/storage/269NG2XQ/index.html},
+  langid = {english}
+}
+
+@online{arulrajMultitierBufferManagement2019,
+  title = {Multi-Tier Buffer Management and Storage System Design for Non-Volatile Memory},
+  author = {Arulraj, Joy and Pavlo, Andy and Malladi, Krishna Teja},
+  date = {2019},
+  archiveprefix = {arXiv},
+  eprint = {1901.10938},
+  eprinttype = {arxiv},
+  file = {/home/cs/Zotero/storage/IKF29IQS/Arulraj et al. - 2019 - Multi-tier buffer management and storage system de.pdf;/home/cs/Zotero/storage/L7UL3JLD/1901.html}
+}
+
+@inproceedings{bittmanTwizzlerDataCentricOS2020,
+  title = {Twizzler: A {{Data}}-{{Centric}} \$\{\$\vphantom\}{{OS}}\$\vphantom\{\}\$ for {{Non}}-{{Volatile Memory}}},
+  shorttitle = {Twizzler},
+  booktitle = {2020 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 20)},
+  author = {Bittman, Daniel and Alvaro, Peter and Mehra, Pankaj and Long, Darrell DE and Miller, Ethan L.},
+  date = {2020},
+  pages = {65--80},
+  file = {/home/cs/Zotero/storage/2ZDRVFPK/Bittman et al. - 2020 - Twizzler a Data-Centric $ $OS$ $ for Non-Volatile.pdf;/home/cs/Zotero/storage/QLC8374F/bittman.html}
+}
+
+@article{bornholtSpecifyingCheckingFile2016,
+  title = {Specifying and {{Checking File System Crash}}-{{Consistency Models}}},
+  author = {Bornholt, James and Kaufmann, Antoine and Li, Jialin and Krishnamurthy, Arvind and Torlak, Emina and Wang, Xi},
+  date = {2016-03-25},
+  journaltitle = {ACM SIGPLAN Notices},
+  shortjournal = {SIGPLAN Not.},
+  volume = {51},
+  pages = {83--98},
+  issn = {0362-1340},
+  doi = {10.1145/2954679.2872406},
+  url = {https://doi.org/10.1145/2954679.2872406},
+  urldate = {2021-02-03},
+  abstract = {Applications depend on persistent storage to recover state after system crashes. But the POSIX file system interfaces do not define the possible outcomes of a crash. As a result, it is difficult for application writers to correctly understand the ordering of and dependencies between file system operations, which can lead to corrupt application state and, in the worst case, catastrophic data loss. This paper presents crash-consistency models, analogous to memory consistency models, which describe the behavior of a file system across crashes. Crash-consistency models include both litmus tests, which demonstrate allowed and forbidden behaviors, and axiomatic and operational specifications. We present a formal framework for developing crash-consistency models, and a toolkit, called Ferrite, for validating those models against real file system implementations. We develop a crash-consistency model for ext4, and use Ferrite to demonstrate unintuitive crash behaviors of the ext4 implementation. To demonstrate the utility of crash-consistency models to application writers, we use our models to prototype proof-of-concept verification and synthesis tools, as well as new library interfaces for crash-safe applications.},
+  file = {/home/cs/Zotero/storage/CCYV8272/notes and sketch section 5.1;/home/cs/Zotero/storage/NSG2JLMN/bornholt.pdf;/home/cs/Zotero/storage/R6ULWW2T/Bornholt et al. - 2016 - Specifying and Checking File System Crash-Consiste.pdf},
+  keywords = {crash consistency,file systems,verification},
+  number = {4}
+}
+
+@inproceedings{caoCharacterizingModelingBenchmarking2020,
+  title = {Characterizing, Modeling, and Benchmarking {{RocksDB}} Key-Value Workloads at {{Facebook}}},
+  booktitle = {18th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 20)},
+  author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David HC},
+  date = {2020},
+  pages = {209--223},
+  file = {/home/cs/Zotero/storage/443MSFNN/Cao et al. - 2020 - Characterizing, modeling, and benchmarking RocksDB.pdf;/home/cs/Zotero/storage/CGBGB2U6/cao-zhichao.html}
+}
+
+@inproceedings{caoCharacterizingModelingBenchmarking2020a,
+  title = {Characterizing, Modeling, and Benchmarking Rocksdb Key-Value Workloads at Facebook},
+  booktitle = {18th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 20)},
+  author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David HC},
+  date = {2020},
+  pages = {209--223},
+  file = {/home/cs/Zotero/storage/DD8ZFRQ8/Cao et al. - 2020 - Characterizing, modeling, and benchmarking rocksdb.pdf;/home/cs/Zotero/storage/KQESKU7J/cao-zhichao.html}
+}
+
+@inproceedings{caoCharacterizingModelingBenchmarking2020b,
+  title = {Characterizing, Modeling, and Benchmarking Rocksdb Key-Value Workloads at Facebook},
+  booktitle = {18th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 20)},
+  author = {Cao, Zhichao and Dong, Siying and Vemuri, Sagar and Du, David HC},
+  date = {2020},
+  pages = {209--223}
+}
+
+@online{CharacterizingModelingBenchmarking,
+  title = {Characterizing, Modeling, and Benchmarking {{RocksDB}} Key-Value Workloads at {{Facebook}} | the Morning Paper},
+  url = {https://blog.acolyer.org/2020/03/11/rocks-db-at-facebook/},
+  urldate = {2020-10-03},
+  langid = {british}
+}
+
+@inproceedings{chenFinegrainedMetadataJournaling2016,
+  title = {Fine-Grained Metadata Journaling on {{NVM}}},
+  booktitle = {2016 32nd {{Symposium}} on {{Mass Storage Systems}} and {{Technologies}} ({{MSST}})},
+  author = {Chen, Cheng and Yang, Jun and Wei, Qingsong and Wang, Chundong and Xue, Mingdi},
+  date = {2016},
+  pages = {1--13},
+  publisher = {{IEEE}},
+  file = {/home/cs/Zotero/storage/IZ58IYJI/Chen et al. - 2016 - Fine-grained metadata journaling on NVM.pdf;/home/cs/Zotero/storage/VCZD6CAQ/7897077.html}
+}
+
+@inproceedings{chenScalablePersistentMemory2021,
+  title = {Scalable {{Persistent Memory File System}} with {{Kernel}}-{{Userspace Collaboration}}},
+  booktitle = {19th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 21)},
+  author = {Chen, Youmin and Lu, Youyou and Zhu, Bohong and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Shu, Jiwu},
+  date = {2021},
+  pages = {81--95},
+  file = {/home/cs/Zotero/storage/DF738245/Chen et al. - 2021 - Scalable Persistent Memory File System with Kernel.pdf}
+}
+
+@inproceedings{conditBetterByteaddressablePersistent2009,
+  title = {Better {{I}}/{{O}} through Byte-Addressable, Persistent Memory},
+  booktitle = {Proceedings of the {{ACM SIGOPS}} 22nd Symposium on {{Operating}} Systems Principles},
+  author = {Condit, Jeremy and Nightingale, Edmund B. and Frost, Christopher and Ipek, Engin and Lee, Benjamin and Burger, Doug and Coetzee, Derrick},
+  date = {2009-10-11},
+  pages = {133--146},
+  publisher = {{Association for Computing Machinery}},
+  location = {{New York, NY, USA}},
+  doi = {10.1145/1629575.1629589},
+  url = {https://doi.org/10.1145/1629575.1629589},
+  urldate = {2021-02-04},
+  abstract = {Modern computer systems have been built around the assumption that persistent storage is accessed via a slow, block-based interface. However, new byte-addressable, persistent memory technologies such as phase change memory (PCM) offer fast, fine-grained access to persistent storage. In this paper, we present a file system and a hardware architecture that are designed around the properties of persistent, byteaddressable memory. Our file system, BPFS, uses a new technique called short-circuit shadow paging to provide atomic, fine-grained updates to persistent storage. As a result, BPFS provides strong reliability guarantees and offers better performance than traditional file systems, even when both are run on top of byte-addressable, persistent memory. Our hardware architecture enforces atomicity and ordering guarantees required by BPFS while still providing the performance benefits of the L1 and L2 caches. Since these memory technologies are not yet widely available, we evaluate BPFS on DRAM against NTFS on both a RAM disk and a traditional disk. Then, we use microarchitectural simulations to estimate the performance of BPFS on PCM. Despite providing strong safety and consistency guarantees, BPFS on DRAM is typically twice as fast as NTFS on a RAM disk and 4-10 times faster than NTFS on disk. We also show that BPFS on PCM should be significantly faster than a traditional disk-based file system.},
+  file = {/home/cs/Zotero/storage/2ZHZ7MNS/Condit et al. - 2009 - Better IO through byte-addressable, persistent me.pdf},
+  isbn = {978-1-60558-752-3},
+  keywords = {file systems,performance,phase change memory},
+  series = {{{SOSP}} '09}
+}
+
+@online{DeveloperGuideWrite,
+  title = {Developer's {{Guide}} - {{Write Ahead Log}} - 《{{RocksDB Document}}（20191008）》 - 书栈网 · {{BookStack}}},
+  url = {https://www.bookstack.cn/read/rocksdb-en/3f3fb6919e40cc66.md},
+  urldate = {2021-03-17},
+  file = {/home/cs/Zotero/storage/GDF5MZC2/3f3fb6919e40cc66.html}
+}
+
+@inproceedings{dewittImplementationTechniquesMain1984,
+  title = {Implementation Techniques for Main Memory Database Systems},
+  booktitle = {Proceedings of the 1984 {{ACM SIGMOD}} International Conference on Management of Data},
+  author = {DeWitt, David J. and Katz, Randy H. and Olken, Frank and Shapiro, Leonard D. and Stonebraker, Michael R. and Wood, David A.},
+  date = {1984},
+  pages = {1--8},
+  file = {/home/cs/Zotero/storage/Q3VUWRQN/DeWitt et al. - 1984 - Implementation techniques for main memory database.pdf;/home/cs/Zotero/storage/HWB6GCYU/602259.html}
+}
+
+@online{DisksPerspectiveFile,
+  title = {Disks from the {{Perspective}} of a {{File System}} - {{ACM Queue}}},
+  url = {https://queue.acm.org/detail.cfm?id=2367378},
+  urldate = {2021-04-10},
+  file = {/home/cs/Zotero/storage/GALB2SDY/detail.html}
+}
+
+@online{duartePageCacheAffair2009,
+  title = {Page {{Cache}}, the {{Affair Between Memory}} and {{Files}}},
+  author = {Duarte, Gustavo},
+  date = {2009-02-11T13:20:18},
+  url = {https://manybutfinite.com/post/page-cache-the-affair-between-memory-and-files/index.html},
+  urldate = {2021-04-10},
+  abstract = {Previously we looked at how the kernel manages virtual memory for a user process, but files and I/O were left out. This post covers the important and often misunderstood relationship between files and},
+  file = {/home/cs/Zotero/storage/7DYEIPST/page-cache-the-affair-between-memory-and-files.html},
+  langid = {english},
+  organization = {{Many But Finite}}
+}
+
+@inproceedings{dulloorSystemSoftwarePersistent2014,
+  title = {System Software for Persistent Memory},
+  booktitle = {Proceedings of the {{Ninth European Conference}} on {{Computer Systems}}},
+  author = {Dulloor, Subramanya R. and Kumar, Sanjay and Keshavamurthy, Anil and Lantz, Philip and Reddy, Dheeraj and Sankaran, Rajesh and Jackson, Jeff},
+  date = {2014-04-14},
+  pages = {1--15},
+  publisher = {{Association for Computing Machinery}},
+  location = {{New York, NY, USA}},
+  doi = {10.1145/2592798.2592814},
+  url = {https://doi.org/10.1145/2592798.2592814},
+  urldate = {2021-02-04},
+  abstract = {Emerging byte-addressable, non-volatile memory technologies offer performance within an order of magnitude of DRAM, prompting their inclusion in the processor memory subsystem. However, such load/store accessible Persistent Memory (PM) has implications on system design, both hardware and software. In this paper, we explore system software support to enable low-overhead PM access by new and legacy applications. To this end, we implement PMFS, a light-weight POSIX file system that exploits PM's byte-addressability to avoid overheads of block-oriented storage and enable direct PM access by applications (with memory-mapped I/O). PMFS exploits the processor's paging and memory ordering features for optimizations such as fine-grained logging (for consistency) and transparent large page support (for faster memory-mapped I/O). To provide strong consistency guarantees, PMFS requires only a simple hardware primitive that provides software enforceable guarantees of durability and ordering of stores to PM. Finally, PMFS uses the processor's existing features to protect PM from stray writes, thereby improving reliability. Using a hardware emulator, we evaluate PMFS's performance with several workloads over a range of PM performance characteristics. PMFS shows significant (up to an order of magnitude) gains over traditional file systems (such as ext4) on a RAMDISK-like PM block device, demonstrating the benefits of optimizing system software for PM.},
+  file = {/home/cs/Zotero/storage/I8374IQR/Dulloor et al. - 2014 - System software for persistent memory.pdf},
+  isbn = {978-1-4503-2704-6},
+  series = {{{EuroSys}} '14}
+}
+
+@online{DurabilityLinuxFile,
+  title = {Durability: {{Linux File APIs}} (Evanjones.Ca)},
+  url = {https://www.evanjones.ca/durability-filesystem.html},
+  urldate = {2021-04-10},
+  file = {/home/cs/Zotero/storage/AV9HXP2H/durability-filesystem.html}
+}
+
+@inproceedings{eisenmanReducingDRAMFootprint2018,
+  title = {Reducing {{DRAM}} Footprint with {{NVM}} in {{Facebook}}},
+  booktitle = {Proceedings of the {{Thirteenth EuroSys Conference}}},
+  author = {Eisenman, Assaf and Gardner, Darryl and AbdelRahman, Islam and Axboe, Jens and Dong, Siying and Hazelwood, Kim and Petersen, Chris and Cidon, Asaf and Katti, Sachin},
+  date = {2018},
+  pages = {1--13},
+  file = {/home/cs/Zotero/storage/69KFBY5P/Eisenman et al. - 2018 - Reducing DRAM footprint with NVM in Facebook.pdf;/home/cs/Zotero/storage/M7BUUIVW/3190508.html}
+}
+
+@online{ErrorRecoveryPersistent,
+  title = {Error {{Recovery}} in {{Persistent Memory Applications}}},
+  url = {https://www.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html},
+  urldate = {2021-02-05},
+  abstract = {Recovering against memory errors and unsafe shutdowns for persistent memory applications.},
+  langid = {english},
+  organization = {{Intel}}
+}
+
+@online{ErrorRecoveryPersistenta,
+  title = {Error {{Recovery}} in {{Persistent Memory Applications}}},
+  url = {https://www.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html},
+  urldate = {2021-04-13},
+  abstract = {Recovering against memory errors and unsafe shutdowns for persistent memory applications.},
+  file = {/home/cs/Zotero/storage/N8GSDQI4/error-recovery-in-persistent-memory-applications.html},
+  langid = {english},
+  organization = {{Intel}}
+}
+
+@inproceedings{fangHighPerformanceDatabase2011,
+  title = {High Performance Database Logging Using Storage Class Memory},
+  booktitle = {2011 {{IEEE}} 27th {{International Conference}} on {{Data Engineering}}},
+  author = {Fang, Ru and Hsiao, Hui-I and He, Bin and Mohan, C. and Wang, Yun},
+  date = {2011-04},
+  pages = {1221--1231},
+  issn = {2375-026X},
+  doi = {10.1109/ICDE.2011.5767918},
+  abstract = {Storage class memory (SCM), a new generation of memory technology, offers non-volatility, high-speed, and byte-addressability, which combines the best properties of current hard disk drives (HDD) and main memory. With these extraordinary features, current systems and software stacks need to be redesigned to get significantly improved performance by eliminating disk input/output (I/O) barriers; and simpler system designs by avoiding complicated data format transformations. In current DBMSs, logging and recovery are the most important components to enforce the atomicity and durability of a database. Traditionally, database systems rely on disks for logging transaction actions and log records are forced to disks when a transaction commits. Because of the slow disk I/O speed, logging becomes one of the major bottlenecks for a DBMS. Exploiting SCM as a persistent memory for transaction logging can significantly reduce logging overhead. In this paper, we present the detailed design of an SCM-based approach for DBMSs logging, which achieves high performance by simplified system design and better concurrency support. We also discuss solutions to tackle several major issues arising during system recovery, including hole detection, partial write detection, and any-point failure recovery. This new logging approach is used to replace the traditional disk based logging approach in DBMSs. To analyze the performance characteristics of our SCM-based logging approach, we implement the prototype on IBM SolidDB. In common circumstances, our experimental results show that the new SCM-based logging approach provides as much as 7 times throughput improvement over disk-based logging in the Telecommunication Application Transaction Processing (TATP) benchmark.},
+  eventtitle = {2011 {{IEEE}} 27th {{International Conference}} on {{Data Engineering}}},
+  file = {/home/cs/Zotero/storage/4AJVU5XC/Fang et al. - 2011 - High performance database logging using storage cl.pdf;/home/cs/Zotero/storage/KH8N7Q76/5767918.html},
+  keywords = {any-point failure recovery,Computer crashes,Data structures,database management systems,Databases,DBMS logging,disc drives,hard discs,hard disk drives,Hardware,high performance database logging,hole detection,IBM SolidDB,log records,logging transaction actions,main memory,nvmm-zil,partial write detection,Phase change materials,Random access memory,SCM-based approach,storage class memory,telecommunication application transaction processing benchmark,transaction processing,Writing}
+}
+
+@online{FastCommitsExt4,
+  title = {Fast Commits for Ext4 [{{LWN}}.Net]},
+  url = {https://lwn.net/SubscriberLink/842385/ea43ae3921000c72/},
+  urldate = {2021-01-16},
+  file = {/home/cs/Zotero/storage/6VYXBHBD/ea43ae3921000c72.html}
+}
+
+@online{FilebenchWorkloadsPersonalities,
+  title = {Filebench Workloads / 'personalities' Overview},
+  url = {https://github.com/filebench/filebench},
+  urldate = {2021-03-30},
+  abstract = {File system and storage benchmark that uses a custom language to generate a large variety of workloads. - filebench/filebench},
+  file = {/home/cs/Zotero/storage/QY69A3ZL/Predefined-personalities.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
+@online{FlushWALLessFwrite,
+  title = {{{FlushWAL}}; Less Fwrite, Faster Writes},
+  url = {http://rocksdb.org/blog/2017/08/25/flushwal.html},
+  urldate = {2020-10-03},
+  abstract = {When DB::Put is called, the data is written to both memtable (to be flushed to SST files later) and the WAL (write-ahead log) if it is enabled. In the case o...},
+  file = {/home/cs/Zotero/storage/V65GQDVW/flushwal.html},
+  organization = {{RocksDB}}
+}
+
+@online{Fsync,
+  title = {Fsync},
+  url = {https://pubs.opengroup.org/onlinepubs/9699919799/functions/fsync.html},
+  urldate = {2021-04-10},
+  file = {/home/cs/Zotero/storage/GQKNA728/fsync.html}
+}
+
+@online{FuturePageCache,
+  title = {The Future of the Page Cache [{{LWN}}.Net]},
+  url = {https://lwn.net/Articles/712467/},
+  urldate = {2020-10-02},
+  file = {/home/cs/Zotero/storage/NXL57AYD/712467.html}
+}
+
+@inproceedings{georgeGopmemNativeSupport2020,
+  title = {Go-Pmem: {{Native Support}} for {{Programming Persistent Memory}} in {{Go}}},
+  shorttitle = {Go-Pmem},
+  author = {George, Jerrin Shaji and Verma, Mohit and Venkatasubramanian, Rajesh and Subrahmanyam, Pratap},
+  date = {2020},
+  pages = {859--872},
+  url = {https://www.usenix.org/conference/atc20/presentation/george},
+  urldate = {2021-02-10},
+  eventtitle = {2020 \{\vphantom\}{{USENIX}}\vphantom\{\} {{Annual Technical Conference}} (\{\vphantom\}{{USENIX}}\vphantom\{\} \{\vphantom\}{{ATC}}\vphantom\{\} 20)},
+  file = {/home/cs/Zotero/storage/CMITV427/George et al. - 2020 - go-pmem Native Support for Programming Persistent.pdf;/home/cs/Zotero/storage/KGBPAMUR/george.html},
+  isbn = {978-1-939133-14-4},
+  langid = {english}
+}
+
+@inproceedings{hellandGroupCommitTimers1987,
+  title = {Group Commit Timers and High Volume Transaction Systems},
+  booktitle = {International {{Workshop}} on {{High Performance Transaction Systems}}},
+  author = {Helland, Pat and Sammer, Harald and Lyon, Jim and Carr, Richard and Garrett, Phil and Reuter, Andreas},
+  date = {1987},
+  pages = {301--329},
+  publisher = {{Springer}},
+  file = {/home/cs/Zotero/storage/A97G5SM7/Helland et al. - 1987 - Group commit timers and high volume transaction sy.pdf;/home/cs/Zotero/storage/P67U5ZRA/10.html}
+}
+
+@article{hellwigXFSBigStorage2009,
+  title = {{{XFS}}: The Big Storage File System for {{Linux}}},
+  shorttitle = {{{XFS}}},
+  author = {Hellwig, Christoph},
+  date = {2009},
+  journaltitle = {; login:: the magazine of USENIX \& SAGE},
+  volume = {34},
+  pages = {10--18},
+  publisher = {{USENIX Association}},
+  file = {/home/cs/Zotero/storage/WWXVPSGV/articulo.html},
+  number = {5}
+}
+
+@article{hellwigXFSBigStorage2009a,
+  title = {{{XFS}}: The Big Storage File System for {{Linux}}},
+  shorttitle = {{{XFS}}},
+  author = {Hellwig, Christoph},
+  date = {2009},
+  journaltitle = {; login:: the magazine of USENIX \& SAGE},
+  volume = {34},
+  pages = {10--18},
+  publisher = {{USENIX Association}},
+  file = {/home/cs/Zotero/storage/D95IZDBD/hellwig.pdf},
+  number = {5}
+}
+
+@inproceedings{hitzFileSystemDesign1994,
+  title = {File {{System Design}} for an {{NFS File Server Appliance}}.},
+  booktitle = {{{USENIX}} Winter},
+  author = {Hitz, Dave and Lau, James and Malcolm, Michael A.},
+  date = {1994},
+  volume = {94}
+}
+
+@article{huangNVRAMawareLoggingTransaction2014,
+  title = {{{NVRAM}}-Aware Logging in Transaction Systems},
+  author = {Huang, Jian and Schwan, Karsten and Qureshi, Moinuddin K.},
+  date = {2014},
+  journaltitle = {Proceedings of the VLDB Endowment},
+  volume = {8},
+  pages = {389--400},
+  publisher = {{VLDB Endowment}},
+  file = {/home/cs/Zotero/storage/DUWWB4JP/2735496.html},
+  number = {4}
+}
+
+@online{IntroductionLinuxXFS,
+  title = {Introduction to the {{Linux XFS File System}}},
+  url = {http://landoflinux.com/linux_xfs_filesystem_introduction.html},
+  urldate = {2021-02-03},
+  file = {/home/cs/Zotero/storage/7BPNG7ZE/linux_xfs_filesystem_introduction.html}
+}
+
+@online{IntroductionPmemcheckPart,
+  title = {An Introduction to Pmemcheck (Part 1) - Basics},
+  url = {https://pmem.io/2015/07/17/pmemcheck-basic.html},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/5TKS3Q7B/pmemcheck-basic.html}
+}
+
+@article{jeongAndrostepAndroidStorage2013,
+  title = {Androstep: {{Android}} Storage Performance Analysis Tool},
+  shorttitle = {Androstep},
+  author = {Jeong, Sooman and Lee, Kisung and Hwang, Jungwoo and Lee, Seongjin and Won, Youjip},
+  date = {2013},
+  journaltitle = {Software Engineering 2013-Workshopband},
+  publisher = {{Gesellschaft für Informatik eV}}
+}
+
+@article{johnsonAetherScalableApproach2010,
+  title = {Aether: A Scalable Approach to Logging},
+  shorttitle = {Aether},
+  author = {Johnson, Ryan and Pandis, Ippokratis and Stoica, Radu and Athanassoulis, Manos and Ailamaki, Anastasia},
+  date = {2010},
+  journaltitle = {Proceedings of the VLDB Endowment},
+  volume = {3},
+  pages = {681--692},
+  publisher = {{VLDB Endowment}},
+  file = {/home/cs/Zotero/storage/R2KDMNGB/Johnson et al. - 2010 - Aether a scalable approach to logging.pdf;/home/cs/Zotero/storage/F7P29ESQ/1920841.html},
+  number = {1-2}
+}
+
+@inreference{JournalingBlockDevice2020,
+  title = {Journaling Block Device},
+  booktitle = {Wikipedia},
+  date = {2020-05-15T22:27:21Z},
+  url = {https://en.wikipedia.org/w/index.php?title=Journaling_block_device&oldid=956897787},
+  urldate = {2020-10-02},
+  abstract = {JBD, or journaling block device, is a generic block device journaling layer in the Linux kernel written by Stephen Tweedie from Red Hat. JBD is filesystem-independent. ext3, ext4 and OCFS2 are known to use JBD.JBD exists in two versions, JBD and JBD2. JBD was created with ext3 in 1998. JBD2 was forked from JBD in 2006 with ext4, with the goal of supporting a 64-bit (as opposed to 32-bit-only in JBD) block number. As a result, the maximum volume size in ext4 is increased to 1 EiB compared to 16 TiB in ext3 (assuming 4 KiB blocks). JBD2 is backward-compatible. OCFS2 starting from Linux 2.6.28 uses JBD2. The old JBD was removed with the dedicated ext3 driver in Linux 4.3 (2015).},
+  annotation = {Page Version ID: 956897787},
+  file = {/home/cs/Zotero/storage/FRG38KEW/index.html},
+  langid = {english}
+}
+
+@article{jungFRASHExploitingStorage2010,
+  title = {{{FRASH}}: {{Exploiting}} Storage Class Memory in Hybrid File System for Hierarchical Storage},
+  shorttitle = {{{FRASH}}},
+  author = {Jung, Jaemin and Won, Youjip and Kim, Eunki and Shin, Hyungjong and Jeon, Byeonggil},
+  date = {2010-04-05},
+  journaltitle = {ACM Transactions on Storage},
+  shortjournal = {ACM Trans. Storage},
+  volume = {6},
+  pages = {3:1--3:25},
+  issn = {1553-3077},
+  doi = {10.1145/1714454.1714457},
+  url = {https://doi.org/10.1145/1714454.1714457},
+  urldate = {2020-10-01},
+  abstract = {In this work, we develop a novel hybrid file system, FRASH, for storage-class memory and NAND Flash. Despite the promising physical characteristics of storage-class memory, its scale is an order of magnitude smaller than the current storage device scale. This fact makes it less than desirable for use as an independent storage device. We carefully analyze in-memory and on-disk file system objects in a log-structured file system, and exploit memory and storage aspects of the storage-class memory to overcome the drawbacks of the current log-structured file system. FRASH provides a hybrid view storage-class memory. It harbors an in-memory data structure as well as a on-disk structure. It provides nonvolatility to key data structures which have been maintained in-memory in a legacy log-structured file system. This approach greatly improves the mount latency and effectively resolves the robustness issue. By maintaining on-disk structure in storage-class memory, FRASH provides byte-addressability to the file system object and metadata for page, and subsequently greatly improves the I/O performance compared to the legacy log-structured approach. While storage-class memory offers byte granularity, it is still far slower than its DRAM counter part. We develop a copy-on-mount technique to overcome the access latency difference between main memory and storage-class memory. Our file system was able to reduce the mount time by 92\% and file system I/O performance was increased by 16\%.},
+  keywords = {Flash storage,log-structured file system},
+  number = {1}
+}
+
+@inproceedings{kadekodiSplitFSReducingSoftware2019,
+  title = {{{SplitFS}}: Reducing Software Overhead in File Systems for Persistent Memory},
+  shorttitle = {{{SplitFS}}},
+  booktitle = {Proceedings of the 27th {{ACM Symposium}} on {{Operating Systems Principles}}},
+  author = {Kadekodi, Rohan and Lee, Se Kwon and Kashyap, Sanidhya and Kim, Taesoo and Kolli, Aasheesh and Chidambaram, Vijay},
+  date = {2019-10-27},
+  pages = {494--508},
+  publisher = {{Association for Computing Machinery}},
+  location = {{New York, NY, USA}},
+  doi = {10.1145/3341301.3359631},
+  url = {https://doi.org/10.1145/3341301.3359631},
+  urldate = {2020-10-01},
+  abstract = {We present SplitFS, a file system for persistent memory (PM) that reduces software overhead significantly compared to state-of-the-art PM file systems. SplitFS presents a novel split of responsibilities between a user-space library file system and an existing kernel PM file system. The user-space library file system handles data operations by intercepting POSIX calls, memory-mapping the underlying file, and serving the read and overwrites using processor loads and stores. Metadata operations are handled by the kernel PM file system (ext4 DAX). SplitFS introduces a new primitive termed relink to efficiently support file appends and atomic data operations. SplitFS provides three consistency modes, which different applications can choose from, without interfering with each other. SplitFS reduces software overhead by up-to 4x compared to the NOVA PM file system, and 17x compared to ext4 DAX. On a number of micro-benchmarks and applications such as the LevelDB key-value store running the YCSB benchmark, SplitFS increases application performance by up to 2x compared to ext4 DAX and NOVA while providing similar consistency guarantees.},
+  file = {/home/cs/Zotero/storage/6NSNU5Z8/Kadekodi et al. - 2019 - SplitFS reducing software overhead in file system.pdf},
+  isbn = {978-1-4503-6873-5},
+  keywords = {crash consistency,direct access,file systems,persistent memory},
+  series = {{{SOSP}} '19}
+}
+
+@inproceedings{kannanDesigningTrueDirectaccess2018,
+  title = {Designing a True Direct-Access File System with {{DevFS}}},
+  booktitle = {16th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 18)},
+  author = {Kannan, Sudarsun and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Wang, Yuangang and Xu, Jun and Palani, Gopinath},
+  date = {2018},
+  pages = {241--256},
+  file = {/home/cs/Zotero/storage/5JHVEDEN/Kannan et al. - 2018 - Designing a true direct-access file system with De.pdf;/home/cs/Zotero/storage/H2IK9PQ6/kannan.html}
+}
+
+@article{kimNVWALExploitingNVRAM2016,
+  title = {{{NVWAL}}: {{Exploiting NVRAM}} in Write-Ahead Logging},
+  shorttitle = {{{NVWAL}}},
+  author = {Kim, Wook-Hee and Kim, Jinwoong and Baek, Woongki and Nam, Beomseok and Won, Youjip},
+  date = {2016},
+  journaltitle = {ACM SIGPLAN Notices},
+  volume = {51},
+  pages = {385--398},
+  publisher = {{ACM New York, NY, USA}},
+  file = {/home/cs/Zotero/storage/JKG86N5Z/Kim et al. - 2016 - NVWAL Exploiting NVRAM in write-ahead logging.pdf;/home/cs/Zotero/storage/A9TGIDVM/2954679.html},
+  number = {4}
+}
+
+@inproceedings{kimSubZeroZerocopyIO2020,
+  title = {{{SubZero}}: Zero-Copy {{IO}} for Persistent Main Memory File Systems},
+  shorttitle = {{{SubZero}}},
+  booktitle = {Proceedings of the 11th {{ACM SIGOPS Asia}}-{{Pacific Workshop}} on {{Systems}}},
+  author = {Kim, Juno and Soh, Yun Joon and Izraelevitz, Joseph and Zhao, Jishen and Swanson, Steven},
+  date = {2020-08-24},
+  pages = {1--8},
+  publisher = {{Association for Computing Machinery}},
+  location = {{New York, NY, USA}},
+  doi = {10.1145/3409963.3410489},
+  url = {https://doi.org/10.1145/3409963.3410489},
+  urldate = {2020-10-02},
+  abstract = {POSIX-style read() and write() have long been the standard interface for accessing data in files. However, the data copy into and out of memory these methods require imposes an unnecessary overhead when files are stored in fast persistent memories (PMEMs). To avoid the copy, PMEM-aware file systems generally provide direct-access (DAX)-based mmap(), but in doing so force the programmer to manage write-atomicity and concurrent accesses to the file. In this work, we propose two new system calls - peek() and patch(), and collectively called SubZero - that read and update PMEM-backed files without any copies. To show its potential, we implemented SubZero in two state-of-the-art PMEM file systems, XFS-DAX and NOVA. Measurements of simple benchmarks show that SubZero can outperform copy-based read() and write() by up to 2x and 2.8x, respectively. At the application level, peek() improves GET performance of the Apache Web Server by 3.6x, and patch() boosts SET performance of Kyoto Cabinet up to 1.3x.},
+  file = {/home/cs/Zotero/storage/UPJD8K2E/Kim et al. - 2020 - SubZero zero-copy IO for persistent main memory f.pdf},
+  isbn = {978-1-4503-8069-0},
+  keywords = {DAX,direct access,file systems,non-volatile memory,persistent memory},
+  series = {{{APSys}} '20}
+}
+
+@inproceedings{kwonStrataCrossMedia2017,
+  title = {Strata: {{A Cross Media File System}}},
+  shorttitle = {Strata},
+  booktitle = {Proceedings of the 26th {{Symposium}} on {{Operating Systems Principles}}},
+  author = {Kwon, Youngjin and Fingler, Henrique and Hunt, Tyler and Peter, Simon and Witchel, Emmett and Anderson, Thomas},
+  date = {2017-10-14},
+  pages = {460--477},
+  publisher = {{Association for Computing Machinery}},
+  location = {{New York, NY, USA}},
+  doi = {10.1145/3132747.3132770},
+  url = {https://doi.org/10.1145/3132747.3132770},
+  urldate = {2020-10-01},
+  abstract = {Current hardware and application storage trends put immense pressure on the operating system's storage subsystem. On the hardware side, the market for storage devices has diversified to a multi-layer storage topology spanning multiple orders of magnitude in cost and performance. Above the file system, applications increasingly need to process small, random IO on vast data sets with low latency, high throughput, and simple crash consistency. File systems designed for a single storage layer cannot support all of these demands together. We present Strata, a cross-media file system that leverages the strengths of one storage media to compensate for weaknesses of another. In doing so, Strata provides performance, capacity, and a simple, synchronous IO model all at once, while having a simpler design than that of file systems constrained by a single storage device. At its heart, Strata uses a log-structured approach with a novel split of responsibilities among user mode, kernel, and storage layers that separates the concerns of scalable, high-performance persistence from storage layer management. We quantify the performance benefits of Strata using a 3-layer storage hierarchy of emulated NVM, a flash-based SSD, and a high-density HDD. Strata has 20-30\% better latency and throughput, across several unmodified applications, compared to file systems purpose-built for each layer, while providing synchronous and unified access to the entire storage hierarchy. Finally, Strata achieves up to 2.8x better throughput than a block-based 2-layer cache provided by Linux's logical volume manager.},
+  file = {/home/cs/Zotero/storage/CVSKMZDN/Kwon et al. - 2017 - Strata A Cross Media File System.pdf},
+  isbn = {978-1-4503-5085-3},
+  keywords = {File system,Multi-layer storage,Non-volatile memory,read},
+  series = {{{SOSP}} '17}
+}
+
+@inproceedings{lantzYatValidationFramework2014,
+  title = {Yat: {{A}} Validation Framework for Persistent Memory Software},
+  shorttitle = {Yat},
+  booktitle = {2014 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 14)},
+  author = {Lantz, Philip and Dulloor, Subramanya and Kumar, Sanjay and Sankaran, Rajesh and Jackson, Jeff},
+  date = {2014},
+  pages = {433--438},
+  file = {/home/cs/Zotero/storage/WFITH8HL/Lantz et al. - 2014 - Yat A validation framework for persistent memory .pdf;/home/cs/Zotero/storage/IV3UTHY8/lantz.html}
+}
+
+@inproceedings{leeUnioningBufferCache2013,
+  title = {Unioning of the Buffer Cache and Journaling Layers with Non-Volatile Memory},
+  booktitle = {Presented as Part of the 11th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 13)},
+  author = {Lee, Eunji and Bahn, Hyokyung and Noh, Sam H.},
+  date = {2013},
+  pages = {73--80},
+  file = {/home/cs/Zotero/storage/QZPCRAW7/Lee et al. - 2013 - Unioning of the buffer cache and journaling layers.pdf;/home/cs/Zotero/storage/XDG5CW4F/lee.html}
+}
+
+@inproceedings{leeWALDIOEliminatingFilesystem2015,
+  title = {\$\{\$\vphantom\}{{WALDIO}}\$\vphantom\{\}\$: {{Eliminating}} the {{Filesystem Journaling}} in {{Resolving}} the {{Journaling}} of {{Journal Anomaly}}},
+  shorttitle = {\$\{\$\vphantom\}{{WALDIO}}\$\vphantom\{\}\$},
+  booktitle = {2015 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 15)},
+  author = {Lee, Wongun and Lee, Keonwoo and Son, Hankeun and Kim, Wook-Hee and Nam, Beomseok and Won, Youjip},
+  date = {2015},
+  pages = {235--247},
+  file = {/home/cs/Zotero/storage/2H3AW2RV/Lee et al. - 2015 - $ $WALDIO$ $ Eliminating the Filesystem Journalin.pdf;/home/cs/Zotero/storage/A9G8W2BN/lee_wongun.html},
+  keywords = {unread}
+}
+
+@online{LIBNVDIMMNonVolatileDevices,
+  title = {{{LIBNVDIMM}}: {{Non}}-{{Volatile Devices}} — {{The Linux Kernel}} Documentation},
+  url = {https://www.kernel.org/doc/html/latest/driver-api/nvdimm/nvdimm.html?highlight=dax},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/5UJMJYSQ/nvdimm.html}
+}
+
+@inproceedings{liNitroCapacityOptimizedSSD2014,
+  title = {Nitro: {{A Capacity}}-{{Optimized}} \$\{\$\vphantom\}{{SSD}}\$\vphantom\{\}\$ {{Cache}} for {{Primary Storage}}},
+  shorttitle = {Nitro},
+  booktitle = {2014 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 14)},
+  author = {Li, Cheng and Shilane, Philip and Douglis, Fred and Shim, Hyong and Smaldone, Stephen and Wallace, Grant},
+  date = {2014},
+  pages = {501--512},
+  file = {/home/cs/Zotero/storage/Q8GFUWM3/Li et al. - 2014 - Nitro A Capacity-Optimized $ $SSD$ $ Cache for Pr.pdf}
+}
+
+@online{LinuxJournalingBlock2007,
+  title = {Linux: {{The Journaling Block Device}} | {{KernelTrap}}},
+  shorttitle = {Linux},
+  date = {2007-09-26},
+  url = {https://web.archive.org/web/20070926223043/http://kerneltrap.org/node/6741},
+  urldate = {2020-10-02},
+  file = {/home/cs/Zotero/storage/SV3XPXPS/6741.html}
+}
+
+@online{linuxKernelDocsDAX,
+  title = {Linux {{Kernel Documentation}}: {{Direct Access}} for Files},
+  url = {https://www.kernel.org/doc/Documentation/filesystems/dax.txt},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/7LJWVJ8D/dax.html}
+}
+
+@online{LinuxlasseNetISCSI,
+  title = {Linuxlasse.Net :: {{ISCSI}} and {{ZFS ZVOL}}},
+  url = {https://linuxlasse.net/linux/howtos/ISCSI_and_ZFS_ZVOL},
+  urldate = {2021-03-17},
+  file = {/home/cs/Zotero/storage/FFYXTMPB/ISCSI_and_ZFS_ZVOL.html}
+}
+
+@inproceedings{liuNVMTFSNonVolatileMemory2018,
+  title = {{{NVMTFS}}: {{A Non}}-{{Volatile Memory Adaptive File System}} for {{Tiered Storage System}}},
+  shorttitle = {{{NVMTFS}}},
+  booktitle = {2018 4th {{International Conference}} on {{Big Data Computing}} and {{Communications}} ({{BIGCOM}})},
+  author = {Liu, Shiyong and Cao, Zhichao and Guo, Zhongwen and Wang, Guohua and Wang, Xupeng and Qiu, Zhijin and Qin, Xukun},
+  date = {2018-08},
+  pages = {201--206},
+  doi = {10.1109/BIGCOM.2018.00039},
+  abstract = {Tiered storages have been widely used for large scale data to achieve high read/write performance while keeping low costs. However, most of their managements are implemented in block level and it is transparent to file system and high level applications, which cannot have clean and accurate information about data usage and temperature. Thereby there may be low performance and high resources usage. In this paper, we propose a new file system - NVMTFS, which is NVM adaptive and achieves file system level data management for tiered storage. NVM replaces DRAM as the whole system memory, such that part of the data and metadata can be permanently stored on NVM without flushing back to tiered storage. NVMTFS uses NVM not only as memory, but also a ghost tier to store data, there will be no data duplication between NVM and tiered storage. More accurate and less migration operation can be achieved in NVMTFS by using NVM as one more tier and no cache tier in the system. We have designed NVMTFS and described its system architecture, file system layout and data operation. NVMTFS shows its great potential for tiered storage to store big data while guaranteeing read/write performance. In the future, the prototype will implemented within a Linux Kernel and its performance can be compared with other file system such as EXT3, btrfs, NILFS2 and NVMFS.},
+  eventtitle = {2018 4th {{International Conference}} on {{Big Data Computing}} and {{Communications}} ({{BIGCOM}})},
+  file = {/home/cs/Zotero/storage/2ABT6FFF/Liu et al. - 2018 - NVMTFS A Non-Volatile Memory Adaptive File System.pdf;/home/cs/Zotero/storage/54K84KQ6/8488649.html},
+  keywords = {Adaptive systems,Big Data,cache storage,cache tier,data duplication,Data Temperature,DRAM chips,file system layout,ghost tier,Linux,Memory management,Nonvolatile memory,nonvolatile memory adaptive file system,NVM,NVM adaptive,NVMTFS,Phase change materials,Random access memory,random-access storage,Reliability,storage management,system architecture,system memory,Tiered Storage,tiered storage system}
+}
+
+@inproceedings{liuPmtestFastFlexible2019,
+  title = {Pmtest: {{A}} Fast and Flexible Testing Framework for Persistent Memory Programs},
+  shorttitle = {Pmtest},
+  booktitle = {Proceedings of the {{Twenty}}-{{Fourth International Conference}} on {{Architectural Support}} for {{Programming Languages}} and {{Operating Systems}}},
+  author = {Liu, Sihang and Wei, Yizhou and Zhao, Jishen and Kolli, Aasheesh and Khan, Samira},
+  date = {2019},
+  pages = {411--425},
+  file = {/home/cs/Zotero/storage/NMKKB7L2/Liu et al. - 2019 - Pmtest A fast and flexible testing framework for .pdf;/home/cs/Zotero/storage/6V9DW78B/3297858.html}
+}
+
+@inproceedings{luStudyLinuxFile2013,
+  title = {A Study of {{Linux}} File System Evolution},
+  booktitle = {11th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 13)},
+  author = {Lu, Lanyue and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H. and Lu, Shan},
+  date = {2013},
+  pages = {31--44},
+  file = {/home/cs/Zotero/storage/CBTXGLE2/Lu et al. - 2013 - A study of Linux file system evolution.pdf;/home/cs/Zotero/storage/UHREXJME/lu.html}
+}
+
+@online{MemoryBarriersAre,
+  title = {Memory {{Barriers Are Like Source Control Operations}}},
+  url = {https://preshing.com/20120710/memory-barriers-are-like-source-control-operations/},
+  urldate = {2020-10-26},
+  file = {/home/cs/Zotero/storage/W43UUALC/memory-barriers-are-like-source-control-operations.html}
+}
+
+@unpublished{mijinanRocksDBDetail06:09:37UTC,
+  title = {{{RocksDB}} Detail},
+  author = {MIJIN AN},
+  year = {06:09:37 UTC},
+  url = {https://www.slideshare.net/meeeejin/rocksdb-detail},
+  urldate = {2021-03-17},
+  abstract = {RocksDB detail},
+  type = {Software}
+}
+
+@online{NdctlinjecterrorManPage,
+  title = {Ndctl-Inject-Error Man Page - Ndctl - {{General Commands}}},
+  url = {https://www.mankier.com/1/ndctl-inject-error},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/QZHDCUFW/ndctl-inject-error.html}
+}
+
+@online{NdctlPATCHV2,
+  title = {[Ndctl {{PATCH}} v2 3/6] Ndctl: Add an Inject-Error Command - {{Linux}}-Nvdimm - {{Ml01}}.01.{{Org}}},
+  shorttitle = {[Ndctl {{PATCH}} v2 3/6] Ndctl},
+  url = {https://lists.syncevolution.org/hyperkitty/list/linux-nvdimm@lists.01.org/message/UAEXUT4RBYFUFTXIFPMH6OZM6FWYD7A4/},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/L9DC3S9R/UAEXUT4RBYFUFTXIFPMH6OZM6FWYD7A4.html},
+  langid = {english}
+}
+
+@inproceedings{nealAGAMOTTOHowPersistent2020,
+  title = {\$\{\$\vphantom\}{{AGAMOTTO}}\$\vphantom\{\}\$: {{How Persistent}} Is Your {{Persistent Memory Application}}?},
+  shorttitle = {\$\{\$\vphantom\}{{AGAMOTTO}}\$\vphantom\{\}\$},
+  booktitle = {14th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Symposium}} on {{Operating Systems Design}} and {{Implementation}} (\$\{\$\vphantom\}{{OSDI}}\$\vphantom\{\}\$ 20)},
+  author = {Neal, Ian and Reeves, Ben and Stoler, Ben and Quinn, Andrew and Kwon, Youngjin and Peter, Simon and Kasikci, Baris},
+  date = {2020},
+  pages = {1047--1064},
+  file = {/home/cs/Zotero/storage/K577Q97B/Neal et al. - 2020 - $ $AGAMOTTO$ $ How Persistent is your Persistent .pdf;/home/cs/Zotero/storage/TZEAMFP3/neal.html}
+}
+
+@article{nightingaleRethinkSync2008,
+  title = {Rethink the Sync},
+  author = {Nightingale, Edmund B. and Veeraraghavan, Kaushik and Chen, Peter M. and Flinn, Jason},
+  date = {2008},
+  journaltitle = {ACM Transactions on Computer Systems (TOCS)},
+  volume = {26},
+  pages = {1--26},
+  publisher = {{ACM New York, NY, USA}},
+  file = {/home/cs/Zotero/storage/K5LQZFNB/Nightingale et al. - 2008 - Rethink the sync.pdf;/home/cs/Zotero/storage/PR6TSGV8/1394441.html},
+  number = {3}
+}
+
+@online{openzfsAllocationClasses,
+  title = {Metadata {{Allocation Classes}} by Don-Brady · {{Pull Request}} \#5182 · Openzfs/Zfs},
+  url = {https://github.com/openzfs/zfs/pull/5182},
+  urldate = {2021-04-13},
+  abstract = {ZFS Allocation Classes [WIP] Allocation Classes Allocation classes can be thought of as allocation tiers that are dedicated to specific block categories. Now in addition to general data (normal cla...},
+  annotation = {Commit f8f93cec169cb7a336ca4aa97b03889b94a657c5},
+  file = {/home/cs/Zotero/storage/DYW5SGTW/5182.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
+@video{openzfsZILPerformanceImprovements2020,
+  title = {{{ZIL Performance Improvements}} for {{Fast Media}} by {{Saji Nair}}},
+  editor = {{OpenZFS}},
+  date = {2020-10-12},
+  url = {https://www.youtube.com/watch?v=TnXwrigwF7I},
+  urldate = {2021-04-13},
+  abstract = {From the 2020 OpenZFS Developer Summit slides: https://drive.google.com/file/d/1RqIt...\mbox{} Details: https://openzfs.org/wiki/OpenZFS\_Deve...\mbox},
+  editortype = {director},
+  file = {/home/cs/Zotero/storage/RVH7T9SI/ZIL_redesign_for_openzfs.pptx}
+}
+
+@online{OracleDatabaseConcepts,
+  title = {Oracle {{Database Concepts}}: 15 {{Process Architecture}}},
+  url = {https://docs.oracle.com/database/121/CNCPT/process.htm#GUID-B6BE2C31-1543-4504-9763-6FFBBF99DC85},
+  urldate = {2021-03-30},
+  abstract = {This chapter discusses the processes in an Oracle database.},
+  file = {/home/cs/Zotero/storage/3T8QSB9V/process.html},
+  langid = {american}
+}
+
+@inproceedings{parkIJournalingFinegrainedJournaling2017,
+  title = {{{iJournaling}}: {{Fine}}-Grained Journaling for Improving the Latency of Fsync System Call},
+  shorttitle = {{{iJournaling}}},
+  booktitle = {2017 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 17)},
+  author = {Park, Daejun and Shin, Dongkun},
+  date = {2017},
+  pages = {787--798},
+  file = {/home/cs/Zotero/storage/CM97L6XF/Park and Shin - 2017 - iJournaling Fine-grained journaling for improving.pdf;/home/cs/Zotero/storage/5BPBVHLP/park.html}
+}
+
+@article{pelleyStorageManagementNVRAM2013,
+  title = {Storage Management in the {{NVRAM}} Era},
+  author = {Pelley, Steven and Wenisch, Thomas F. and Gold, Brian T. and Bridge, Bill},
+  date = {2013},
+  journaltitle = {Proceedings of the VLDB Endowment},
+  volume = {7},
+  pages = {121--132},
+  publisher = {{VLDB Endowment}},
+  file = {/home/cs/Zotero/storage/59H2XWB9/Pelley et al. - 2013 - Storage management in the NVRAM era.pdf;/home/cs/Zotero/storage/ZTJB67BV/2732228.html},
+  number = {2}
+}
+
+@online{PerformanceBenchmarkingTPCC,
+  title = {Performance {{Benchmarking}} with {{TPC}}-{{C}} | {{CockroachDB Docs}}},
+  url = {https://www.cockroachlabs.com/docs/stable/performance-benchmarking-with-tpcc-local.html},
+  urldate = {2021-03-17},
+  file = {/home/cs/Zotero/storage/CZHBJUB5/performance-benchmarking-with-tpcc-local.html}
+}
+
+@online{PersistentmemoryErrorHandling,
+  title = {Persistent-Memory Error Handling [{{LWN}}.Net]},
+  url = {https://lwn.net/Articles/684288/},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/ECTKN72Y/684288.html}
+}
+
+@inproceedings{pillaiAllFileSystems2014,
+  title = {All File Systems Are Not Created Equal: {{On}} the Complexity of Crafting Crash-Consistent Applications},
+  shorttitle = {All File Systems Are Not Created Equal},
+  booktitle = {11th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Symposium}} on {{Operating Systems Design}} and {{Implementation}} (\$\{\$\vphantom\}{{OSDI}}\$\vphantom\{\}\$ 14)},
+  author = {Pillai, Thanumalayan Sankaranarayana and Chidambaram, Vijay and Alagappan, Ramnatthan and Al-Kiswany, Samer and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
+  date = {2014},
+  pages = {433--448},
+  file = {/home/cs/Zotero/storage/WHNDCRPT/Pillai et al. - 2014 - All file systems are not created equal On the com.pdf;/home/cs/Zotero/storage/66ZHW9LP/pillai.html}
+}
+
+@online{PmemIoIntroduction,
+  title = {Pmem.Io: {{An}} Introduction to Pmemcheck (Part 1) - Basics},
+  url = {https://pmem.io/2015/07/17/pmemcheck-basic.html},
+  urldate = {2021-02-04},
+  file = {/home/cs/Zotero/storage/AVR8KBUZ/pmemcheck-basic.html}
+}
+
+@inproceedings{prabhakaranAnalysisEvolutionJournaling2005,
+  title = {Analysis and Evolution of Journaling File Systems},
+  booktitle = {Proceedings of the Annual Conference on {{USENIX Annual Technical Conference}}},
+  author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
+  date = {2005-04-10},
+  pages = {8},
+  publisher = {{USENIX Association}},
+  location = {{USA}},
+  abstract = {We develop and apply two new methods for analyzing file system behavior and evaluating file system changes. First, semantic block-level analysis (SBA) combines knowledge of on-disk data structures with a trace of disk traffic to infer file system behavior; in contrast to standard benchmarking approaches, SBA enables users to understand why the file system behaves as it does. Second, semantic trace playback (STP) enables traces of disk traffic to be easily modified to represent changes in the file system implementation; in contrast to directly modifying the file system, STP enables users to rapidly gauge the benefits of new policies. We use SBA to analyze Linux ext3, ReiserFS, JFS, and Windows NTFS; in the process, we uncover many strengths and weaknesses of these journaling file systems. We also apply STP to evaluate several modifications to ext3, demonstrating the benefits of various optimizations without incurring the costs of a real implementation.},
+  series = {{{ATEC}} '05}
+}
+
+@inproceedings{prabhakaranAnalysisEvolutionJournaling2005a,
+  title = {Analysis and {{Evolution}} of {{Journaling File Systems}}.},
+  booktitle = {{{USENIX Annual Technical Conference}}, {{General Track}}},
+  author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
+  date = {2005},
+  volume = {194},
+  pages = {196--215},
+  file = {/home/cs/Zotero/storage/HFX2FAI5/prabhakaran_html.html}
+}
+
+@inproceedings{prabhakaranModelbasedFailureAnalysis2005,
+  title = {Model-Based Failure Analysis of Journaling File Systems},
+  booktitle = {2005 {{International Conference}} on {{Dependable Systems}} and {{Networks}} ({{DSN}}'05)},
+  author = {Prabhakaran, Vijayan and Arpaci-Dusseau, Andrea C. and Arpaci-Dusseau, Remzi H.},
+  date = {2005},
+  pages = {802--811},
+  publisher = {{IEEE}},
+  file = {/home/cs/Zotero/storage/R8PSBWWG/Prabhakaran et al. - 2005 - Model-based failure analysis of journaling file sy.pdf;/home/cs/Zotero/storage/53YVJD6B/1467854.html}
+}
+
+@inproceedings{qiuNVMFSHybridFile2013,
+  title = {{{NVMFS}}: {{A}} Hybrid File System for Improving Random Write in Nand-Flash {{SSD}}},
+  shorttitle = {{{NVMFS}}},
+  booktitle = {2013 {{IEEE}} 29th {{Symposium}} on {{Mass Storage Systems}} and {{Technologies}} ({{MSST}})},
+  author = {Qiu, Sheng and Reddy, AL Narasimha},
+  date = {2013},
+  pages = {1--5},
+  publisher = {{IEEE}},
+  file = {/home/cs/Zotero/storage/Z9HS7DRY/6558434.html}
+}
+
+@online{RealworldPerformanceAdvantages,
+  title = {Real-World {{Performance Advantages}} of {{NVDIMM}} and {{NVMe}}: {{A Case Study}} with {{OpenZFS}} | {{SNIA}}},
+  url = {https://www.snia.org/educational-library/real-world-performance-advantages-nvdimm-and-nvme-case-study-openzfs-2018},
+  urldate = {2021-02-04},
+  file = {/home/cs/Zotero/storage/GQW36EGX/real-world-performance-advantages-nvdimm-and-nvme-case-study-openzfs-2018.html}
+}
+
+@online{ReliabilityAvailabilityServiceability,
+  title = {Reliability, {{Availability}}, and {{Serviceability}}},
+  url = {https://www.intel.com/content/www/us/en/develop/articles/pmem-RAS.html},
+  urldate = {2021-04-13},
+  abstract = {This chapter describes the high-level architecture of reliability, availability, and serviceability (RAS) features designed for persistent memory.},
+  file = {/home/cs/Zotero/storage/B6N6DE36/pmem-RAS.html},
+  langid = {english},
+  organization = {{Intel}}
+}
+
+@online{RocksdbBenchmarkGoogle,
+  title = {Rocksdb Benchmark - {{Google Search}}},
+  url = {https://www.google.com/search?client=firefox-b-d&q=rocksdb+benchmark},
+  urldate = {2020-10-03},
+  file = {/home/cs/Zotero/storage/VFATJSMT/search.html}
+}
+
+@inproceedings{shenJournalingJournalAlmost2014,
+  title = {Journaling of Journal Is (Almost) Free},
+  booktitle = {12th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 14)},
+  author = {Shen, Kai and Park, Stan and Zhu, Men},
+  date = {2014},
+  pages = {287--293},
+  file = {/home/cs/Zotero/storage/QCM2Q5AE/Shen et al. - 2014 - Journaling of journal is (almost) free.pdf;/home/cs/Zotero/storage/CB8YEZI8/shen.html}
+}
+
+@inproceedings{sonHighperformanceTransactionProcessing2018,
+  title = {High-Performance Transaction Processing in Journaling File Systems},
+  booktitle = {16th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 18)},
+  author = {Son, Yongseok and Kim, Sunggon and Yeom, Heon Y. and Han, Hyuck},
+  date = {2018},
+  pages = {227--240},
+  file = {/home/cs/Zotero/storage/3XFMNV8G/Son et al. - 2018 - High-performance transaction processing in journal.pdf;/home/cs/Zotero/storage/8DLXY8KA/son.html}
+}
+
+@misc{StratisSoftwareDesign,
+  title = {Stratis {{Software Design Version}} 2.0.0},
+  url = {https://stratis-storage.github.io/StratisSoftwareDesign.pdf},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/UIGQJH9I/Stratis Software Design.pdf}
+}
+
+@inproceedings{sweeneyScalabilityXFSFile1996,
+  title = {Scalability in the {{XFS File System}}.},
+  booktitle = {{{USENIX Annual Technical Conference}}},
+  author = {Sweeney, Adam and Doucette, Doug and Hu, Wei and Anderson, Curtis and Nishimoto, Mike and Peck, Geoff},
+  date = {1996},
+  volume = {15},
+  file = {/home/cs/Zotero/storage/VQFCWCM4/Sweeney et al. - 1996 - Scalability in the XFS File System.}
+}
+
+@inproceedings{tadakamadlaAcceleratingDatabaseWorkloads2019,
+  title = {Accelerating {{Database Workloads}} with {{DM}}-{{WriteCache}} and {{Persistent Memory}}},
+  booktitle = {Proceedings of the 2019 {{ACM}}/{{SPEC International Conference}} on {{Performance Engineering}}},
+  author = {Tadakamadla, Rajesh and Patocka, Mikulas and Kani, Toshi and Norton, Scott J.},
+  date = {2019},
+  pages = {255--263},
+  file = {/home/cs/Zotero/storage/R6IPSZDS/Tadakamadla et al. - 2019 - Accelerating Database Workloads with DM-WriteCache.pdf;/home/cs/Zotero/storage/ZKK4PG3U/3297663.html}
+}
+
+@article{traegerNineYearStudy2008,
+  title = {A Nine Year Study of File System and Storage Benchmarking},
+  author = {Traeger, Avishay and Zadok, Erez and Joukov, Nikolai and Wright, Charles P.},
+  date = {2008},
+  journaltitle = {ACM Transactions on Storage (TOS)},
+  volume = {4},
+  pages = {1--56},
+  publisher = {{ACM New York, NY, USA}},
+  file = {/home/cs/Zotero/storage/IY648VP9/Traeger et al. - 2008 - A nine year study of file system and storage bench.pdf;/home/cs/Zotero/storage/8Y5ERKHT/1367829.html},
+  number = {2}
+}
+
+@inproceedings{tweedieJournalingLinuxExt2fs1998,
+  title = {Journaling the {{Linux}} Ext2fs Filesystem},
+  booktitle = {The {{Fourth Annual Linux Expo}}},
+  author = {Tweedie, Stephen C.},
+  date = {1998},
+  publisher = {{Durham, North Carolina}},
+  file = {/home/cs/Zotero/storage/IQSHK6L3/Tweedie - 1998 - Journaling the Linux ext2fs filesystem.pdf}
+}
+
+@online{Valgrind,
+  title = {Valgrind},
+  url = {https://www.valgrind.org/},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/AQRHCAW5/www.valgrind.org.html}
+}
+
+@inproceedings{vanrenenPersistentMemoryPrimitives2019,
+  title = {Persistent Memory {{I}}/{{O}} Primitives},
+  booktitle = {Proceedings of the 15th {{International Workshop}} on {{Data Management}} on {{New Hardware}}},
+  author = {van Renen, Alexander and Vogel, Lukas and Leis, Viktor and Neumann, Thomas and Kemper, Alfons},
+  date = {2019},
+  pages = {1--7},
+  file = {/home/cs/Zotero/storage/CQN34F4N/van Renen et al. - 2019 - Persistent memory IO primitives.pdf;/home/cs/Zotero/storage/EA3ZQZJN/3329785.html},
+  options = {useprefix=true}
+}
+
+@inproceedings{volosAerieFlexibleFilesystem2014,
+  title = {Aerie: {{Flexible}} File-System Interfaces to Storage-Class Memory},
+  shorttitle = {Aerie},
+  booktitle = {Proceedings of the {{Ninth European Conference}} on {{Computer Systems}}},
+  author = {Volos, Haris and Nalli, Sanketh and Panneerselvam, Sankarlingam and Varadarajan, Venkatanathan and Saxena, Prashant and Swift, Michael M.},
+  date = {2014},
+  pages = {1--14},
+  file = {/home/cs/Zotero/storage/FVIKGF9J/Volos et al. - 2014 - Aerie Flexible file-system interfaces to storage-.pdf;/home/cs/Zotero/storage/RFFG42TW/2592798.html}
+}
+
+@online{WalkingPMEMTalk,
+  title = {Walking the {{PMEM}} Talk | {{SNIA}}},
+  url = {https://www.snia.org/educational-library/walking-pmem-talk-2018},
+  urldate = {2021-02-09},
+  file = {/home/cs/Zotero/storage/RBSTZ65K/walking-pmem-talk-2018.html}
+}
+
+@inproceedings{wangConquestBetterPerformance2002,
+  title = {Conquest: {{Better Performance Through}} a {{Disk}}/{{Persistent}}-{{RAM Hybrid File System}}.},
+  shorttitle = {Conquest},
+  booktitle = {{{USENIX Annual Technical Conference}}, {{General Track}}},
+  author = {Wang, An-I. and Reiher, Peter L. and Popek, Gerald J. and Kuenning, Geoffrey H.},
+  date = {2002},
+  pages = {15--28},
+  file = {/home/cs/Zotero/storage/GTHR9QFC/Wang et al. - 2002 - Conquest Better Performance Through a DiskPersis.pdf}
+}
+
+@article{wangScalableLoggingEmerging2014,
+  title = {Scalable Logging through Emerging Non-Volatile Memory},
+  author = {Wang, Tianzheng and Johnson, Ryan},
+  date = {2014},
+  journaltitle = {Proceedings of the VLDB Endowment},
+  volume = {7},
+  pages = {865--876},
+  publisher = {{VLDB Endowment}},
+  file = {/home/cs/Zotero/storage/QYHMU646/Wang and Johnson - 2014 - Scalable logging through emerging non-volatile mem.pdf;/home/cs/Zotero/storage/43WKEM3T/2732951.html},
+  number = {10}
+}
+
+@online{WayAtomicWrites,
+  title = {A Way to Do Atomic Writes [{{LWN}}.Net]},
+  url = {https://lwn.net/Articles/789600/},
+  urldate = {2021-03-11},
+  file = {/home/cs/Zotero/storage/QKIXYMTT/789600.html}
+}
+
+@online{WhyWeBuilt2019,
+  title = {Why We Built {{CockroachDB}} on Top of {{RocksDB}}},
+  date = {2019-01-17T00:00:00+00:00},
+  url = {https://www.cockroachlabs.com/blog/cockroachdb-on-rocksd/},
+  urldate = {2020-10-03},
+  abstract = {CockroachDB uses RocksDB for its storage engine because of RocksDB's rich feature set, which is necessary for a complex product like a distributed SQL database.},
+  file = {/home/cs/Zotero/storage/DFNSVDXC/cockroachdb-on-rocksd.html},
+  langid = {american},
+  organization = {{Cockroach Labs}}
+}
+
+@online{WriteAheadLog,
+  title = {Write {{Ahead Log}} - {{WAL Recovery Modes}} - 《{{RocksDB Document}}（20191008）》 - 书栈网 · {{BookStack}}},
+  url = {https://www.bookstack.cn/read/rocksdb-en/b9a194c1b599e946.md},
+  urldate = {2021-03-17}
+}
+
+@online{WritecacheTargetLinux,
+  title = {Writecache Target — {{The Linux Kernel}} Documentation},
+  url = {https://www.kernel.org/doc/html/latest/admin-guide/device-mapper/writecache.html},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/ZQAWG9NP/writecache.html}
+}
+
+@inproceedings{wuSCMFSFileSystem2011,
+  title = {{{SCMFS}}: A File System for Storage Class Memory},
+  shorttitle = {{{SCMFS}}},
+  booktitle = {Proceedings of 2011 {{International Conference}} for {{High Performance Computing}}, {{Networking}}, {{Storage}} and {{Analysis}}},
+  author = {Wu, Xiaojian and Reddy, AL Narasimha},
+  date = {2011},
+  pages = {1--11},
+  file = {/home/cs/Zotero/storage/ELJ22E3C/Wu and Reddy - 2011 - SCMFS a file system for storage class memory.pdf;/home/cs/Zotero/storage/9J624366/2063384.html}
+}
+
+@inproceedings{wuUnwrittenContractIntel2019,
+  title = {Towards an {{Unwritten Contract}} of {{Intel Optane}} \$\{\$\vphantom\}{{SSD}}\$\vphantom\{\}\$},
+  booktitle = {11th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Workshop}} on {{Hot Topics}} in {{Storage}} and {{File Systems}} ({{HotStorage}} 19)},
+  author = {Wu, Kan and Arpaci-Dusseau, Andrea and Arpaci-Dusseau, Remzi},
+  date = {2019},
+  file = {/home/cs/Zotero/storage/IZIEK7CR/Wu et al. - 2019 - Towards an Unwritten Contract of Intel Optane $ $S.pdf;/home/cs/Zotero/storage/3H2CX55X/wu-kan.html}
+}
+
+@misc{XFSAlgorithmsData,
+  title = {{{XFS Algorithms}} \& {{Data Structure}}},
+  file = {/home/cs/Zotero/storage/E2HRSA4L/XFS Algorithms & Data Structure.pdf}
+}
+
+@inproceedings{xuFindingFixingPerformance2019,
+  title = {Finding and Fixing Performance Pathologies in Persistent Memory Software Stacks},
+  booktitle = {Proceedings of the {{Twenty}}-{{Fourth International Conference}} on {{Architectural Support}} for {{Programming Languages}} and {{Operating Systems}}},
+  author = {Xu, Jian and Kim, Juno and Memaripour, Amirsaman and Swanson, Steven},
+  date = {2019},
+  pages = {427--439},
+  file = {/home/cs/Zotero/storage/AFN59SFP/Xu et al. - 2019 - Finding and fixing performance pathologies in pers.pdf;/home/cs/Zotero/storage/7VE4NJDC/3297858.html}
+}
+
+@inproceedings{xuNOVAFortisFaulttolerantNonvolatile2017,
+  title = {{{NOVA}}-{{Fortis}}: {{A}} Fault-Tolerant Non-Volatile Main Memory File System},
+  shorttitle = {{{NOVA}}-{{Fortis}}},
+  booktitle = {Proceedings of the 26th {{Symposium}} on {{Operating Systems Principles}}},
+  author = {Xu, Jian and Zhang, Lu and Memaripour, Amirsaman and Gangadharaiah, Akshatha and Borase, Amit and Da Silva, Tamires Brito and Swanson, Steven and Rudoff, Andy},
+  date = {2017},
+  pages = {478--496},
+  file = {/home/cs/Zotero/storage/NHPC68FM/Xu et al. - 2017 - NOVA-Fortis A fault-tolerant non-volatile main me.pdf;/home/cs/Zotero/storage/U4JCZF9B/3132747.html}
+}
+
+@inproceedings{xuNOVALogstructuredFile2016,
+  title = {\$\{\$\vphantom\}{{NOVA}}\$\vphantom\{\}\$: {{A}} Log-Structured File System for Hybrid Volatile/Non-Volatile Main Memories},
+  shorttitle = {\$\{\$\vphantom\}{{NOVA}}\$\vphantom\{\}\$},
+  booktitle = {14th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 16)},
+  author = {Xu, Jian and Swanson, Steven},
+  date = {2016},
+  pages = {323--338},
+  file = {/home/cs/Zotero/storage/VFUR53TR/Xu and Swanson - 2016 - $ $NOVA$ $ A log-structured file system for hybri.pdf;/home/cs/Zotero/storage/YHQAUC9V/xu.html}
+}
+
+@inproceedings{yangEmpiricalGuideBehavior2020,
+  title = {An Empirical Guide to the Behavior and Use of Scalable Persistent Memory},
+  booktitle = {18th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 20)},
+  author = {Yang, Jian and Kim, Juno and Hoseinzadeh, Morteza and Izraelevitz, Joseph and Swanson, Steve},
+  date = {2020},
+  pages = {169--182},
+  file = {/home/cs/Zotero/storage/YCH7P8SK/Yang et al. - 2020 - An empirical guide to the behavior and use of scal.pdf;/home/cs/Zotero/storage/74W98TX3/yang.html},
+  keywords = {nvmm-zil}
+}
+
+@inproceedings{yangExplodeLightweightGeneral2006,
+  title = {Explode: A Lightweight, General System for Finding Serious Storage System Errors},
+  shorttitle = {Explode},
+  booktitle = {Proceedings of the 7th Symposium on {{Operating}} Systems Design and Implementation},
+  author = {Yang, Junfeng and Sar, Can and Engler, Dawson},
+  date = {2006},
+  pages = {131--146},
+  file = {/home/cs/Zotero/storage/5473WE6V/Yang et al. - 2006 - Explode a lightweight, general system for finding.pdf}
+}
+
+@inproceedings{yangReducingWriteAmplification2019,
+  title = {Reducing {{Write Amplification}} for {{Inodes}} of {{Journaling File System}} Using {{Persistent Memory}}},
+  booktitle = {2019 {{Design}}, {{Automation}} \& {{Test}} in {{Europe Conference}} \& {{Exhibition}} ({{DATE}})},
+  author = {Yang, Chaoshu and Liu, Duo and Chen, Xianzhang and Zhang, Runyu and Wang, Wenbin and Duan, Moming and Tan, Yujuan},
+  date = {2019},
+  pages = {866--871},
+  publisher = {{IEEE}},
+  file = {/home/cs/Zotero/storage/F3EK2JUN/8715068.html}
+}
+
+@article{yangUsingModelChecking2006,
+  title = {Using Model Checking to Find Serious File System Errors},
+  author = {Yang, Junfeng and Twohey, Paul and Engler, Dawson and Musuvathi, Madanlal},
+  date = {2006},
+  journaltitle = {ACM Transactions on Computer Systems (TOCS)},
+  volume = {24},
+  pages = {393--423},
+  publisher = {{ACM New York, NY, USA}},
+  file = {/home/cs/Zotero/storage/BH56IM3M/Yang et al. - 2006 - Using model checking to find serious file system e.pdf;/home/cs/Zotero/storage/SCGM85HM/1189256.html},
+  number = {4}
+}
+
+@inproceedings{yoshimuraEvFSUserlevelEventDriven2019,
+  title = {{{EvFS}}: {{User}}-Level, {{Event}}-{{Driven File System}} for {{Non}}-{{Volatile Memory}}},
+  shorttitle = {{{EvFS}}},
+  author = {Yoshimura, Takeshi and Chiba, Tatsuhiro and Horii, Hiroshi},
+  date = {2019},
+  url = {https://www.usenix.org/conference/hotstorage19/presentation/yoshimura},
+  urldate = {2020-10-02},
+  eventtitle = {11th \{\vphantom\}{{USENIX}}\vphantom\{\} {{Workshop}} on {{Hot Topics}} in {{Storage}} and {{File Systems}} ({{HotStorage}} 19)},
+  file = {/home/cs/Zotero/storage/W529PYG9/Yoshimura et al. - 2019 - EvFS User-level, Event-Driven File System for Non.pdf;/home/cs/Zotero/storage/KLYJJHQ2/yoshimura.html},
+  langid = {english}
+}
+
+@inproceedings{zhangFlashSharePunchingServer2018,
+  title = {{{FlashShare}}: {{Punching}} through Server Storage Stack from Kernel to Firmware for Ultra-Low Latency {{SSDs}}},
+  shorttitle = {{{FlashShare}}},
+  booktitle = {13th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Symposium}} on {{Operating Systems Design}} and {{Implementation}} (\$\{\$\vphantom\}{{OSDI}}\$\vphantom\{\}\$ 18)},
+  author = {Zhang, Jie and Kwon, Miryeong and Gouk, Donghyun and Koh, Sungjoon and Lee, Changlim and Alian, Mohammad and Chun, Myoungjun and Kandemir, Mahmut Taylan and Kim, Nam Sung and Kim, Jihong},
+  date = {2018},
+  pages = {477--492},
+  file = {/home/cs/Zotero/storage/FXMHXBEH/Zhang et al. - 2018 - FlashShare Punching through server storage stack .pdf;/home/cs/Zotero/storage/398SWW4M/zhang.html}
+}
+
+@inproceedings{zhangPangolinFaulttolerantPersistent2019,
+  title = {Pangolin: {{A}} Fault-Tolerant Persistent Memory Programming Library},
+  shorttitle = {Pangolin},
+  booktitle = {2019 \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Annual Technical Conference}} (\$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$\$\{\$\vphantom\}{{ATC}}\$\vphantom\{\}\$ 19)},
+  author = {Zhang, Lu and Swanson, Steven},
+  date = {2019},
+  pages = {897--912},
+  file = {/home/cs/Zotero/storage/ZSL3B5BI/Zhang and Swanson - 2019 - Pangolin A fault-tolerant persistent memory progr.pdf;/home/cs/Zotero/storage/VGKV7BIA/zhang-lu.html}
+}
+
+@inproceedings{zhengZigguratTieredFile2019,
+  title = {Ziggurat: A Tiered File System for Non-Volatile Main Memories and Disks},
+  shorttitle = {Ziggurat},
+  booktitle = {17th \$\{\$\vphantom\}{{USENIX}}\$\vphantom\{\}\$ {{Conference}} on {{File}} and {{Storage Technologies}} (\$\{\$\vphantom\}{{FAST}}\$\vphantom\{\}\$ 19)},
+  author = {Zheng, Shengan and Hoseinzadeh, Morteza and Swanson, Steven},
+  date = {2019},
+  pages = {207--219},
+  file = {/home/cs/Zotero/storage/TULT5AZ5/Zheng et al. - 2019 - Ziggurat a tiered file system for non-volatile ma.pdf;/home/cs/Zotero/storage/6FU9ST28/zheng.html},
+  keywords = {nvmm-zil}
+}
+
+@online{ZinjectOpenZFSMan,
+  title = {Zinject {{OpenZFS}} Man Page},
+  url = {https://github.com/openzfs/zfs/blob/65c7cc49bfcf49d38fc84552a17d7e8a3268e58e/man/man8/zinject.8},
+  urldate = {2021-04-13},
+  file = {/home/cs/Zotero/storage/RSRUVAJW/zinject.html},
+  langid = {english},
+  organization = {{GitHub}}
 }
+
+

@@ -14,6 +14,7 @@
 
 \usepackage[style=alphabetic,backend=biber]{biblatex}
 \addbibresource{bib.bib}
+\addbibresource{bib_manual.bib}
 \setcounter{biburlnumpenalty}{100}
 \setcounter{biburllcpenalty}{7000}
 \setcounter{biburlucpenalty}{8000}
@@ -160,27 +161,14 @@ ZIL-PMEM achieves 140k random 4k sync write IOPS with a single thread~($\sim$~\S
 This corresponds to a speedup of 6.8x (or 4x, respectively) over ZIL-LWB.\todo{review numbers}
 Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
-TODO decide on one of the following structures.
-
-The remainder of this thesis is structured as follows:\todo{related work mid or end}
+The remainder of this thesis is structured as follows:
 in Chapter 2\todo{automatic chapter numbers} we
-  review prior work in the field of persistent memory related to file systems,
-  provide background knowledge on the integration of PMEM in the Linux kernel,
-  and provide a detailed introduction to the components of ZFS that are relevant for this thesis.
+review prior work in the field of persistent memory related to filesystems and
+provide background knowledge on the integration of PMEM in the Linux kernel as well as
+a detailed introduction to the components of ZFS that are relevant for this thesis.
 Chapter 3 contains our performance analysis of ZIL-LWB with a PMEM SLOG, making the case for a PMEM-specific ZIL implementation.
 The design and implementation of ZIL-PMEM is then presented in Chapter 4, followed by its evalation in Chapter 5.
 We conclude with a summary of our findings in Chapter 6.
-\todo{shows that we did research upfront. but: can't compare it to ZIL-PMEM because we haven't introduced it yet}
-
-The remainder of this thesis is structured as follows:\todo{related work mid or end}
-in Chapter 2\todo{automatic chapter numbers} we
-  provide background knowledge on the integration of PMEM in the Linux kernel,
-  and provide a detailed introduction to the components of ZFS that are relevant for this thesis.
-Chapter 3 contains our performance analysis of ZIL-LWB with a PMEM SLOG, making the case for a PMEM-specific ZIL implementation.
-The design and implementation of ZIL-PMEM is then presented in Chapter 4, followed by its evalation in Chapter 5.
-We review prior work related to the use of persistent memory in file systems in Chapter 6 and compare the surveyed approaches to ZIL-PMEM where appropriate.
-We conclude with a summary of this thesis in Chapter 7.
-\todo{makes the impression of a less informed design but maintains user state}
 
 %In the following sections, we present
 %the user experience of configuring a pool with ZIL-PMEM,
@@ -194,111 +182,103 @@ We conclude with a summary of this thesis in Chapter 7.
 
 \chapter{Literature Review \& Background}
 In this chapter we present prior work in the field of persistent memory and its application in various storage systems developed in research and industry.
-The last two sections provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB in Chapter~\ref{ch:lwb_analysis} and the design of ZIL-PMEM in Chapter~\ref{ch:di}.
+The last two sections on PMEM in Linux and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB in Chapter~\ref{ch:lwb_analysis} and the design of ZIL-PMEM in Chapter~\ref{ch:di}.
 
 \section{Literature Review}
-We have surveyed prior work in the area of persistent memory storage systems, file system guarantees \& crash-consistency models, PMEM-specific crash-consistency checkers and general methods to determine file system robustness in the presence of hardware failures.
-\todo{review the use of file system vs. filesystem}
+We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash-consistency models, PMEM-specific crash-consistency checkers and general methods to determine filesystem robustness in the presence of hardware failures.
 
 \subsection{PMEM Filesystems}
-In this subsection we present research file systems that were explicitly designed for persistent memory.
-ZIL-PMEM integrates into ZFS, a production file system that was not designed for persistent memory.
-Hence we focus on techniques for crash consistency and data integrity which are applicable to our work.
+In this subsection we present research filesystems that were explicitly designed for persistent memory.
+ZIL-PMEM integrates into ZFS, a production filesystem that was not designed for persistent memory.
+Hence we focus on techniques for crash consistency and data integrity that might be applicable to our work.
 
 \subsubsection{In-Kernel PMEM Filesystems}\label{sec:in_kernel_pmem_filesystems}
-The initial wave of publications around the use of PMEM in file systems produced a set of systems that were implemented completely in the kernel.
+The initial wave of publications around the use of PMEM in filesystems produced a set of systems that were implemented completely in the kernel.
+\todo{we don't yet compare these systems with ZIL-PMEM. should we? Maybe in a compact section after we presented the design?}
 
-BPFS (2009) is one of the earliest file systems expressly designed for PMEM.
-The file system layout in PMEM is inspired by WAFL and resembles a tree of multi-level indirect pages that eventually point to data pages.
-BPFS’s key contribution is the use of fine-grained atomic updates to ensure crash-consistency.
-Wherever possible, in-place atomic updates are used, e.g., updating atime or updating the file size after appending to a file.
-For cases where atomic operations are insufficient the authors use short-circuit shadow-paging, a technique where updates are prepared in a copy of the page.
+\newcommand{\citerelwork}[2]{\textbf{#1~\cite{#2}}}
+
+\citerelwork{BPFS}{conditBetterByteaddressablePersistent2009} is one of the earliest filesystems expressly designed for PMEM.
+The filesystem layout in PMEM is inspired by WAFL~(\cite{hitzFileSystemDesign1994}) and resembles a tree of multi-level indirect pages that eventually point to data pages.
+BPFS’s key contribution is the use of fine-grained atomic updates in lieu of journaling for crash consistency.
+For example, updates to small metadata such as \textit{mtime} can be made using atomic operations.
+For larger modifications, the authors introduce \textit{short-circuit shadow-paging}, a technique where updates are prepared in a copy of the page.
 The updated page is then made visible through an update of the pointer in its parent indirect page.
-The difference to copy-on-write is that, as soon as the update to an indirect page can be done through an atomic in-place operation, the atomic operation is used.
-This avoids “bubbling-up” of changes to the root of the tree.
-There is no further need for journaling in BPFS.
-The evaluation does not address correctness. (Condit et al., “Better I/O through Byte-Addressable, Persistent Memory.”)
+The difference to regular copy-on-write is that, as soon as the update to an indirect page can be done through an atomic in-place operation, the atomic operation is used.
+Updates thereby do not necessarily propagatate up to the root of the tree.
 
-PMFS (2014) is another research file system that targets persistent memory.
+\citerelwork{PMFS}{dulloorSystemSoftwarePersistent2014} is another research filesystem that targets persistent memory.
 The authors make frequent comparisons to BPFS.
 The main differentiator from BPFS with regards to consistency is PMFS’s use of undo-logging for metadata updates and copy-on-write for data consistency in addition to hardware-provided atomic in-place updates.
-The evaluation shows that their approach for metadata has between 24x and 38x lower overhead (unit: number of bytes copied).
-PMFS also introduces protection against “scribbles” over file system data through CR0.WP. (Dulloor et al., “System Software for Persistent Memory.”)
+The evaluation shows that their approach for metadata has between 24x and 38x lower overhead compared to BPFS (unit: number of bytes copied).
+PMFS also introduces an efficient protection mechanism against accidental \textit{scribbles}.
+Scribbles are bugs in the system that accidentally overwrite PMEM, e.g., due to incorrect address calculation or out-of-bounds access in the kernel.
+By default, PMFS maps all PMEM read-only, thereby preventing accidental corruption of PMEM from code outside of PMFS.
+When PMFS needs to modify PMEM, it temporarily disables interrupts and clears the processor's \lstinline{CR0.WP}, thereby allowing writes to read-only pages in kernel mode.~\cite{dulloorSystemSoftwarePersistent2014,intelSdmCr0WpFlag}
 
-NOVA (2016) is the most mature research PMEM file system.
+\citerelwork{NOVA}{xuNOVALogstructuredFile2016} is the most mature research PMEM filesystem.
 NOVA uses per-inode logs for operations scoped to a single inode (e.g. write syscalls) and per-CPU journals for operations that affect multiple inodes.
 The intended result is high scalability with regard to core count.
 The per-inode log data structure is a linked list with a head and tail pointer in the inode.
 NOVA leverages 8-byte atomic operations to update these pointers after it has written log entries.
-While not explicitly called so by the authors it is our impression that the log is a logical redo log except for write log entries which, judging from the text, are always at page granularity.
+While not explicitly called so by the authors it is our impression that the log is a logical redo log except for writes, which --- judging from the text --- are always logged at page granularity.
 The authors explain the recovery procedure and measure its performance but do not address correctness in the evaluation.
-(Xu and Swanson, “NOVA: A log-structured file system for hybrid volatile/non-volatile main memories.”)
 
-NOVA-Fortis (2017) is a version of NOVA that introduces snapshots and hardening against data corruption.
-Snapshots are not relevant for this thesis. The data corruption countermeasures are manifold:
-\begin{itemize}[noitemsep]
-    \item Handling of machine check exceptions (MCE) in case the hardware detects bit errors. This is done by using \lstinline{memcpy_mcsafe()} for all PMEM access; PMEM data is always buffered in DRAM before it is read.
-    \begin{itemize}
-        \item This also includes code to handle the kernel’s poisoning of physical address ranges and the ACPI interface to clear errors indicated by the hardware.
-    \end{itemize}
-    \item Detection from metadata corruption through CRC32 checksums.
-    \item Recovery from metadata corruption by comparing checksums of the primary and replica and restoring the variant with the matching checksum.
-    \item Protection against localized unrecoverable data loss through RAID4-style parity.
-    \begin{itemize}[noitemsep]
-        \item Naturally this works only while a file is not DAX-mmapped.
-    \end{itemize}
+\citerelwork{NOVA-Fortis}{xuNOVAFortisFaulttolerantNonvolatile2017} is a version of NOVA that introduces snapshots and hardening against data corruption.
+Whereas snapshots are not relevant for this thesis because ZFS already provides this feature, the data corruption countermeasures are representative of the state of the art:
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
+    \item Handling of machine check exceptions (MCE) in case the hardware detects bit errors.
+          This is done by using \lstinline{memcpy_mcsafe()} for all PMEM access.\todo{ref mcsafe explainer}
+          %PMEM data is always buffered in DRAM before it is read.
+    \item Detection of metadata corruption through CRC32 checksums.
+    \item Redundancy through metadata replication. For metadata recovery, NOVA-Fortis compares checksums of the primary and replica and restores the variant with the matching checksum.
+    \item Protection against localized unrecoverable data loss through RAID4-like parity.
+          This feature only works while the file is not DAX-mmapped.
 \end{itemize}
-The recovery capabilities are explained in detail but the evaluation focuses exclusively on the performance impact of the new protection features; it does not evaluate correctness or actual behavior during recovery. (Xu et al., “NOVA-Fortis.”)
+The authors use a custom fault injection tool to corrupt data structures in a targeted manner and test NOVA Fortis's recovery capabilities.
 
-\subsubsection{Hybrid PMEM File Systems}\label{sec:hybrid_pmem_file_systems}
-More recent publications explored the performance benefits of splitting responsibilities between the kernel and a user-space component in order to eliminate system call overhead.
+\subsubsection{Hybrid PMEM filesystems}\label{sec:hybrid_pmem_file_systems}
+A recurring pattern in PMEM filesystem design is to split responsibilities between kernel and userspace component in order to eliminate system call overhead.
 
-SplitFS (Kadekodi et al..”, 2019) is a research file system that proposes a
-  “split of responsibilities between a user-space library file system and an existing kernel PM file system.
-  The user-space library file system handles data operations by intercepting POSIX calls, memory-mapping the underlying file, and serving the read and overwrites using processor loads and stores.
-  Metadata operations are handled by the kernel PM file system (ext4 DAX)”.
-SplitFS uses a redo log with idempotent entries that is written from userspace.
-The authors put some emphasis on the optimizations such as the use of checksums and aligned start addresses to find valid log entries instead of an explicitly linked list.[e]
-The evaluation of correctness is limited to a comparison of user-observable file system state between SplitFS and ext4 in DAX mode.
-Recovery is evaluated only through the lens of recovery time (performance), not correctness.
-
-Strata (Kwon et al., 2017) is a cross-media file system with both kernel and user-space components.
-Since its distinguishing feature is the intelligent migration of data between different storage media we discuss it in the Section~\ref{sec:cross_media_storage_systems} on cross-media storage systems.
-
-\subsubsection{User-Space PMEM Filesystems}
-\blindtext\todo{explain why this category is relevant to ZIL-PMEM. it probably isn't? Aerie is often-cited though...}
-
-Aerie (Volos et al., 2014) is a user-space file system based on the premise that
-  “SCM [Storage Class Memory] no longer requires the OS kernel [...].
-  Applications link to a file-system library that provides local access to data and communicates with a [user-space] service for coordination.
-  The OS kernel provides only coarse grained allocation and protection, and most functionality is distributed to client programs.
-  For read-only workloads, applications can access data and metadata through memory with calls to the file-system service only for coarse-grained synchronization.
-  When writing data, applications can modify data directly but must contact the file-system service to update metadata.”
-The system uses a redo log maintained in each client program which is shipped to the file system service periodically or when a global lock is released.
-It is our understanding that only log entries shipped to and validated by the file system service will be replayed.
+\citerelwork{Aerie}{volosAerieFlexibleFilesystem2014} is a user-space filesystem based on the premise that
+“SCM [Storage Class Memory] no longer requires the OS kernel [...].
+Applications link to a file-system library that provides local access to data and communicates with a [user-space] service for coordination.
+The OS kernel provides only coarse grained allocation and protection, and most functionality is distributed to client programs.
+For read-only workloads, applications can access data and metadata through memory with calls to the file-system service only for coarse-grained synchronization.
+When writing data, applications can modify data directly but must contact the file-system service to update metadata.”
+The system uses a redo log maintained in each client program which is shipped to the filesystem service periodically or when a global lock is released.
+It is our understanding that only log entries shipped to and validated by the filesystem service will be replayed.
 The authors state that log entries can be lost if a client crashes before the log entries are shipped.
 The evaluation does not address crash consistency or recovery at all.
 
-EvFS (Yoshimura, Chiba, and Horii, 2019) is a 
-  “user-level POSIX file system that directly manages NVM in user applications.
-  EvFS minimizes the latency by building a user-level storage stack and introducing asynchronous processing of complex file I/O with page cache and direct I/O.
-  [...]
-  EvFS leads to a 700-ns latency for 64-byte non-blocking file writes and reduces the latency for 4-Kbyte blocking file I/O by 20 us compared to a kernel file system [EXT4] with journaling disabled.“
-In contrast to Aerie, EvFS does not require a coordinating user-space service.
-Crash consistency and recovery is not addressed and appears to be out of scope:
-  “EvFS is not a production-ready file system because it neither provides all the POSIX APIs or crash-safe properties”.
+\citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media filesystem with both kernel and user-space components.
+Since its distinguishing feature is the intelligent migration of data between different storage media we discuss it in the Section~\ref{sec:cross_media_storage_systems} on cross-media storage systems.
 
-\subsection{Cross-Media Storage Systems}\label{sec:cross_media_storage_systems}
+\citerelwork{SplitFS}{kadekodiSplitFSReducingSoftware2019} is a research filesystem that proposes a
+“split of responsibilities between a user-space library file system and an existing kernel PM file system.
+The user-space library file system handles data operations by intercepting POSIX calls, memory-mapping the underlying file, and serving the read and overwrites using processor loads and stores.
+Metadata operations are handled by the kernel PM file system (ext4 DAX)”.
+SplitFS uses a redo log with idempotent entries that is written from userspace.
+As a performance optimization the authors use checksums and aligned start addresses to find valid log entries instead of an explicit linked list with persistent pointers.
+The SplitFS evaluation of correctness is limited to a comparison of user-observable filesystem state between SplitFS and ext4 in DAX mode.
+Recovery is evaluated only through the lens of recovery time (performance), not correctness.
+
+\citerelwork{EvFS}{yoshimuraEvFSUserlevelEventDriven2019} is a
+“user-level POSIX file system that directly manages NVM in user applications.
+EvFS minimizes the latency by building a user-level storage stack and introducing asynchronous processing of complex file I/O with page cache and direct I/O.
+[...]
+EvFS leads to a 700-ns latency for 64-byte non-blocking file writes and reduces the latency for 4-Kbyte blocking file I/O by 20 us compared to a kernel file system [EXT4] with journaling disabled.“
+In contrast to Aerie, EvFS does not require a coordinating user-space service.
+Crash consistency and recovery is not addressed:
+“EvFS is not a production-ready file system because it neither provides all the POSIX APIs or crash-safe properties”.
+
+\subsection{Cross-Media Systems}\label{sec:cross_media_storage_systems}
 Cross-media storage systems combine the advantages of multiple storage devices from different levels of the storage hierarchy.
-Historically, these kinds of systems strive to exploit
-\begin{itemize}
-    \item hard disk for their high capacity, acceptable sequential read/write perf and low cost
-    \item flash storage for low-latency random read/write workloads with small block sizes.
-\end{itemize}
+Historically, these kinds of systems strive to exploit hard disk for high capacity at low cost and more expensive flash storage for low latency random access IO.
 With persistent memory, a new class of storage has become available whose role in cross-media systems is still to be determined.
 In the context of this thesis we find it most useful to compare the overall system architecture.
 
-\subsubsection{ZFS: Allocation Classes}
+\citerelwork{ZFS: Allocation Classes}{openzfsAllocationClasses}
 Whereas ZFS was initially designed for a large pool of hard disks, it has gained several cross-media features over its lifetime.
 When configuring a zpool, the administrator assigns the block device to an \textit{allocation class}.
 The following allocation classes exist: \textit{normal} (main pool), \textit{log} (SLOG device), \textit{aux} (L2ARC, a victim cache for ZFS's ARC\todo{check that we have explained ARC already}), \textit{special} (small blocks), and \textit{dedup} (deduplication table data).
@@ -311,16 +291,17 @@ Many administrators configure lower redundancy for these devices --- either to g
 In comparison to the other systems presented in this section, allocation classes are very inflexible:
 once an allocation is made and the data is written, the data stays in that place until it is freed or the device is removed from the pool.
 In particular, there is no automatic tiering that takes usage patterns into account.
-Also, L2ARC devices reduce space efficiency because the cached data still occupies space in the main pool.
+Further, L2ARC devices reduce space efficiency because the cached data still occupies space in the main pool.
 Similarly, SLOG devices are somewhat wasteful since they are exclusively used for ZIL logging and never read except during recovery.
-In comparison, Strata (described below) derives more value from its PMEM-based log.
+Systems such as Strata derives more value from its PMEM-based log.
+Finally, it should be noted that while Linux's /dev/pmem\todo{ref backwards} block device can be used with allocation classes, ZFS's ZIO pipeline is unable to exploit its write performance.\todo{ref section on ZIL-LWB perf}.
 %On the write path, separate log devices (SLOG) can be added to a storage pool to be used exclusively for persisting ZFS’s logical write-ahead log (the ZIL).
 %Offloading latency-sensitive IO to the log device allows for greater throughput during txg sync to the main pool’s devices.
 %\todo{if we move the related work section to the end of the thesis this paragraph can be abbreviated}
 %On the read path, the in-DRAM ARC, which is ZFS’s variant of the buffer cache, can be extended with a second-level victim cache on a block device, the L2ARC.
 %L2ARC hits free up IOPS among the main pool’s devices which can be used for txg sync.
 
-\subsubsection{ZFS: ZIL Design Challenges for Fast Media}
+\citerelwork{ZFS: ZIL Performance Improvements For Fast Media}{openzfsZILPerformanceImprovements2020}
 At the OpenZFS 2020 Developer summit, Saji Nair of storage vendor Nutanix presented a ZIL prototype that handles fast block devices more efficiently.
 The prototype avoids unnecessary sequential ordering of I/O operations when writing ZIL LWBs\todo{check that LWBs have been introduced by now}.
 It also avoids using the ZIO pipeline due to context switching overheads, issuing block I/O directly from the application thread instead.
@@ -328,127 +309,84 @@ The evaluation is limited to 4k sync write performance, claiming an up 4x improv
 However, the source code for the prototype has not been published and the design is incomplete with regards to replay.
 \todo{maybe this entire section should move to the 'background' section?}
 
-\subsubsection{Cross-Media Systems That Log To PMEM}
-
-Strata (2017) is a cross-media research file system.
-  “Closest to the application, Strata’s user library synchronously logs process-private updates in NVM while reading from shared, read-optimized, kernel-maintained data and metadata.
-  [...]
-  Client code uses the POSIX API, but Strata’s synchronous updates obviate the need for any sync-related system calls”
-  (Kwon et al., “Strata: A Cross Media File System”).
-
-We classify Strata as a hybrid file system in Section~\ref{sec:hybrid_pmem_file_systems} because it consists of both a userspace library and an in-kernel component.
+\citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media research filesystem.
+“Closest to the application, Strata’s user library synchronously logs process-private updates in NVM while reading from shared, read-optimized, kernel-maintained data and metadata.
+    [...]
+Client code uses the POSIX API, but Strata’s synchronous updates obviate the need for any sync-related system calls”.
+We classify Strata as a hybrid filesystem in Section~\ref{sec:hybrid_pmem_file_systems} because it consists of both a userspace library and an in-kernel component.
 The log, written from userspace, is an idempotent logical redo log.
 The kernel component then \textit{digests} the logs asynchronously, performing aggregation of the logged operations during digestion.
 Aggregation permits the kernel component to issue “sequential, aligned writes” to the slower storage devices such as SSDs or HDDs.
 ZFS with and without ZIL-PMEM compares to Strata in the following ways:
-\begin{itemize}
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item Both systems use a logical redo operation log instead of a block-level journaling mechanism.
     \item Both systems perform asynchronous write-back and thereby reap similar benefits from it (parallel batch processing, optimized allocation).
     \item Strata’s kernel component digests the logs written from user-space in order to write them back to other tiers.
           ZFS accumulates the write-back state in DRAM and never reads the log except for recovery.
           (It is unclear to us how often Strata digests the logs. ZFS performs write-back of dirty state after at most 5 seconds.)
-    % \item The Strata paper suggests that the system uses a single block size whereas ZFS supports variable block sizes (“Free Block Bitmap” in Strata vs. Spacemaps in ZFS).
+          % \item The Strata paper suggests that the system uses a single block size whereas ZFS supports variable block sizes (“Free Block Bitmap” in Strata vs. Spacemaps in ZFS).
     \item Strata seems to tune allocations for SSDs, e.g. allocating blocks in erasure block size to prevent write amplification.
           ZFS supports TRIM and supports variable block sizes up to \SI{16}{MiB}, but there are no automatic optimizations that specifically target write amplification in SSDs.
-    %\item ZFS guarantees data integrity and has provisions for redundancy.
-    %\item ZFS supports many devices at different performance class levels whereas Strata only supports a single device.
+          %\item ZFS guarantees data integrity and has provisions for redundancy.
+          %\item ZFS supports many devices at different performance class levels whereas Strata only supports a single device.
     \item ZFS is in-kernel and requires no modifications to applications whereas Strata requires linking to or LD\_PRELOADing a user-space library, which, tangentially, makes it incompatible with statically linked binaries.
-    %\item ZFS is a mature filesystem used at large scale in production whereas Strata is an unproven research prototype.
+          %\item ZFS is a mature filesystem used at large scale in production whereas Strata is an unproven research prototype.
 \end{itemize}
 
-Ziggurat (2019)
-  “Ziggurat exploits the benefits of NVMM through intelligent data placement during file writes and data migration.
-  Ziggurat includes two placement predictors that analyze the file write sequences and predict whether the incoming writes are both large and stable, and whether updates to the file are likely to be synchronous.
-  Ziggurat then steers the incoming writes to the most suitable tier based on the prediction: writes to synchronously-updated files go to the NVMM tier to minimize the synchronization overhead.
-  Small, random writes also go to the NVMM tier to fully avoid random writes to disk. The remaining large sequential writes to asynchronously-updated files go to disk.”
-  (Zheng, Hoseinzadeh, and Swanson, “Ziggurat: a tiered file system for non-volatile main memories and disks.”)
-The authors compare Ziggurat to State as follows:
-  “Strata is a multi-tiered user-space file system that exploits NVMM as the high-performance tier, and SSD/HDD as the lower tiers.
-  It uses the byte-addressability of NVMM to coalesce logs and migrate them to lower tiers to minimize write amplification.
-  File data can only be allocated in NVMM in Strata, and they can be migrated only from a faster tier to a slower one.
-  The profiling granularity of Strata is a page, which increases the bookkeeping overhead and wastes the locality information of file accesses."
-  (Zheng, Hoseinzadeh, and Swanson, “Ziggurat.”)
+\citerelwork{Ziggurat}{zhengZigguratTieredFile2019}
+“Ziggurat exploits the benefits of NVMM through intelligent data placement during file writes and data migration.
+Ziggurat includes two placement predictors that analyze the file write sequences and predict whether the incoming writes are both large and stable, and whether updates to the file are likely to be synchronous.
+Ziggurat then steers the incoming writes to the most suitable tier based on the prediction: writes to synchronously-updated files go to the NVMM tier to minimize the synchronization overhead.
+Small, random writes also go to the NVMM tier to fully avoid random writes to disk. The remaining large sequential writes to asynchronously-updated files go to disk”.
+The authors compare Ziggurat to Strata as follows:
+“Strata is a multi-tiered user-space file system that exploits NVMM as the high-performance tier, and SSD/HDD as the lower tiers.
+It uses the byte-addressability of NVMM to coalesce logs and migrate them to lower tiers to minimize write amplification.
+File data can only be allocated in NVMM in Strata, and they can be migrated only from a faster tier to a slower one.
+The profiling granularity of Strata is a page, which increases the bookkeeping overhead and wastes the locality information of file accesses".
 ZFS with and without ZIL-PMEM compares to Ziggurat as follows:
-\begin{itemize}
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item Ziggurat actively migrates data into PMEM based on access pattern.
           ZFS has no provisions for data migration within the pool after block allocation.
           The ZFS architecture such a feature is unlikely to be developed in the future (keyword: blockpointer rewrite).
     \item Ziggurat sends writes directly to the suitable tier based on prediction of future access patterns.
-    If the access pattern is anticipated to be synchronous, Ziggurat choses the PMEM tier.
-    The ZIL, and ZIL-PMEM specifically, only serves as a stop-gap between txg sync points of the main pool.
-    Data is always written twice --- once to the log and once to the main pool ---, and never read from the log except during recovery.
-    %(The \lstinline{WR_INDIRECT ZIL} log entry type mitigates this for large writes).
-    \item Both systems are fully in-kernel and  require no modifications to user-space applications.
+          If the access pattern is anticipated to be synchronous, Ziggurat choses the PMEM tier.
+          The ZIL, and ZIL-PMEM specifically, only serves as a stop-gap between txg sync points of the main pool.
+          Data is always written twice --- once to the log and once to the main pool ---, and never read from the log except during recovery.
+          %(The \lstinline{WR_INDIRECT ZIL} log entry type mitigates this for large writes).
+    \item Both systems are fully in-kernel and require no modifications to user-space applications.
     \item Ziggurat builds on NOVA-Fortis and thus inherits the PMEM-specific data integrity and redundancy mechanisms provided for the PMEM storage tier.
-        ZIL-PMEM data integrity measures are more limited but can be expanded in the future (see Chapter~\ref{ch:di}).
+          ZIL-PMEM data integrity measures are more limited but can be expanded in the future (see Chapter~\ref{ch:di}).
     \item The Ziggurat paper does not mention data integrity measures or redundancy mechanisms for the block device layers beneath PMEM.
-        Possibly, existing Linux features such as Device Mapper could be used to compensate.
-        In contrast, ZIL-PMEM benefits from ZFS’s strong data integrity and redundancy mechanisms once the logged data is txg synced.\todo{ensure txg sync has already been explained}
+          Possibly, existing Linux features such as Device Mapper could be used to compensate.
+          In contrast, ZIL-PMEM benefits from ZFS’s strong data integrity and redundancy mechanisms once the logged data is txg synced.\todo{ensure txg sync has already been explained}
     \item The Ziggurat design is “fast-first. It should use disks to expand the capacity of NVMM rather than using NVMM to improve the performance of disks as some previous systems have done”.
-        ZIL-PMEM approaches persistent memory from the opposite direction, starting with a file system strongly focussed on block devices and only leveraging PMEM where appropriate.
+          ZIL-PMEM approaches persistent memory from the opposite direction, starting with a filesystem strongly focussed on block devices and only leveraging PMEM where appropriate.
     \item Ziggurat was not evaluated on actual persistent memory. The authors used memory on another NUMA node to simulate lower latencies.
-        We evaluate ZIL-PMEM on commercially available PMEM hardware.
-    \item An examination of the Ziggurat code base shows that it only supports a single device per tier.
-    %\item Ziggurat has been unmaintained since the publication. OpenZFS has a healthy community of both hobbyist and paid full-time contributors.
+          We evaluate ZIL-PMEM on commercially available PMEM hardware.
+          %\item An examination of the Ziggurat code base shows that it only supports a single device per tier.
+          %\item Ziggurat has been unmaintained since the publication. OpenZFS has a healthy community of both hobbyist and paid full-time contributors.
 \end{itemize}
 
-\subsubsection{ Block-Level Caches on PMEM}
-The Linux kernel provides two device mapper targets that can be used as caches for a slower block device.
-This is relevant to ZIL-PMEM because ZFS can emulate block devices through ZVOLs.
-ZVOLs use the same ZIL format as ZFS file systems do to implement block device requests with sync semantics.
-With regards to the evaluation of ZIL-PMEM we believe that performance metrics and redundancy features are most relevant.
+\citerelwork{dm-writecache}{WritecacheTargetLinux} is a new Linux Device Mapper target that synchronously persists writes to PMEM and performs asynchronous writes-back to the origin block device in the background.
+Dm-writecache is relevant to ZIL-PMEM because both systems expose a PMEM-accelerated virtual block device.
+For this use case, a write-back cache can be more space efficient because it only needs to store the most recent version of a block.
+In contrast, ZIL-PMEM logs each block write (smallest block size for ZVOLs is 4k) separately and does not coalesce or delta-encode log entries.
+ZIL-PMEM protects data integrity through checksums whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
+Once ZVOL modifications are txg-synced\todo{backref} to the main pool, they benefit from ZFS's strong data redundancy mechanisms such as \textit{raidz}.
+With dm-writecache, the origin block device driver must handle data redundancy if desired, e.g., though another Device Mapper target such as \textit{dm-raid}.
+We compare the performance of the two implementations in Section X.Y \todo{ref block device comparison}):
+dm-writecache delivers on the promise of low latency but shows significant lock contention with multiple threads, failing to saturate PMEM bandwidth and performing significantly worse than ZIL-PMEM.\todo{verify claim}
 
-Linux Device Mapper with dm-cache (pre 2018) is the established volume manager in Linux.
-With regards to volume management, Device Mapper supports striping (dm-linear), mirroring (dm-mirror) and different RAID levels (dm-raid).
-While different device classes can be put in the same volume group, it is inadvisable to use volumes of different device classes in the same dm-* volume management abstraction.
-Instead, one can use dm-cache to configure a block device as a read/write cache, either in write-through or write-back mode.
-As such, /dev/pmem can be used in lieu of an NVMe or SSD device.
-Device Mapper’s redundancy mechanisms could theoretically be used to protect against data corruption or permanent errors in PMEM.
-We have not conducted a performance evaluation of dm-cache.
+\subsection{Journaling \& Write-Ahead Logs Adapted PMEM}
+The following publications use persistent memory to accelerate file system journals and write-ahead logs.
 
-Linux Device Mapper with dm-writecache (since 2018) is a new Device Mapper module that provides a low-latency write-back write-only cache with explicit support for persistent memory.
-\begin{itemize}
-    \item dm-writeache persists writes to PMEM before signalling completion, then performs write-back to the underlying block device or device mapper target in the background.
-    \item dm-writecache uses \lstinline{memcpy_mcsafe()} to handle hardware-reported memory errors.
-    \item dm-writecache does not take further provisions to guarantee data integrity.
-\end{itemize}
-In our experiments on Linux 5.8, dm-writecache delivers on the promise of low latency (100K IOPS @ 1 thread) but shows significant lock contention with multiple threads (peaks at 150k IOPS @ 4 threads).
-Compared to our proposal for a ZIL-PMEM in ZFS, dm-writecache might be able to handle overwrites more space-efficiently since the ZFS log semantics currently do not allow coalescing of overwrites into one log entry (e.g. on fsync).
-
-\subsection{Adaptation Of Block-Level (Sub-)Systems To PMEM}
-Several systems have been adapted to take advantage of PMEM when it is available, similar to what we plan to do with ZIL-PMEM.
-We focus on the overall system architecture and performance numbers if applicable.
-
-\subsubsection{On The File-System Level}
-Linux DAX is a Linux subsystem that allows file systems such as ext4 and xfs to detect that the underlying storage medium is PMEM.
-The file system can then implement PMEM-specific optimizations and mmap files directly into user-accessible memory.
-This feature enables applications to bypass the operating system entirely for data persistence if all file blocks are pre-allocated and all pages pre-faulted.
-Intel’s PMDK builds all of its abstractions on top of this feature.
-
-ext4 fast commits is a feature released in Linux 5.10.
-  “The fast-commit journal [...] contains changes at the file level, resulting in a more compact format.
-  Information that can be recreated is left out, as described in the patch posting:
-  For example, if a new extent is added to an inode, then  corresponding updates to the inode table, the block bitmap, the group descriptor and the superblock can be derived based on just the extent information and the corresponding inode information.
-  [...] Fast commits are an addition to — not a replacement of — the standard commit path; the two work together.
-  If fast commits cannot handle an operation, the filesystem falls back to the standard commit path.”
-  (https://lwn.net/Articles/842385/, 2020-02-03).
-The article mentions ongoing work to leverage persistent memory for ext4 fast commits.
-The approach is inspired by per-inode journaling as proposed by Park \& Shin at Usenix ATC 2017.
-
-Linux jbd2 by example of ext4 data=journal on /dev/pmem Linux provides the journaling block device (JBD2) used by several file systems in the kernel.
-As the name suggests, JBD2 is a reusable abstraction for a block-level file system journal.
-One of the consumers is ext4. Ext4 provides the ability to perform data journaling, and to use a separate block device for journaling.
-We used /dev/pmem as such a separate journaling device and conducted the 4k sync write experiments from Section 1.
-We observed that the system peaks at ~70k 4k sync write IOPS.
-It is bottlenecked by a single journaling thread in Linux’s jbd2 subsystem.
-
-Unioning of the Buffer Cache and Journaling Layers with Non-volatile Memory (2013) is an academic paper that presents a PMEM-aware buffer cache design which
-  “subsumes the functionality of caching and [block-level] journaling”.
-From the buffer cache’s perspective, the on-disk blocks that make up a journal (e.g. one managed by JBD2) are indistinguishable from non-journal file system blocks.
+\citerelwork{Unioning of the Buffer Cache and Journaling Layers with Non-volatile Memory}{leeUnioningBufferCache2013} is an academic paper that presents a PMEM-aware buffer cache design which
+“subsumes the functionality of caching and [block-level] journaling”.
+From the buffer cache’s perspective, the on-disk blocks that make up a journal (e.g. one managed by JBD2) are indistinguishable from non-journal filesystem blocks.
 Thus, for a journal block $A’$ that logs an update to a block $A$, both blocks $A’$ and $A$ will sit in the buffer cache.
 This waste of space can be reduced with PMEM by the author’s proposal.
 Instead of journaling on top of the block layer, one journals in the buffer cache itself by a) placing the buffer cache in PMEM and b) introducing a new buffer cache entry state “frozen” so that an entry can be “clean”, “dirty” or “frozen”.
-When modifying a block $A$, the file system no longer makes a journal entry but instead modifies the buffer cache entry directly.
+When modifying a block $A$, the filesystem no longer makes a journal entry but instead modifies the buffer cache entry directly.
 If the entry was “clean”, it is now “dirty”. If the entry was “frozen”, a copy is made and the modification goes to the copy, making it “dirty” as well.
 Committing a block to the journal is a simple state transition from “dirty” to “frozen”. On a crash + restart, “dirty” buffer cache entries are discarded but “frozen” entries remain.
 We find the approach exceptionally interesting and innovative and can imagine an application of the idea to the ZFS ARC.
@@ -456,135 +394,159 @@ However, the system’s real-world performance is unclear (evaluation on DRAM).
 Also, we see non-trivial software engineering and maintenance problems with the approach.
 Finally, the paper does not address hardware error handling or data corruption concerns at all.
 
-\subsubsection{Database Management Systems}
-Disk-oriented database management systems often use write-ahead logs (WAL) to allow a transaction to commit before the modified pages are written back to stable storage.
+\citerelwork{ext4 fast commits}{FastCommitsExt4} is a feature released in Linux 5.10.
+“The fast-commit journal [...] contains changes at the file level, resulting in a more compact format.
+Information that can be recreated is left out, as described in the patch posting:
+For example, if a new extent is added to an inode, then  corresponding updates to the inode table, the block bitmap, the group descriptor and the superblock can be derived based on just the extent information and the corresponding inode information.
+    [...] Fast commits are an addition to — not a replacement of — the standard commit path; the two work together.
+If fast commits cannot handle an operation, the filesystem falls back to the standard commit path.”
+The cited article mentions ongoing work to use persistent memory for ext4 fast commits.
+The approach is inspired by per-inode journaling as proposed by \citeauthor{parkIJournalingFinegrainedJournaling2017} in \cite{parkIJournalingFinegrainedJournaling2017}.
+
+\textbf{Disk-oriented database management systems} often use write-ahead logs (WALs) to allow a transaction to commit before the modified pages are written back to stable storage.
 However, appending to a shared WAL file has historically been a latency and scalability bottleneck which lead to amortization techniques such as \textit{commit groups} (aka \textit{group commit}) and \textit{pre-committed transactions} that batch the WAL entries of multiple committing transactions into a single physical WAL record.%
-\footnote{According to (DeWitt et al., “Implementation Techniques for Main Memory Database Systems.”, 1984), "the notion of gronp commits appears to be past of the unwritten database folklore. The System-R implementors claim to have implemented it."}\todo{cite in footnote}
-With persistent memory, the latency bottleneck no longer lies in the raw I/O but rather the coordination overhead between multiple CPU cores and sockets, prompting new distributed logging designs that avoid a central point of contention.
-\begin{itemize}
-\item Fang et al., “High Performance Database Logging Using Storage Class Memory.” (2012)
-\item Pelley et al., “Storage Management in the NVRAM Era.” also elaborate on NVRAM Group Commit.
-\item Johnson et al., “Aether.”
-\end{itemize}
-ZIL-LWB\todo{ensure this term has been established by now} employs \textit{group commit} as well: the log records issued by independent threads for the same file system are batched into the currently \textit{open} \textit{log-write block} (LWB).
-The open LWB is only \textit{issued} to disk after a timeout has passed.\todo{refer to section that explains the perf problems with ZIL-LWB}
-ZIL-PMEM commits log records directly to PMEM and allows multiple cores to do so in parallel with minimal global coordination.\todo{minimal global coordination = the committer slots + semaphore}
+\footnote{According to \cite{dewittImplementationTechniquesMain1984} "the notion of gronp commits appears to be past of the unwritten database folklore. The System-R implementors claim to have implemented it."}
+With persistent memory, the latency bottleneck no longer lies in the raw I/O but rather the coordination overhead between multiple CPU cores and sockets, prompting new distributed logging designs that avoid a central point of contention.%
+~\cite{fangHighPerformanceDatabase2011,pelleyStorageManagementNVRAM2013,johnsonAetherScalableApproach2010}
+ZIL-LWB\todo{ensure this term has been established by now} employs \textit{group commit} as well although the terminology is different.
+It batches log records issued by independent threads for the same filesystem into the currently \textit{open} \textit{log-write block} (LWB).
+Once the open LWB is full or a timeout has passed, the open LWB is written (\textit{issued}) to disk.\todo{refer to section that explains the perf problems with ZIL-LWB}
+In contrast, ZIL-PMEM commits log records directly to PMEM and allows multiple cores to do so in parallel with minimal global coordination.\todo{minimal global coordination = the committer slots + semaphore}
 Our evaluation shows that the design scales well on single-socket systems.
-NUMA and multi-socket systems have been out of scope for this thesis.\todo{meh}
+NUMA and multi-socket systems, which are addressed in the cited publications from the database community, have been explicitly out of scope for this thesis.\todo{meh, ref}
 
-\subsubsection{Testing File System Crash Consistency}
-The publications that introduced the file systems presented in earlier subsections put little to no emphasis on evaluating or proving crash consistency.
-We expand literature survey to get an impression of the research that focusses on crash consistency guarantees.\todo{we will likely also not be great in this area...}
+\subsection{Testing Filesystem Crash Consistency}
+In this section we survey techniques to determine and verify crash consistency guarantees of file systems.
+A formal and automatically verifiable model would have been been extremely helpful to ensure that ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB.\todo{ref}
 
-All File Systems Are Not Created Equal (Pillai et al., 2014) contributes a survey of the atomicity and ordering guarantees of several popular Linux file systems and provides a tool called ALICE to validate or derive the guarantees required by applications.
+\citerelwork{All File Systems Are Not Created Equal}{pillaiAllFileSystems2014} contributes a survey of the atomicity and ordering guarantees of several popular Linux filesystems and provides a tool called ALICE to validate or derive the guarantees required by applications.
 ZFS with and without ZIL-PMEM could benefit from this survey as well.
 The survey could be used to characterize ZFS’s guarantees.
 ALICE could be used to determine whether ZFS’s guarantees are sufficient for applications and/or whether ZFS’s guarantees exceed the requirements of the majority of applications.
-However, since ZIL-PMEM has the design goal to maintain the same guarantees as ZIL-PMEM (see Section~\ref{sec:requirements}), such findings would only be relevant for future work.
+However, since ZIL-PMEM shall maintain the same guarantees as ZIL-PMEM (see Section~\ref{sec:requirements}), such findings would only be relevant for future work.
 
-Specifying and Checking File System Crash-Consistency Models (Bornholt et al., 2016)
+\citerelwork{Specifying and Checking File System Crash-Consistency Models}{bornholtSpecifyingCheckingFile2016}
 The authors
-  “present a formal framework for developing crash-consistency models, and a toolkit, called FERRITE, for validating those models against real file system implementations.”
-The system provides means to express expected file system behavior as a \textit{litmus test}.
-A litmus test encodes expected behavior of a file system though a series of events (e.g. write to a file) and a final predicate expressed as a satisfiability problem.
-FERRITE can execute the litmus test against an axiomatic formal model of the file system to ensure that, iff the actual file system adheres to the formal model, the litmus test’s expectations hold.
+“present a formal framework for developing crash-consistency models, and a toolkit, called FERRITE, for validating those models against real file system implementations.”
+The system provides means to express expected filesystem behavior as a \textit{litmus test}.
+A litmus test encodes expected behavior of a filesystem though a series of events (e.g. write to a file) and a final predicate expressed as a satisfiability problem.
+FERRITE can execute the litmus test against an axiomatic formal model of the filesystem to ensure that, iff the actual filesystem adheres to the formal model, the litmus test’s expectations hold.
 Notably the litmus test is executed symbolically and the validation predicates are checked for satisfiability by an SMT solver; this is exhaustive and not comparable to a unit  or regression test.
-FERRITE can also execute litmus tests against the actual file system to test whether it adheres to the formal model.
+FERRITE can also execute litmus tests against the actual filesystem to test whether it adheres to the formal model.
 This test is non-exhaustive.
 It is based on executing the litmus test “many times” where for each execution all disk commands emitted during execution are recorded.
-All permutations and prefixes of these traces that are allowed under the semantics of the disk protocol are used to produce test disk images which are fed back to the file system under test for recovery.
-After recovery the litmus test’s predicate must hold against the concrete file system state after recovery.
-If it does not hold the given permutation of the trace is proof that the file system does not match its model (assuming the litmus test passes execution against the model), or that the file system’s assumptions about the disk do not match the FERRITE \textit{disk model}.
+All permutations and prefixes of these traces that are allowed under the semantics of the disk protocol are used to produce test disk images which are fed back to the filesystem under test for recovery.
+After recovery the litmus test’s predicate must hold against the concrete filesystem state after recovery.
+If it does not hold the given permutation of the trace is proof that the filesystem does not match its model (assuming the litmus test passes execution against the model), or that the filesystem’s assumptions about the disk do not match the FERRITE \textit{disk model}.
 FERRITE appears to be a useful tool to build a model of ZFS’s undocumented crash-consistency guarantees (ZFS has not been evaluated by the authors).
 Such a model would be helpful to validate ZIL-PMEM's goal to maintain the same semantics as ZIL-PMEM.
-However, this would require a FERRITE disk model for persistent memory
+However, this would require a FERRITE disk model for persistent memory.
 
-Using Model Checking to Find Serious File System Errors (Yang et al., 2006)
-The authors present an “implementation-level model checker” that removes the need to define a formal model for the file system.
-Instead, the model is inferred by running the OS with the file system and recording both syscalls emitted by the application and disk operations emitted by the filesystem.
+\citerelwork{Using Model Checking to Find Serious File System Errors}{yangUsingModelChecking2006}
+The authors present an “implementation-level model checker” that removes the need to define a formal model for the filesystem.
+Instead, the model is inferred by running the OS with the filesystem and recording both syscalls emitted by the application and disk operations emitted by the filesystem.
 These traces are subsequently fed to a process that produces disk images created from reorderings of disk operations.
 The disk images are fed to the filesystem’s fsck tool.
-Disk images that can be ‘repaired’ by fsck are then fed to the “recovery checker” which examines file system state and compares it to the expected “stable file system” state which (if we understand section 4.2 of the paper correctly) is derived from the recorded system calls.
+Disk images that can be ‘repaired’ by fsck are then fed to the “recovery checker” which examines filesystem state and compares it to the expected state which (if we understand section 4.2 of the paper correctly) is derived from the recorded system calls.
 (The role of the “volatile file system” in this process is still unclear to us).
 The authors mention several shortcomings of their system:
-\begin{itemize}
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item Lack of multi-threading support (this applies to FERRITE as well).
-    \item The recovery checker produces a projection of the file system state (e.g. only names and content but no atime).
-        Thus, the system can only check guarantees at the projection level.
+    \item The recovery checker produces a projection of the filesystem state (e.g. only names and content but no atime).
+          Thus, the system can only check guarantees at the projection level.
     \item Restrictive assumptions such as “Events should also have temporal independence in that creating new files and directories should not harm old files and directories”.
 \end{itemize}
-The idea of using the file system’s recovery tools (fsck) to infer its guarantees seems useful to avoid the requirement of a formally specified model.
+The idea of using the filesystem’s recovery tools (fsck) to infer its guarantees seems useful to avoid the requirement of a formally specified model.
 However, it is our understanding that the resulting model is rather a larger regression test than a truly derived exhaustive model.
-We think that the results would be useful as a starting point for a formal model, e.g., as initial litmus tests for use with FERRITE.
-We do not think that we can apply the presented approach to ZFS with and without ZIL-PMEM with reasonable effort.
+Such regression tests would be useful as a starting point for a formal model, e.g., as initial litmus tests for use with FERRITE.
+We do not believe that we can apply the presented approach to ZFS with and without ZIL-PMEM with reasonable effort.
 
-\subsubsection{PMEM-specific Crash-Consistency Concerns}
+\subsection{PMEM-specific Crash-Consistency Checkers}
+A growing body of work introduces tools that check whether code that manipulates persistent memory actually issues the architectually required instructions for persistence.\todo{phrasing is odd?}
+However, most systems only target userspace code and are thus inapplicable to ZIL-PMEM which is implemented in the ZFS kernel module.
+Whereas ZIL-PMEM can be compiled for user-space as part of the \textit{libzpool} library, the large amount of conditional compilation involved in the libzpool build process diminishes the significance of user space tests.
+We surveyed the following userspace-only tools:
+\begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
+    \item \citerelwork{pmemcheck}{intoductionToPmemcheckPart}, a tool in Intel’s Persistent Memory Development Kit (PMDK).
+          It integrates with Valgrind~(\cite{Valgrind}) and requires annotation of all PMEM accesses.
+          Notably, the PMDK libraries include these annotations.
+    \item pmeminsp\todo{todo}
+    \item Agamotto \todo{todo}
+\end{itemize}
+The remaining tools in this subsection support kernel code and could be applicable to ZIL-PMEM.
 
-Yat: A validation framework for persistent memory software (Lantz et al., 2014)
-  “Yat is a hypervisor-based framework that supports testing of applications that use Persistent Memory [...]
-  By simulating the characteristics of PM, and integrating an application-specific checker in the framework, Yat enables validation, correctness testing, and debugging of PM software in the presence of power failures and crashes.”
+\citerelwork{Yat: A Validation Framework For Persistent Memory Software}{lantzYatValidationFramework2014}
+“Yat is a hypervisor-based framework that supports testing of applications that use Persistent Memory [...]
+By simulating the characteristics of PM, and integrating an application-specific checker in the framework, Yat enables validation, correctness testing, and debugging of PM software in the presence of power failures and crashes.”
 The authors used Yat to validate PMFS (see Section~\ref{sec:in_kernel_pmem_filesystems}).
 Yat's hypervisor-based approach makes it the ideal tool for evaluating ZIL-PMEM.
-Sadly, Yat has never been published and remains an Intel-internal project.
+To our great dissatisfaction, Yat has never been published and remains an Intel-internal project.
 
-pmemcheck \footnote{\url{https://pmem.io/2015/07/17/pmemcheck-basic.html}}\todo{cite footnote} is a tool in Intel’s Persistent Memory Development Kit (PMDK).
-It integrates with Valgrind, a popular tool for dynamic analysis.
-The application code must be modified to inform Valgrind about which memory regions are PMEM mappings as well as every pmem-related operation.
-\textit{pmemcheck} can check for a variety of a variety of properties, depending on options passed to the tool:
-\begin{itemize}[noitemsep]
-    \item Correct use of instructions for persistence (e.g. check for CLWB after write to PMEM)
-    \item Multiple overwrites of the same memory location without an intermediate persistency guarantee (indicative of the assumption of sequential crash consistency).
-    \item Redundant flushing (relevant for performance).
-\end{itemize}
-Notably, the PMDK libraries already includes all the necessary instrumentation for Valgrind which means that the tool is minimally invasive to application source code that uses the PMDK.
-ZIL-PMEM proper runs in the kernel which is not supported by pmemcheck.
-However, the platform-independent components of the ZFS kernel module compiled as a user-space library called \textit{libzpool}.
-Both the \textit{ztest} stress testing tool and the ZIL-PMEM user-space unit tests\todo{ref} use libzpool.
-The ZIL-PMEM routines that persist log entries to PMEM could thus be checked by \textit{pmemcheck}.
-However, unless libpmem is used for user-space access to PMEM, the correctness of the results depends on the correctness of valigrind annotations that we would need to add to our PMEM access routines.
+\citerelwork{PMTest: A Fast And Flexible Testing Framework For Persistent Memory Programs}{liuPmtestFastFlexible2019}
+PMTest is a validation tool that claims to be significantly faster than Intel's \textit{pmemcheck}.\todo{we introduced it above, context still there?}
+The implementation is based on traces of PMEM operations which are generated by (manually or automatically) instrumented application code.
+PMTest ships with two built-in checkers that assert correct instruction ordering (e.g.: missing store barriers) and durability (e.g.: missing cache flushes).
+Higher-level checks must be implemented by the programmer.
+PMTest works within kernel modules but the implementation is limited to a single thread.
+The processing of the operation trace happens in userspace.
+PMTest could be used to check ZIL-PMEM kernel code: for a single ZPL filesystem and a single thread that performs synchronous I/O, the pool's PMEM is only written from that thread.\todo{ref design sections}
 
-PMTest: A fast and flexible testing framework for persistent memory programs (Liu et al., 2019)
-PMTest is a userspace tool that is significantly faster than pmemcheck.
-It ships with two built-in checkers to
-  “test two fundamental characteristics of all CCS [crash-consistent software]: the ordering and durability guarantee.
-  These checkers can also serve as the building blocks of other application-specific, high-level checkers.”
-Notably, PMTest also provides limited support to test crash-consistency of code that runs as a kernel module.
-Sadly, one of the limitations is that only a single thread kernel module thread can be checked.
-However, ZIL-PMEM might still benefit from PMTest given that we plan to issue all writes to PMEM from the thread that makes the syscall.
+\subsection{Fault Injection}
+Error handling code are notoriously difficult to test but often critical for correctness.
+Fault injection is a common technique to simulate failures and thereby exercise these code paths.
 
-\subsubsection{ Robustness Against Hardware Failures}
-Model-based failure analysis of journaling file systems (Prabhakaran et al., 2005)
+\citerelwork{Model-based Failure Analysis Of Journaling File Systems}{prabhakaranModelbasedFailureAnalysis2005}
 The authors present an analysis of the failure modes caused by incorrect handling of disk write failures in the journaling code in ext4, ReiserFS and IBM JFS.
 These filesystems each implement one or more of the following journaling modes: data journaling, ordered journaling, and writeback journaling.
 Any block write performed in one of these modes falls in one of the following categories:
-  “J represent journal writes, D represent data writes, C represent journal commit writes, S represent journal super block writes, K represent checkpoint data writes [...]”.
+“J represent journal writes, D represent data writes, C represent journal commit writes, S represent journal super block writes, K represent checkpoint data writes [...]”.
 For each of the three journaling modes, the authors present a state machine that describes all permitted sequences of block writes.
 The state machine includes transitions to an error state if a block write fails.
-The idea behind this approach is that a kernel component intercepts block writes and injects write failures.
-If the file system code subsequently performs another block write that is not permitted by the state machine an implementation error has been found.
+The system works as follows.
+A kernel module tracks the filesystems' state as modelled by the state machine.
+It intercepts block device writes from the filesystem code and injects write failures.
+If the filesystem subsequently performs another block write that is not permitted by the state machine, an implementation error has been found.
 The authors distinguish several classes of failures with varying degrees of data loss.
-The methodology is very file system specific which already shows in the adjustments required for IBM JFS.
-ZFS’s architecture does not translate to the journaling modes presented in this document.
-However we can imagine that for ZIL-PMEM, a fault injection mode for persistent memory writes and access could be useful.
+The methodology is very filesystem specific which already shows in the adjustments required for IBM JFS.
+The ZIL's structure and its interaction with txg sync\todo{ref sections} is substantially different from the journaling modes presented in the paper.
+The system is thus not applicable to ZIL-PMEM.
 
-ndctl-inject-error (\url{https://pmem.io/ndctl/ndctl-inject-error.html}) is a subcommand of the administrative tooling for PMEM on Linux.
-It provides the ability to inject errors that manifest as machine check exceptions (MCE) which are indicative of a bad block.
-In userspace\todo{review userspace vs user-space vs user space}, Linux converts these errors into SIGBUS signals.
-In the kernel, \lstinline{memcpy_mcsafe()} must be used to avoid a kernel panic.
-We plan to use this tool during ZIL-PMEM development.
-We are still uncertain whether it is amenable for integration into automated regression testing.
-The following web page has more details on error recovery in PMEM applications: \url{https://software.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html}
+\citerelwork{ndctl-inject-error}{NdctlinjecterrorManPage} is a subcommand of the \lstinline{ndctl} administrative tool that
+"can be used to ask the platform to simulate media errors in the NVDIMM address space to aid debugging and development of features related to error handling."
+The kernel driver forwards injection requests to the NVDIMM firmware via ACPI.~\cite{NdctlPATCHV2}
+The errors then surface as \textit{machine check exceptions} (MCE), which is the same mechanism used to indicate detected but uncorrectable ECC errors for DRAM and PMEM.
+The functionality is useful for testing correct error in the filesystem when \textit{reading} PMEM.
+ZIL-PMEM does not use \lstinline{memcpy_mcsafe()} when accessing persistent memory and therefore does not handle MCEs on read.\todo{can we fix this until submission?}
+However, if ZIL-PMEM used \lstinline{memcpy_mcsafe()}, the error handling would be the same as for corrupted or missing log entries, for which we have good unit test coverage.\todo{ref evaluation}
 
-ZFS Fault Injection
-The ZFS tool \textit{zinject} allows for targeted injection of ZIO failures.
-It allows scoping the injected errors to specific logical data objects in the ZFS on-disk format.
+\citerelwork{ZFS Fault Injection}{ZinjectOpenZFSMan}
+The ZFS tool \textit{zinject} allows for targeted injection of artifical IO failures.
+Errors can be scoped to an entire device or specific logical data objects in ZFS.
 The ZFS integration test suite makes use of the command for high-level features such as automatic hot spares.
 ZIL-PMEM does not use ZIO to access PMEM and thus cannot hook into the zinject infrastructure.
 Most of the semantics are tied to ZFS’s \lstinline{zbookmark} and \lstinline{blkptr} structures which we do not use in ZIL-PMEM.
 We expect that proper adaptation of zinject to ZIL-PMEM would be difficult.
+A ZIL-PMEM specific tool that allows fault injection or even manipulation of log entries in PMEM would be useful for debugging and integration testing.
+However, the existing ZIL-PMEM unit tests already test many scenarios for data corruption in a more expressive and efficient manner.
 
 \section{Persistent Memory in Linux}
-\blindtext\todo{blindtext}
+
+%Data corruption, MCE, memcpy_mcsafe
+%-> NOVA Fortis paper
+%-> https://software.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html
+%-> https://software.intel.com/content/www/us/en/develop/articles/pmem-RAS.html
+%ent of a \textit{machine check exceptions} (MCE) triggered by a PMEM hardware error.
+%The behavior for MCE with PMEM is similar to that with ECC.
+%If the MCE happens in userspace\todo{review userspace vs user-space vs user space}, Linux converts it into SIGBUS signals.
+%In the kernel, an MCE triggers a panic unless the \lstinline{memcpy_mcsafe()} API is used which returns an error value if an MCE occurred.
+%The code that called \lstinline{memcpy_mcsafe()} can thus treat read errors as IO errors.
+%The value that \lstinline{memcpy_mcsafe()} provides to ZIL-PMEM is very limited because it only handles read errors.
+%ZIL-PMEM does not use could use \lstinline{memcpy_mcsafe()} 
+%The value of MCEs and \lstinline{memcpy_mcsafe()} is very limited in the context of ZIL-PMEM because it only reads PMEM during pool import and replay.
+%At this point, errors from memcpy_mcsafe() are handled the same way that corrupted log entries are handled.
+%A mechanism to handle write failures to PMEM would be very useful
+%Also: \cite{PersistentmemoryErrorHandling}
+%The problem there is that store operations are not usually synchronous, so there will be no immediate indication of an error. Paranoid software can [Jeff Moyer] do a flush and a load after every store to ensure that the data has been stored properly; there does not seem to be any better way.
 
 \section{OpenZFS Primer}
 \blindtext\todo{blindtext}
@@ -645,8 +607,8 @@ Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speed
 \begin{description}[topsep=0pt, noitemsep, leftmargin=1cm, labelindent=1cm, widest=1 private dataset per thread]
     \item[1 private dataset per thread] always near-linear speedup
     \item[1 shared dataset] \mbox{}
-          \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL file system]
-              \item[ZPL file system] no speedup
+          \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL filesystem]
+              \item[ZPL filesystem] no speedup
               \item[ZVOL] up to linear speedup, depending on workload
           \end{description}
 \end{description}
@@ -683,7 +645,7 @@ Instead, ZIL-PMEM would need to invoke OpenZFS native encryption and decryption 
 
 \csgoal{Protection Against Scribbles}
 Scribbles are bugs in the system that accidentally overwrite PMEM, e.g., due to incorrect address calculation or out-of-bounds access in the kernel.
-PMEM file systems such as NOVA-Fortis have already presented highly-performant mechanisms to protect againt scribbles.~\cite{xu_nova-fortis_2017}
+PMEM filesystems such as NOVA-Fortis have already presented highly-performant mechanisms to protect againt scribbles.~\cite{xu_nova-fortis_2017}
 We believe that our design can be trivially extended with similar mechanisms.
 
 \subsection{Limitations}
