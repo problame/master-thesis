@@ -1,4 +1,4 @@
-\documentclass[12pt,a4paper,twoside,draft]{book}
+\documentclass[12pt,a4paper,twoside]{book}
 
 % use Libertine font
 \usepackage{libertine}
@@ -733,8 +733,30 @@ It is a thin wrapper around HDL's logging and replay methods.
 The \lstinline{zil_pmem} module --- which defines \lstinline{zilog_pmem_t} --- is the component that integrates PRB/HDL into ZFS:
 it allocates the chunks, constructs the PRB and creates and destroys HDLs in synchrony with their datasets.
 
+\begin{figure}[h]
+    \includegraphics[height=20cm,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
+    \caption{Overview of the system architecture as described in this section.}
+\end{figure}~\todo{actual figure}
+
 \section{PMEM-aware SPA \& VDEV layer}
-In this section we describe how we change ZFS to handle PMEM devices.
+In this section we describe how we add explicit support for PMEM to ZFS.
+Our primary goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
+
+We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
+The attribute indicates whether the VDEV supports direct access through the DAX APIs.
+Its value is determined by the \lstinline{zpool} command when creating or adding devices to a pool using \lstinline{libblkid}.
+When opening a vdev marked \lstinline{is_dax}, the kernel module ensures that all of the block device's sectors are mappable as one contiguous range of kernel virtual address space.
+Failure to establish this mapping fails the onlining process, leaving the vdev in state \lstinline{VDEV_STATE_CANT_OPEN}.
+By default, this state prevents the pool from being imported.
+If the VDEV is added as a log device, the import process allows the user to specify an override flag, causing the log to be dropped.
+Note that the \lstinline{is_dax} feature applies to all VDEVs and is independent of ZIL-PMEM.
+It merely records the fact that a VDEV is required to be directly accissble via the DAX APIs.
+
+To disable metaslab allocation on PMEM SLOGs, we introduce a new allocation class called \lstinline{exempt}.
+When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
+This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used.
+The allocatable space on the device is thus never read or written through ZIO and free to use for ZIL-PMEM.
+Note that reads and writes VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space and continue to be written through block IO.
 
 \section{ZIL kinds}
 In this section we describe how we refactor ZFS to allow for different ZIL implementations at runtime.
