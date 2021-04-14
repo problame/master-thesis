@@ -234,6 +234,7 @@ Whereas snapshots are not relevant for this thesis because ZFS already provides 
     \item Redundancy through metadata replication. For metadata recovery, NOVA-Fortis compares checksums of the primary and replica and restores the variant with the matching checksum.
     \item Protection against localized unrecoverable data loss through RAID4-like parity.
           This feature only works while the file is not DAX-mmapped.
+    \item Protection against Scribbles using \lstinline{CR0.WP} as described in the paragraph on PMFS.
 \end{itemize}
 The authors use a custom fault injection tool to corrupt data structures in a targeted manner and test NOVA Fortis's recovery capabilities.
 
@@ -555,16 +556,17 @@ However, the existing ZIL-PMEM unit tests already test many scenarios for data c
 \blindtext\todo{blindtext}
 
 \chapter{Design \& Implementation}
-\blindtext\todo{blindtext}
+In this chapter we present the design and implementation of ZIL-PMEM in OpenZFS.
+We start with an outline of the project goals and limitations, followed by a high-level overview of the design.
+Each of the subsequent sections then presents one orthogonal concept in more detail, including implementation aspects where appropriate.
+Readers should be familiar with the technical background on PMEM in Linux and OpenZFS given in Section~\todo{ref}.
 
 \section{Project Scope}
-In this section we define the scope of the ZIL-PMEM project.
 
 \newcommand{\csgoal}[1]{\textbf{#1}}
 
 \subsection{Requirements}\label{sec:requirements}
 The following features are success criteria for the ZIL-PMEM design.
-We focus on the functionality and defer our evaluation to chapter~\ref{ch:eval}.
 
 \csgoal{Coexistence}
 ZIL-PMEM must coexist with ZIL-LWB due to limited availability of PMEM and limitations of the ZIL-PMEM design.
@@ -573,7 +575,7 @@ ZIL-PMEM must coexist with ZIL-LWB due to limited availability of PMEM and limit
 ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB for both ZPL and ZVOL.
 
 \csgoal{Simple Administration \& Pooled Storage}
-Pooling of storage resources and simple administration are central to ZFS's design.~\cite{zfspaper}
+Pooling of storage resources and simple administration are central to ZFS.~\cite{bonwickZettabyteFileSystem2003}
 ZFS should automatically detect that a SLOG device is PMEM and, if so, use ZIL-PMEM for all of the pool’s datasets.
 No further administrative action should be required to fully benefit from ZIL-PMEM.
 
@@ -588,41 +590,41 @@ Specifically:
 \end{itemize}
 
 \csgoal{Data Integrity}
-Data integrity is a core feature of ZFS.~\cite{zfspaper}
-ZIL-PMEM must be able to detect corrupted log entries using an error-detecting code.
-Detected corruption must be handled correctly in the sense outlined above.
-Further, corruption must also be handled gracefully with the following behavior as the baseline.
-Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
-Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$.
+Data integrity is a core feature of ZFS.~\cite{bonwickZettabyteFileSystem2003}
+ZIL-PMEM must detect corrupted log entries using an error-detecting code.
+Detected corruption must be handled \textit{correctly} as outline in the previous paragraph.
+It must also be handled gracefully with the following behavior as the baseline:
+"Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
+Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$".
 
 \csgoal{Low Latency}
 The latency overhead of ZIL-PMEM compared to raw PMEM device latency should be minimal for single threaded workloads.
 Multi-threaded workloads are addressed below.
 
 \csgoal{Multi-Core Scalability}
-As a pool-wide resource, ZIL-PMEM should scale well to multiple cores.
+Since PMEM is added as a pool-wide resource used by all of the pool's datasets, ZIL-PMEM should scale well to multiple cores.
 Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speedups for threads that perform synchronous I/O operations on separate CPU cores:
 {
 \setlength{\parskip}{0pt}
 \begin{description}[topsep=0pt, noitemsep, leftmargin=1cm, labelindent=1cm, widest=1 private dataset per thread]
-    \item[1 private dataset per thread] always near-linear speedup
+    \item[1 private dataset per thread] Always near-linear speedup.
     \item[1 shared dataset] \mbox{}
           \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL filesystem]
-              \item[ZPL filesystem] no speedup
-              \item[ZVOL] up to linear speedup, depending on workload
+              \item[ZPL filesystem] No speedup.
+              \item[ZVOL] Up to linear speedup, depending on workload.
           \end{description}
 \end{description}
 }
 
-\csgoal{Maximum Performance on Intel Optane DC Persistent Memory}
+\csgoal{Maximum Performance On Intel Optane DC Persistent Memory}
 Whereas battery-backed NVDIMMs have existed for decades\todo{reference}, Intel Optane DC Persistent Memory is currently the only broadly available flash-based persistent memory product\todo{proof}.
 We develop ZIL-PMEM on this platform and want to determine the maximum performance that can be achieved with it.
 
 \csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
 PMEM I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
-\citeauthor{yang_empirical_2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
+\citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
 Write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
-In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at \SI{15}{threads}.~\cite[fig.4]{yang_empirical_2020}
+In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at 15~threads.~\cite[fig.4]{yangEmpiricalGuideBehavior2020}
 In practice, these results imply that on-CPU time is wasted as soon as the system writes to PMEM at higher than maximum device bandwidth.
 Since ZIL-PMEM shares PMEM among all datasets in the pool, we expect that such overload situtations will happen in practice.
 ZIL-PMEM should thus provide a mechanism to shift excessive PMEM I/O wait time off the CPU.
@@ -645,15 +647,15 @@ Instead, ZIL-PMEM would need to invoke OpenZFS native encryption and decryption 
 
 \csgoal{Protection Against Scribbles}
 Scribbles are bugs in the system that accidentally overwrite PMEM, e.g., due to incorrect address calculation or out-of-bounds access in the kernel.
-PMEM filesystems such as NOVA-Fortis have already presented highly-performant mechanisms to protect againt scribbles.~\cite{xu_nova-fortis_2017}
+PMEM-specific filesystems such as PMFS and NOVA-Fortis have already introduced mechanisms to protect againt scribbles.~\cite{dulloorSystemSoftwarePersistent2014,xuNOVAFortisFaulttolerantNonvolatile2017}
 We believe that our design can be trivially extended with similar mechanisms.
 
 \subsection{Limitations}
 The following features were deliberately left out of our design.
-More experimentation and experience with ZIL-PMEM is necessary to determine which features are useful in practice, how they can be realized and how they interact with the existing requirements.
+More experimentation and experience with ZIL-PMEM will benecessary to determine which features are useful in practice, how they can be realized, and how they interact with the existing requirements.
 
 \csgoal{No NUMA Awareness}
-\citeauthor{yang_empirical_2020} recommend to "avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yang_empirical_2020}.
+\citeauthor{yangEmpiricalGuideBehavior2020} recommend to "avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yangEmpiricalGuideBehavior2020}.
 Given the latency contribution of ZIL-PMEM to overall syscall latency (ref~\ref{ch:eval}\todo{precise ref}), variations of this magnitude would be significant.
 
 \csgoal{No Data Redundancy}
@@ -666,20 +668,25 @@ Such pools continue to use ZIL-LWB.
 \csgoal{No Software Striping}
 Our design only supports a single PMEM SLOG device.
 Users may wish to use multiple PMEM DIMMs to increase log write bandwidth.
-With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup.~\cite{yang_empirical_2020}
+With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup.~\cite{yangEmpiricalGuideBehavior2020}
 Whereas software striping would be the natural approach to ZFS, it will be non-trivial to achieve the same speedup as hardware-based interleaving.
 
 \csgoal{No Support For \lstinline{WR_INDIRECT}}
 ZIL-LWB logs large write records' data directly to the main pool devices.
 The ZIL record then only contains metadata such as \lstinline{mtime} and a block pointer to the location in the main pool.
-This technique avoids double-writes which is particularly advantageous if the pool does not have a SLOG, but ZIL-PMEM pools by design always has one.
-Further, if the pool has a PMEM SLOG, \lstinline{WR_INDIRECT} log record write latency is likely to be dominated by the main pool's IO latency which likely consists of regular block devices.
-If the main pool's IO latency were acceptable, a fast NVMe-based ZIL-LWB SLOG or even no SLOG at all would likely be sufficient for the setup in question.
+This technique avoids double-writes which is particularly advantageous if the pool does not have a SLOG which is a case that ZIL-PMEM does not address (see above).
+Further, if a SLOG is available, \lstinline{WR_INDIRECT} log record write latency is likely to be dominated by the main pool's IO latency if it consists of regular block devices.
+If the main pool's IO latency were acceptable, a fast NVMe-based ZIL-LWB SLOG or no SLOG at all would likely be sufficient for the setup in question.
 
 \csgoal{Space Efficiency}
-ZIL-PMEM tends to trade PMEM space for time and simplicity.
-Our rationale is that PMEM capacities are significantly higher than DRAM.
-For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128GiB in size.~\cite{optanepricing_missing}
+ZIL-PMEM is allowed to trade PMEM space for time and simplicity when presented with the option.
+Our justification is twofold.
+First, PMEM capacities are significantly higher than DRAM.
+For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is \SI{128}{GiB}.~\cite{optanepricing_missing}
+Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{move to background?}
+For ZIL-LWB, small SLOG devices of \SI{16} to \SI{32}{GiB} are sufficient in practice.\todo{ref ix systems truenas M}
+Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM before we need to worry about hardware capacity.
+
 
 \section{Overview}
 This section summarizes the ZIL-PMEM design at a high level.
