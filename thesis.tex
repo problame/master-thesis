@@ -755,11 +755,89 @@ It merely records the fact that a VDEV is required to be directly accissble via 
 To disable metaslab allocation on PMEM SLOGs, we introduce a new allocation class called \lstinline{exempt}.
 When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
 This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used.
-The allocatable space on the device is thus never read or written through ZIO and free to use for ZIL-PMEM.
-Note that reads and writes VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space and continue to be written through block IO.
+The allocatable space on the device is thus never read or written through ZIO and available for use by ZIL-PMEM.
+Note that reads and writes VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space.
+Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
+
+\begin{figure}[h]
+    \includegraphics[width=\textwidth]{fig/pmem_aware_vdev_layer_before_after}
+    \caption{
+        Comparison of the zpool layout before and after the addition of the \lstinline{is_dax} vdev attribute and the \lstinline{exempt} allocation class for PMEM SLOGs.
+    }
+\end{figure}
 
 \section{ZIL kinds}
-In this section we describe how we refactor ZFS to allow for different ZIL implementations at runtime.
+Coexistence with ZIL-LWB and preservation of ZFS's crash consistency guarantees are two hard requirements for ZIL-PMEM (see Section~\ref{sec:requirements}).
+In this section we describe how we re-architected the existing ZIL code to address both of these problems.
+
+In upstream ZFS, the \textit{zil.c} code module implements all ZIL functionality.
+The ZIL is a per-dataset log and thus all ZIL state is kept in per-dataset structures.
+On disk, this state is kept in the \lstinline{zil_header_t} structure, which is part of the \lstinline{objset_phys_t} structure.
+\lstinline{zil_header_t} contains the pointer to the first LWB in the dataset's ZIL chain.
+It also contains fields that track claiming and replay progress.
+In DRAM, the per-dataset state is kept in the \lstinline{zilog_t} structure.
+All ZIL APIs are effectively scoped to the \lstinline{zilog_t}. %either by explicitly taking a pointer to the dataset's \lstinline{zilog_t} as an argument or implicitly by being scoped to a particular dataset
+On the write path, the following ZIL APIs are relevant:
+\begin{description}
+    \item[zil\_itx\_create] Allocate an ITX with a given record size.
+    \item[zil\_itx\_assign] Associate the given ITX with the changes made in the given DMU transaction.
+          The call moves ownership of the ITX to \lstinline{zilog_t}.
+    \item[zil\_commit] Persist previously assigned ITXs to stable storage.
+          The caller can specify the object ID of a \lstinline{znode} to inidicate that it is sufficient to persist the ITXs that affect this \lstinline{znode}.
+          This functionality enables efficient \lstinline{fsync()} if some files are written asynchronously and some synchronously.
+\end{description}
+The activity diagrams in Figure~\ref{fig:zil_api_syscall_activity_diagrams} visualize how these APIs are used in \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()} system calls.
+\begin{figure}[h]
+    \includegraphics[height=0.8\textheight]{fig/zil_api_syscall_activity_diagrams}
+    \caption{
+        ZIL API usage on the write path in \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()} system calls.
+    }
+    \label{fig:zil_api_syscall_activity_diagrams}
+\end{figure}
+
+\lstinline{zilog_t} tracks assigned ITXs in data structures called \lstinline{itxg}.
+There exists one \lstinline{itxg} per unsynced pool transaction group (txg).
+When an ITX is assigned to the ZIL in a given txg, it is added to that txg's \lstinline{itxg}.
+After the txg sync thread has finished syncing a txg, it frees the corresponding \lstinline{itxg} and all the ITXs in it because the changes they describe are now persisted in the main pool and thus obsolete.
+
+Each \lstinline{itxg} is split into a \textit{sync list} and the \textit{async tree}.
+The \textit{sync list} is a simple list of ITXs whereas the \textit{async tree} is a search-tree that maps from object ID to a list of ITXs.
+By default, ITXs are added to the \textit{sync list} when assigned to the ZIL.
+The \textit{async tree} is only used for ITXs that are scoped to a particular file.
+For example, an ITX that logs the creation of a file is added to the \textit{sync list} whereas a write within that file is added to the \textit{async tree}.
+
+\lstinline{zil_commit} uses the \lstinline{itxg}s to build a linear \textit{commit list} of ITXs that it can subsequently persist to stable storage.
+The pseudo-code in Figure~\ref{lst:zil_commit} illustrates the construction of the commit list by \lstinline{zil_commit}.
+Figure~\ref{fig:zil_per_itxg_state_example} provides an example for a single transaction group.
+\begin{figure}[h]
+    \begin{lstlisting}
+zil_commit(object_id)
+    commit_list := []
+    for each unsynced transaction group 'txg':
+        itxg <- the itxg for txg
+        if object_id == 0:
+            append all itxs in itxg.async to itxg.sync
+        else:
+            append only the itxs in
+              itxg.async[object_Id] to itxg.sync
+        append itxg.sync to commit_list
+    err := persist commit_list
+    if err:
+        wait until the open txg has synced
+    return
+\end{lstlisting}
+    \caption{Pseudo-code that illustrates the work done by \lstinline{zil_commit()}.}
+    \label{lst:zil_commit}
+\end{figure}
+
+\begin{figure}[h]
+    \includegraphics[height=0.5\textheight]{fig/zil_single_itxg_example}
+    \caption{
+        An example of how an itxg is filled with ITXs and how \lstinline{zil_commit} drains it into a commit list.
+        Note that this example only covers the case where all ITXs were assigned for the same txg.
+    }
+    \label{fig:zil_per_itxg_state_example}
+\end{figure}
 
 \section{PRB/HDL: A generic logical WAL for a zpool}
 In this section we describe the PRB/HDL data structure in detail.
