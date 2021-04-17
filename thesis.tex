@@ -820,34 +820,6 @@ it allocates the chunks, constructs the PRB and creates and destroys HDLs in syn
     \caption{Overview of the system architecture as described in this section.}
 \end{figure}~\todo{actual figure}
 
-\section{PMEM-aware SPA \& VDEV layer}
-In this section we describe how we add explicit support for PMEM to ZFS.
-Our primary goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
-
-We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
-The attribute indicates whether the VDEV supports direct access through the DAX APIs.
-Its value is determined by the \lstinline{zpool} command when creating or adding devices to a pool using \lstinline{libblkid}.
-When opening a vdev marked \lstinline{is_dax}, the kernel module ensures that all of the block device's sectors are mappable as one contiguous range of kernel virtual address space.
-Failure to establish this mapping fails the onlining process, leaving the vdev in state \lstinline{VDEV_STATE_CANT_OPEN}.
-By default, this state prevents the pool from being imported.
-If the VDEV is added as a log device, the import process allows the user to specify an override flag, causing the log to be dropped.
-Note that the \lstinline{is_dax} feature applies to all VDEVs and is independent of ZIL-PMEM.
-It merely records the fact that a VDEV is required to be directly accissble via the DAX APIs.
-
-To disable metaslab allocation on PMEM SLOGs, we introduce a new allocation class called \lstinline{exempt}.
-When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
-This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used.
-The allocatable space on the device is thus never read or written through ZIO and available for use by ZIL-PMEM.
-Note that reads and writes to VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space.
-Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
-
-\begin{figure}[h]
-    \includegraphics[width=\textwidth]{fig/pmem_aware_vdev_layer_before_after}
-    \caption{
-        Comparison of the zpool layout before and after the addition of the \lstinline{is_dax} vdev attribute and the \lstinline{exempt} allocation class for PMEM SLOGs.
-    }
-\end{figure}
-
 \section{ZIL kinds}
 Coexistence with the existing ZIL and preservation of ZFS's crash consistency guarantees are two hard requirements for ZIL-PMEM (see Section~\ref{sec:requirements}).
 Our solution to both of these problems is to re-architect ZFS to support different persistence strategies for the ZIL while sharing code and data structures that ultimately define crash consistency semantics.
@@ -1104,8 +1076,73 @@ The state of each \lstinline{zilog_KIND_t} is truly private do the ZIL kind's im
 Neither ZIL-LWB nor ZIL-PMEM access the ITX-related state in the embedded \lstinline{zilog_t} directly, but only\todo{"sondern"?} through the \lstinline{zilog_t} method that computes the commit list.
 If requirements change in the future, the design alternatives presented in the previous section should be considered.
 
-\section{PRB/HDL: A generic logical WAL for a zpool}
-In this section we describe the PRB/HDL data structure in detail.
+\section{PMEM-aware SPA \& VDEV layer}
+In this section we describe how we add explicit support for PMEM to ZFS.
+Our primary goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
+
+We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
+The attribute indicates whether the VDEV supports direct access through the DAX APIs.
+Its value is determined by the \lstinline{zpool} command when creating or adding devices to a pool using \lstinline{libblkid}.
+When opening a vdev marked \lstinline{is_dax}, the kernel module ensures that all of the block device's sectors are mappable as one contiguous range of kernel virtual address space.
+Failure to establish this mapping fails the onlining process, leaving the vdev in state \lstinline{VDEV_STATE_CANT_OPEN}.
+By default, this state prevents the pool from being imported.
+If the VDEV is added as a log device, the import process allows the user to specify an override flag, causing the log to be dropped.
+Note that the \lstinline{is_dax} feature applies to all VDEVs and is independent of ZIL-PMEM.
+It merely records the fact that a VDEV is required to be directly accissble via the DAX APIs.
+
+To disable metaslab allocation on PMEM SLOGs, we introduce a new allocation class called \lstinline{exempt}.
+When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
+This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used.
+The allocatable space on the device is thus never read or written through ZIO and available for use by ZIL-PMEM.
+Note that reads and writes to VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space.
+Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
+
+\begin{figure}[h]
+    \includegraphics[width=\textwidth]{fig/pmem_aware_vdev_layer_before_after}
+    \caption{
+        Comparison of the zpool layout before and after the addition of the \lstinline{is_dax} vdev attribute and the \lstinline{exempt} allocation class for PMEM SLOGs.
+    }
+\end{figure}
+
+\section{PRB/HDL}
+In this section we describe the PRB data structure which is at the heart of the ZIL-PMEM design.
+The \textit{zil\_pmem.c} module which we present in Section~\ref{sec:zilpmem} is a mere integration layer between the remainder of ZFS and PRB.
+
+\subsection{Overview} % API Overview?
+PRB implements a generic write-ahead log for a zpool that stores opaque log entries in PMEM.
+A single PRB instance supports multiple logs with independent lifecycles.
+Each log is represented through a HDL object that provides methods for writing and replaying log entries.
+The logical structure of an individual log allows for limited parallelism when writing log entries but guarantees a deterministic replay order.
+Log entries are opaque to PRB --- the only ZFS-specific metadata per log entry is the txg for which it was logged.
+
+% API
+% Fließtext, soll v.a. die ganze Terminologie einführen: Chunks, Entry, Dependency, Gc.
+%
+% Example Write + GC +  Recovery (from unit tests)
+% code + some activity diagram for viz
+
+\subsection{Data Structures}
+% in-PMEM
+% ZIL header
+
+\subsubsection{Dependency Semantics}
+
+\subsection{Traversal}
+% Traversal
+
+\subsection{Write Path}
+% reqs: crash consistent append, deptrack, checksumming, scalability, pmem overload
+% high-level control flow
+% bottom-up details
+
+\subsubsection{Physical Append To PMEM}
+
+\subsubsection{Scalability}
+
+\subsection{Recovery Path}
+
+\subsubsection{Crash }
+
 
 % PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
 % A log entry is always written to exactly one chunk's PMEM segment.
@@ -1117,7 +1154,7 @@ In this section we describe the PRB/HDL data structure in detail.
 % The physical location of entries in PMEM is irrelevant for replay.
 % Instead, replay traverses each chunk's entries, filters them for the given dataset and constructs a replay sequence in DRAM using the ordering information stored in the entry headers.
 
-\section{ZIL-PMEM}
+\section{ZIL-PMEM}\label{sec:zilpmem}
 In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
 
 \section{ITXG Bypass For ZVOL}
