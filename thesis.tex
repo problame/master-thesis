@@ -1116,7 +1116,7 @@ The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, 
 \subsection{API Overview} % API Overview?
 We start with an overview of the PRB API.
 
-\subsubsection{Setup PRB}
+\subsubsection{PRB Setup}
 
 \begin{lstlisting}
 zilpmem_prb_t* zilpmem_prb_alloc(size_t ncommitters);
@@ -1153,7 +1153,7 @@ Since a chunk can only be written by one thread at a given time, at least \lstin
 For robustness against data corruption, it is advisable to limit the size of chunks, i.e., have many more chunks than \lstinline{ncommitters}.
 We elaborate on this topic later in this section.
 
-\subsubsection{Setup HDLs}
+\subsubsection{HDL Setup}
 \begin{lstlisting}
 void zil_header_pmem_init(zil_header_pmem_t *zh);
 zilpmem_prb_handle_t* zilpmem_prb_setup_objset(
@@ -1177,7 +1177,7 @@ The to-be-persisted update is returned to the API user in the form of an \textit
 % Whereas PRB unit tests can simply store the ZIL header on the stack, ZIL-PMEM passes a pointer to the in-DRAM dirty copy of the dataset's ZIL header (\lstinline{os_zil_header}).
 % After the PRB API function returns, ZIL-PMEM marks the dataset as dirty and waits for the open txg to sync.
 
-\subsection{Claiming}
+\subsubsection{Claiming}
 
 \begin{lstlisting}
 typedef struct check_replayable_result { ... };
@@ -1256,7 +1256,7 @@ As long as the callback implements the behavior described above, replay is crash
 %The invocation order corresponds to the order in which the entries were written.
 %Entries that were written in parallel (\lstinline{needs_new_gen == false}) are replayed in a deterministic order to allow for resumability.
 
-\subsection{Writing Entries}
+\subsubsection{Writing Entries}
 
 \begin{lstlisting}
 boolean_t zilpmem_prb_create_log_if_not_exists(
@@ -1323,7 +1323,7 @@ It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-l
 
 \subsection{Recovery Path}
 
-\subsubsection{Crash }
+\subsubsection{Crash Consistency}
 
 
 % PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
