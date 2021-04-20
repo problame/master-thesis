@@ -1113,10 +1113,64 @@ Log entries are opaque to PRB --- the only ZFS-specific metadata per log entry i
 Knowledge of the entry's txg is necessary for log replay and log entry garbage collection.
 The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, acts as a mere integration layer between the remainder of ZFS and PRB.
 
-\subsection{API Overview} % API Overview?
+We present PRB in a top-down manner, starting with a black-box description of the logical log structure for a single HDL in Section~\ref{di:prb:structure} followed by a walkthrough of the APIs that are used by ZIL-PMEM (Section~\ref{di:prb:api}).
+Equipped with a functional understanding of PRB, we proceed with the details of the design and implementation.
+In Section~\ref{di:prb:phys} we describe the persistent data structures and their invariants.
+The design and implementation techniques of the scalability-oriented the write path are presented in Section~\ref{di:prb:write}.
+Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path (\ref{di:prb:recovery}).
+
+\subsection{Logical Structure}\label{di:prb:structure}
+Our conceptual model for the log that is written and replayed through a PRB is a \textbf{sequence of generations of log entries}.
+\begin{description}
+    \item[Log Entry] A log entry consists of a variable-length opauqe body provided by the log writer and a fixed-length header.
+        When writing a log entry the PRB API consumer must provide the transaction group in which the entry becomes obsolete.
+        It must also indicate whether the entry should start a new generation.
+    \item[Generation] Generations are the vehicle to express logical dependencies between entries.
+        Log entries within the same generation do not depend on each other, but a log entry from a later generation depends on all log entries in all previous generations.
+    \item[Sequence] The log is a sequence of generations.
+        Entries can only be added to the most recent generation.
+        It is referred to as the \textit{open generation}.
+\end{description}
+The simplest log structure is a chaun of entries where each entry depends on its predecessor.
+To produce such a structure the log writer starts a new generation every time it writes a log entry.
+If an entry is lost, none of the subsequent entries can be replayed because they logically depend on the previous entry.
+If a log entry does not depend on the open generation's log entries, the log writer can choose to write it without requesting a new generation.
+The entry is then added to the existing generation.
+When visualizing the resulting log as a dependency graph, generations with multiple entries have the shape of a diamond.
+Hence we refer to such log structures as \textit{diamond chains}.
+Figure~\ref{fig:prb_logical_structure} provides an example for both the fully sequential log and the diamond chain.
+
+\begin{figure}
+    \missingfigure{see presentation}
+    \caption{The logical structure of a single HDL's log. Both variants contain the same entries. Variant a) was written with a request for a new generation for every entry. Variant b) was written without requesting a new generation for entry 3.}
+    \label{fig:prb_logical_structure}
+\end{figure}
+
+The \textit{diamond chains} are useful to allow multiple threads to write log entries in parallel.
+For example, if a file is written simultaneously by two different threads in non-overlapping regions, the write operations cannot be semantically dependent.
+This implies that the log entries for these writes can be in the same generation and that they can be written in parallel.
+If the storage hardware can maintain low latency, writing the entries in parallel improves the system's scalability.
+
+Note that today's ZIL can be represented as a fully sequential chain because the commit list assembled by the ITX code\todo{ref} is sequential as well.
+However, our analysis in Section~\ref{ch:lwb_analysis}\todo{need to show fsync every non-scalability of zil-lwb vs raw hw there} shows that ZIL-LWB does not scale well in such scenarios.
+Further, a prototype presented at the OpenZFS 2020 Developer Summit proposes changes to ZIL-LWB to allow for more parallelism.~\cite{openzfsZILPerformanceImprovements2020}
+We interpret these findings as indicators that ZIL-PMEM --- and thus PRB --- should support parallelism on the write path in the form of \textit{diamond chains}.
+We present an application of \textit{diamond chains} to ZVOLs in Section~\ref{sec:itxgbypass}.
+
+
+%A generation is identified by its \textit{generation number} which is positive integer.
+%An entry is always associated with exactly one generation but a generation can contain many entries.
+%Entries within the same generation are identified through an \textit{id field} which is a positive integer.
+%Given entries $a$ and $b$, $a \text{depends on} b \Leftrightarrow a.gen > b.gen$ where $x.gen$ denotes the generation of entry $x$.
+
+% entries
+% generations
+% 
+
+\subsection{API Overview}\label{di:prb:api} % API Overview?
 We start with an overview of the PRB API.
 
-\subsubsection{PRB Setup}
+\subsubsection{PRB Setup}\label{di:prb:api:setup}
 
 \begin{lstlisting}
 zilpmem_prb_t* zilpmem_prb_alloc(size_t ncommitters);
@@ -1302,7 +1356,148 @@ The function frees up the PMEM space occupied by log entries that affect txgs ol
 Note that unlike writing or recovering an individual log, garbage collection is a PRB-level operation.
 It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-level APIs.
 
-\subsection{Data Structures}
+\subsection{Persistent Data Structure}
+
+The persistent state of PRB consists of three entities:
+\begin{description}
+    \item[ZIL Header] The fixed-size \lstinline{zil_header_pmem_t} structure that contains the HDL's persistent state.
+    \item[Entry] The representation of a log entry. It consits of a fixed-size header (\lstinline{entry_header_t}) and a variable-length opaque body.
+    \item[PMEM chunks] The segments of contiguous PMEM space that are added to the PRB during setup (see Section~\ref{di:prb:api:setup}).
+\end{description}
+Entries are stored in PMEM chunks as a contiguous sequence that is terminated by an invalid entry header.
+However, neither the position of the entry within the sequence nor its location in PMEM space is semantically relevant.
+Instead, each entry stores metadata in its header that is interpreted by PRB during claiming and replay.
+\begin{description}
+    \item[Attribution] We use the \textit{Log GUID}, a 128bit random number, to uniquely identify a log and to find its entries in PMEM.
+    The Log GUID is repeated in the HDL's \lstinline{zil_header_pmem_t} and all entry headers written through the HDL.
+    \item[Ordering \& Dependencies]  The entry headers of the entries of a log contain sufficient metadata to define a total order on them.
+        The metadata is also sufficient to determine whether entries are missing.
+\end{description}
+Figure~\ref{fig:prb_physical_data_structure_entities} visualizes the relationships described above.
+
+\begin{figure}
+    \includegraphics[height=10cm]{fig/prb_physical_data_structure_entities}
+    \label{fig:prb_physical_data_structure_entities}
+    \caption{
+        The relationships between the different entities that constitute PRB's persistent state.
+    }
+\end{figure}
+
+\subsubsection{Entries \& Chunks}
+
+\begin{lstlisting}
+typedef struct entry_header {
+    entry_header_data_t eh_data; /* must be 8-byte aligned so stores are atomics */
+    uint8_t eh_pad[256 - 1*sizeof(entry_header_data_t)];
+} entry_header_t;
+
+typedef struct entry_header_data_t {
+	uint64_t eh_objset_id;
+	uint64_t eh_zil_guid_1;
+	uint64_t eh_zil_guid_2;
+	uint64_t eh_txg;
+	uint64_t eh_gen;
+	uint64_t eh_gen_scoped_id;
+	uint64_t eh_len;
+	zio_cksum_t eh_body_csum;
+	zio_cksum_t eh_header_csum;
+	eh_dep_t eh_dep;
+} entry_header_data_t;
+\end{lstlisting}
+
+\subsusbsection{Entry Sequence In A Chunk}
+
+\subsubsection{ZIL Header}
+
+The ZIL header \lstinline{zil_header_pmem_t} is opaque to the PRB API consumers.
+Internally, it is represented as \lstinline{zil_header_pmem_impl_t}.
+
+\begin{lstlisting}
+typedef enum zil_header_pmem_state {
+	ZHPM_ST_NOZIL,
+	ZHPM_ST_LOGGING,
+	ZHPM_ST_REPLAYING,
+} zil_header_pmem_state_t;
+
+typedef struct zil_header_pmem_impl {
+    uint64_t zhpm_st; /* zil_header_pmem_state_t */
+    uint64_t zhpm_guid_1;
+    uint64_t zhpm_guid_2;
+    zilpmem_replay_state_phys_t zhpm_replay_state;
+} zil_header_pmem_impl_t;
+\end{lstlisting}
+
+\begin{lstlisting}
+typedef struct zilpmem_replay_state_phys {
+    uint64_t claim_txg;
+    eh_dep_t resume_state_active;
+    eh_dep_t resume_state_last;
+} zilpmem_replay_state_phys_t;
+
+typedef struct eh_dep {
+    uint64_t eh_last_gen;
+    prb_deptrack_count_pair_t eh_last_gen_counts[TXG_CONCURRENT_STATES];
+} eh_dep_t;
+
+typedef struct prb_deptrack_txg_seq_pair {
+    uint64_t dtp_txg;	/* 0 <=> invalid pair */
+    uint64_t dtp_count;	/* 0 <=> invalid pair */
+} prb_deptrack_count_pair_t;
+\end{lstlisting}
+
+
+
+
+The ZIL header can be in one of the following states:
+
+nozil: The PMEM space does not contain any entries for this dataset.
+zil_guid = 0
+claim txg range is [0, 0]
+replay position is {0}
+logging: The PMEM space might contain unclaimed entries. The purpose of this state is to let claiming know that there might be entries in pss_ring that should be claimed for this dataset.
+zil_guid != 0
+claim txg range is [0, 0]
+replay position is {0}
+claimed: We claimed all entries for this objset. The purpose of this state is to keep the claimed entries with entry.txg ∈claim_txg_range alive until we have replayed them. 
+zil_guid != 0, same as it was in state logging
+claim txg range is [i, j] with i != 0 and j != 0.
+replay position is {0}
+replaying: We are replaying entries of this objset. The purpose of this state is to track replay progress in the replay position member in case we crash during replay.
+zil_guid != 0
+claim txg range is as in claimed
+replay position is { .txg, .seq } with txg ∈ claim_txg_range and seq != 0, identifying the where the replay algorithm should resume replay.
+
+The following ZIL header transitions exist:
+
+Regular:
+nozil => logging zil_create()
+logging => claimed after claiming is done
+claimed => replaying after the first txg in which replayed has synced
+replaying => logging after replay is done
+{replaying,claimed,logging} => nozil: zil_destroy()
+
+
+Checkpoint-related:
+replaying => claimed if the pool is rewound to a checkpoint and the dataset was claimed but not replayed at the time of the checkpoint
+Not a problem because the presence of the checkpoint kept the entries that were claimed live during the time that the pool moved on with the checkpoint present. (Liveness is explained in the Claiming & Replay section)
+{replaying, claimed} => logging if the pool is rewound to a checkpoint and the dataset was logging at the time of the checkpoint
+After we rewind to the checkpoint, spa_checkpoint_txg is zero and the spa_last_synced_txg is greater than the txg of any entry that could have been present at the time of checkpoint (because the rewound uberblock gets a txg that is > the txg of the txg before the rewind so that is selected as best uberblock on import after rewind). 
+
+
+
+a log entry's physical location in PMEM is irrelevant.
+
+Log entries Log entries are attributed to  HDL through a random 128bit identifier that is stored in the ZIL header and repeated in every entry header.
+Each log entry header contains sufficient stores sufficient ordering information 
+
+
+
+
+
+
+
+
+Entries are written 
 
 % in-PMEM
 % ZIL header
@@ -1312,7 +1507,7 @@ It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-l
 \subsection{Traversal}
 % Traversal
 
-\subsection{Write Path}
+\subsection{Write Path}\label{di:prb:write}
 % reqs: crash consistent append, deptrack, checksumming, scalability, pmem overload
 % high-level control flow
 % bottom-up details
@@ -1321,7 +1516,7 @@ It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-l
 
 \subsubsection{Scalability}
 
-\subsection{Recovery Path}
+\subsection{Recovery Path}\label{di:prb:recovery}
 
 \subsubsection{Crash Consistency}
 
@@ -1339,7 +1534,7 @@ It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-l
 \section{ZIL-PMEM}\label{sec:zilpmem}
 In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
 
-\section{ITXG Bypass For ZVOL}
+\section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
 In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
 
 \chapter{Evaluation}\label{ch:eval}
