@@ -1106,20 +1106,22 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
 
 \section{PRB/HDL}
 In this section we describe the PRB data structure which is at the heart of the ZIL-PMEM design.
-PRB implements a generic logical write-ahead log that stores its log entries in PMEM.
+PRB implements a generic logical write-ahead log facility that uses PMEM for persistence.
 A single PRB instance supports multiple logs with independent lifecycles.
 Each log is represented by a HDL object that provides methods for writing and replaying log entries.
-Log entries are opaque to PRB --- the only ZFS-specific metadata per log entry is the txg for which it was logged.
+Log entries are opaque to PRB --- the only ZFS-specific metadata is the transaction group (txg) in which the log entry's effect will be synced.
 Knowledge of the entry's txg is necessary for log replay and log entry garbage collection.
 The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, acts as a mere integration layer between the remainder of ZFS and PRB.
 
-We present PRB in a top-down manner, starting with a black-box description of the logical structure for a single log in Section~\ref{di:prb:structure} followed by a walkthrough of the APIs that are used by ZIL-PMEM (Section~\ref{di:prb:api}).
-Equipped with a functional understanding of PRB, we proceed with the details of the design and implementation.
-In Section~\ref{di:prb:phys} we describe the persistent data structures and their invariants.
+We present PRB in a top-down manner, starting with the logical structure of a single log in Section~\ref{di:prb:structure}, followed by a walkthrough of the API that PRB exposes towards \lstinline{zil\_pmem.c} (Section~\ref{di:prb:api}).
+Equipped with a black-box understanding of PRB's functionality we proceed with its internal design and implementation.
+In Section~\ref{di:prb:phys} we describe PRB's persistent data structures and their invariants.
 The design and implementation techniques of the scalability-oriented the write path are presented in Section~\ref{di:prb:write}.
 Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path (\ref{di:prb:recovery}).
 
-\subsection{Conceptual Model}\label{di:prb:structure}
+
+
+\subsection{Logical Structure}\label{di:prb:structure}
 We model the log that is written and replayed through a HDL as a \textbf{sequence of generations of log entries}.
 \begin{description}
     \item[Log Entry] A log entry consists of a variable-length opauqe body provided by the log writer and a fixed-length header.
@@ -1180,7 +1182,8 @@ We present an application of diamond chains to ZVOLs in Section~\ref{sec:itxgbyp
 % 
 
 \subsection{API Overview}\label{di:prb:api} % API Overview?
-The PRB exposes an API that implements the conceptual model presented in the previous section.
+PRB exposes an API that implements the conceptual model presented in the previous section.
+
 
 \subsubsection{PRB Setup}\label{di:prb:api:setup}
 
@@ -1360,6 +1363,112 @@ Note that unlike writing or recovering an individual log, garbage collection is 
 It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-level APIs.
 
 \subsection{Persistent Data Structure}
+The PRB's persistent data structure encodes the state of all HDLs as well as the logical structure and content of each HDL's logs.
+Our basic design principle is the decoupling of storage location and logical log structure.
+Separating these concerns allows us to optimize the write path for latency at the expense of more but tolerable complexity during recovery.
+
+\subsusbsection{Chunks}
+The PMEM chunks that are added to the PRB during setup are the storage location for log entries.
+Chunks have a base address and a length.
+The base address must aligned to 256 bytes and the length in bytes must be a multiple of 256.
+We store entries as a contiguous sequence, starting with the first entry's header at the chunk's base address.
+The fixed-length entry header is followed by the variable-length body and zero padding to the next multiple of 256 bytes which is where the next entry header starts.
+The sequence is terminated either explicitly by an invalid header or implicitly if the last entry's body and padding have filled the chunk completely.
+
+\subsubsection{Entry}
+Log entries are represented as a fixed-length header and a variable-length opaque body.
+The header's contents are managed by the PRB implementation.
+The body is a verbatim copy of the byte slice passed to \lstinline{zilpmem_prb_write_entry}.
+The entry header stores metadata to allow claiming and replay to
+\begin{itemize}
+    \item iterate over the entry sequence stored in the chunk,
+    \item ensure data integrity of the entry's body,
+    \item attribute entries to a given HDL, and to subsequently
+    \item determine a replay order for each HDL's log that respects the logical structure defined by the log writer (see Section~\ref{di:prb:structure}).
+\end{itemize}.
+
+The following metadata enables \textbf{iteration} over the entries in a chunk.
+\begin{description}
+    \item[Body Length] We store the exact body length in bytes. The zero padding in the chunk sequence is not considered part of the entry itself.
+    \item[Header Checksum] The header checksum ensures data integrity of the metdata. It is used to detect data corruption and torn writes.
+    If the header checksum is corrupted the header fields cannot be trusted, including the body length.
+    We use ZFS's optimized implementation of the Fletcher 64bit checksum.
+\end{description}
+We outline the algorithm for traversal in Section~\ref{di:prb:traversal}.
+
+In order to ensure \textbf{end-to-end data integrity} for the payload stored in the entry body, we use a separate checksum.
+\begin{description}
+    \item[Body Checksum] Fletcher 64bit checksum of the body data.\todo{parametrize checksum algorithm, store in HDL?}
+\end{description}
+
+We attribute entries to a given HDL's log through the \ltextit{log GUID}.
+\begin{description}
+    \item[Log GUID] A 128 bit random identifier stored in the HDL's ZIL header and repeated in every entry written through that HDL.
+\end{description}
+
+Claiming and replay use the following data to determine a replay order:
+\begin{description}
+    \item[Transaction Group (txg)] The transaction group in which the entry's effect was to be synced out by \textit{txg sync}.
+        The value is provided as an argument to \lstinline{zilpmem_prb_write_entry} by the log writer.
+    \item[Generation Number (gen)] We represent generations as unsigned 64-bit non-zero integers.
+        The ordering of generations in the logical structure must be reflected in the generation number's value:
+        when a new generation is started its generation number must be greater than any previous generation number.
+        %When a log is created the generation number starts at $1$.
+        %When an entry is written, the log's current generation number is stored in the entry header.
+        %If the log writer requests that the log entry be placed in a new generation, the generation number is incremented.
+        %There are no provisions for wrap-around.
+    \item[Generation-Scoped ID (gsid)] Within a generation, we identify each entry by a unique unsigned 64-bit non-zero integer called \textit{generation-scoped-id} (GSID).
+        The GSID is only scoped to the generation. Thus, different generations may re-use GSIDs.
+    \item[Counters] The number of entries that have been written up to generation \lstinline{gen}, by transaction group.
+        Only the counters for transaction groups \lstinline{txg}, \lstinline{txg-1}, \lstinline{txg-2} are stored.
+\end{description}
+We describe the algorithm for claiming and replay in Section~\ref{di:prb:recovery}.
+
+
+\subsubsection{ZIL header}
+The ZIL header (\lstinline{zil_header_pmem_t}) stores the HDL's persistent state.
+It is an opaque struct to PRB API consumers.
+Internally, it is represented as \lstinline{zil_header_pmem_impl_t}.
+
+
+
+The following types 
+
+\begin{lstlisting}
+typedef enum zil_header_pmem_state {
+	ZHPM_ST_NOZIL,
+	ZHPM_ST_LOGGING,
+	ZHPM_ST_REPLAYING,
+} zil_header_pmem_state_t;
+
+typedef struct zil_header_pmem_impl {
+    uint64_t zhpm_st; /* zil_header_pmem_state_t */
+    uint64_t zhpm_guid_1;
+    uint64_t zhpm_guid_2;
+    zilpmem_replay_state_phys_t zhpm_replay_state;
+} zil_header_pmem_impl_t;
+\end{lstlisting}
+
+
+
+\begin{lstlisting}
+typedef struct zilpmem_replay_state_phys {
+    uint64_t claim_txg;
+    eh_dep_t resume_state_active;
+    eh_dep_t resume_state_last;
+} zilpmem_replay_state_phys_t;
+
+typedef struct eh_dep {
+    uint64_t eh_last_gen;
+    prb_deptrack_count_pair_t eh_last_gen_counts[TXG_CONCURRENT_STATES];
+} eh_dep_t;
+
+typedef struct prb_deptrack_txg_seq_pair {
+    uint64_t dtp_txg;	/* 0 <=> invalid pair */
+    uint64_t dtp_count;	/* 0 <=> invalid pair */
+} prb_deptrack_count_pair_t;
+\end{lstlisting}
+
 
 The persistent state of PRB consists of three entities:
 \begin{description}
@@ -1367,15 +1476,158 @@ The persistent state of PRB consists of three entities:
     \item[Entry] The representation of a log entry. It consits of a fixed-size header (\lstinline{entry_header_t}) and a variable-length opaque body.
     \item[PMEM chunks] The segments of contiguous PMEM space that are added to the PRB during setup (see Section~\ref{di:prb:api:setup}).
 \end{description}
-Entries are stored in PMEM chunks as a contiguous sequence that is terminated by an invalid entry header.
-However, neither the position of the entry within the sequence nor its location in PMEM space is semantically relevant.
-Instead, each entry stores metadata in its header that is interpreted by PRB during claiming and replay.
+
+\begin{lstlisting}
+typedef struct entry_header {
+    entry_header_data_t eh_data; /* must be 8-byte aligned so stores are atomics */
+    uint8_t eh_pad[256 - 1*sizeof(entry_header_data_t)];
+} entry_header_t;
+
+typedef struct entry_header_data_t {
+    uint64_t eh_objset_id;
+    uint64_t eh_zil_guid_1;
+    uint64_t eh_zil_guid_2;
+    uint64_t eh_txg;
+    uint64_t eh_gen;
+    uint64_t eh_gen_scoped_id;
+    uint64_t eh_len;
+    zio_cksum_t eh_body_csum;
+    zio_cksum_t eh_header_csum;
+    eh_dep_t eh_dep;
+} entry_header_data_t;
+\end{lstlisting}
+
+
+
+
+
+
+
+The chunk base address must be 256 byte aligned.
+
+Since entries are variable-sized we 
+Each chunk contains a contiguous sequence of as contiguous sequences that are terminated by an invalid entry header.
+
+ a we give maximum flexibility to the write path with regards to placement of  can allow parallel writers 
+We use the PMEM chunks as a 
+On the write path, the writing thread appends the entry to   chooses a PMEM chunk and We store log entries in the PMEM chunks as contiguous sequences that are terminated by an invalid entry header.
+ Replay relies solely on metadata in the entry headers to reconstruct the logical log structure.
+This approach enables multicore-scalability on the write path because parallel writers can append to separate chunks without coordination.
+
+
+PRB's persistent state consists of the following entitites:
 \begin{description}
-    \item[Attribution] We use the \textit{Log GUID}, a 128bit random number, to uniquely identify a log and to find its entries in PMEM.
-    The Log GUID is repeated in the HDL's \lstinline{zil_header_pmem_t} and all entry headers written through the HDL.
-    \item[Ordering \& Dependencies]  The entry headers of the entries of a log contain sufficient metadata to define a total order on them.
-        The metadata is also sufficient to determine whether entries are missing.
+    \item[ZIL Header] The fixed-size \lstinline{zil_header_pmem_t} structure that contains the HDL's persistent state.
+        As explained in the API overview (Section~\ref{di:prb:api}) \lstinline{zil_header_pmem_t} must be persisted to the main zpool by the PRB API user.
+    \item[Entry] The representation of a log entry. It consits of a fixed-size header (\lstinline{entry_header_t}) and a variable-length opaque body.
+    \item[PMEM chunks] The segments of contiguous PMEM space that are added to the PRB during setup (see Section~\ref{di:prb:api:setup}).
 \end{description}
+
+
+Figure~\ref{fig:prb_physical_data_structure_entities} visualizes the relationships described above.
+
+\begin{figure}
+    \includegraphics[height=10cm]{fig/prb_physical_data_structure_entities}
+    \label{fig:prb_physical_data_structure_entities}
+    \caption{
+        The relationships between the different entities that constitute PRB's persistent state.
+    }
+\end{figure}
+
+\subsbusection{Entry}
+
+\subsubsection{Chunk Layout}
+
+
+
+
+This gives us the freedom to scatter entries over choose 
+Entries are stored in chunks as a contiguous sequence that is terminated by an invalid header.
+
+that an entry's physical location in PMEM has no semantic meaning.
+ of the data structure is that we decouple a log entry's location in PMEM in the  logical structure  logical chain of entries is never represented an entries are linked into the logical chain.
+
+
+The data structure must 
+\begin{description}
+    \item[Space-Multiplex PMEM] The PMEM space in the chunks added to the PRB must be shared among all HDLs.
+    \item[Crash Consistent Writes] Writing entries to a HDL must at no point in time cause loss of existing entries.
+    \item[Data Integrity] Entries must be stored such that data corruption can be detected using an error-detecting code.
+    \item[Parallel Writes] 
+    \item[Garbage Collection] The space occupied by entries that are obsoleted by txg sync must be freed by the PRB-wide garbage collection callback.
+\end{description}
+
+in a way that suppo meets the requirements outlined in Section~\ref{sec:requirements}.
+
+
+
+
+
+in a way that suppo meets the requirements outlined in Section~\ref{sec:requirements}.
+Given the logical structure and API of PRB, we can formulate these requirements more precisely:
+
+\begin{description}
+\item[Space-Multiplex PMEM] The PMEM space in the chunks added to the PRB must be shared among all HDLs.
+\item[Crash Consistent Writes] Writing entries to a HDL must at no point in time cause loss of existing entries.
+\item[Data Integrity] Entries must be stored such that data corruption can be detected using an error-detecting code.
+\item[Parallel Writes] 
+\item[Garbage Collection] The space occupied by entries that are obsoleted by txg sync must be freed by the PRB-wide garbage collection callback.
+\end{description}
+
+%Parallel writing to separate HDLs should result in a near-linear speedup.
+%Parallel writing to a single HDL (same generation) should result in significant\todo{...} speedup on a single-socket system.
+% \item[CPU-Efficient Handling Of PMEM Bandwidth Limits] 
+% We identify the following access characteristics:
+% \item[Crash Consistent Replay] Entries Replay must be crash consistent.
+
+Write-mostly.
+
+
+
+used by that represent the representation to The physical representation of PRB has the following requirements:
+
+Although we provide the abstraction of a mostly sequential log to PRB API consumers, the physical 
+
+PRB purpose of stores multiplexes 
+The logical structure of a single HDL's log (see Section~\ref{di:prb:structure}) is very different from its representation in persistent storage.
+Whereas the individual logs are written in a mostly sequential manner, PRB must multiplex many log writers the 
+whereas a single  more than an ordered sequence of log entries, sorted sequence 
+very reminiscent of the ZIL chain, simple  is very different from its representation in persistent storage.
+The persistent state of PRB consists of three entities:
+\begin{description}
+    \item[ZIL Header] The fixed-size \lstinline{zil_header_pmem_t} structure that contains the HDL's persistent state.
+    \item[Entry] The representation of a log entry. It consits of a fixed-size header (\lstinline{entry_header_t}) and a variable-length opaque body.
+    \item[PMEM chunks] The segments of contiguous PMEM space that are added to the PRB during setup (see Section~\ref{di:prb:api:setup}).
+\end{description}
+
+
+chain is uniquely identified by a 128bit random number that is stored in the HDL's \lstinline{zil_header_pmem_t} and every entry written through the HDL.
+
+Each chunk contains a contiguous append-only sequence of entries, terminated by an invalid header.
+
+
+
+
+
+
+
+
+We store entries in the PMEM chunks as an append-only contiguous sequence terminated by an invalid header.
+
+The position of the entry within the chunk nor its location in PMEM space is semantically relevant.
+Instead, we store sufficient metadata in the entry headers so that the logical log structure (see Section~\ref{di:prb:structure} can be reconstructed during claiming and replay.
+
+
+    \item[Generation] We represent generations as unsigned 64-bit non-zero integers.
+        When a log is created the generation number starts at $1$.
+        When an entry is written, the log's current generation number is stored in the entry header.
+        If the log writer requests that the log entry be placed in a new generation, the generation number is incremented.
+        There are no provisions for wrap-around.
+    \item[Generation-Scoped ID] Within a generation, we uniquely identify entries by another unsigned 64-bit non-zero integer called \textit{generation-scoped-id} (GSID).
+    \item[Dependency Tracking] 
+\end{description}
+
+
 Figure~\ref{fig:prb_physical_data_structure_entities} visualizes the relationships described above.
 
 \begin{figure}
@@ -1388,25 +1640,7 @@ Figure~\ref{fig:prb_physical_data_structure_entities} visualizes the relationshi
 
 \subsubsection{Entries \& Chunks}
 
-\begin{lstlisting}
-typedef struct entry_header {
-    entry_header_data_t eh_data; /* must be 8-byte aligned so stores are atomics */
-    uint8_t eh_pad[256 - 1*sizeof(entry_header_data_t)];
-} entry_header_t;
 
-typedef struct entry_header_data_t {
-	uint64_t eh_objset_id;
-	uint64_t eh_zil_guid_1;
-	uint64_t eh_zil_guid_2;
-	uint64_t eh_txg;
-	uint64_t eh_gen;
-	uint64_t eh_gen_scoped_id;
-	uint64_t eh_len;
-	zio_cksum_t eh_body_csum;
-	zio_cksum_t eh_header_csum;
-	eh_dep_t eh_dep;
-} entry_header_data_t;
-\end{lstlisting}
 
 \subsusbsection{Entry Sequence In A Chunk}
 
