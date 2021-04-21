@@ -1121,16 +1121,139 @@ Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used 
 
 
 
-\subsection{Logical Structure}\label{di:prb:structure}
-The conceptual model for the log that PRB consumers write through a PRB is that of a \textbf{sequence of generations of log entries}.
+\subsection{Conceptual Model}\label{di:prb:structure}
+The conceptual model for the PRB is a PMEM resource manager that exposes the HDL abstraction.
+
+The conceptual model for HDL is a logical write-ahead log for a dataset $D$.
+It serves as persistent storage for committed changes to the dataset that have not yet been synced out to the main zpool.
+The log can be opened once and written until it is either destroyed by the log writer or the system crashes.
+After a system crash, the changes that have not yet been persisted to the main pool are applied again through replay.
+
+The unit that is written to the log is the \textit{log entry}.
+A log entry is a logical change $C$ to the dataseet $D$ that was made in a single transaction group $C_{txg}$.
+The consumer of PRB encodes $C$ as an opaque blob and passes it to its HDL's \lstinline{write_entry} method.
+
+PRB requires the log writer to specify the \texit{logical dependencies} of a log entry.
+Logial dependencies are necessary for ordering and correctness during replay.
+For example, if an application creates a file and writes to it, the log entry that encodes the write to the file depends on the log entry that encodes the creation of the file.
+The dependency model that PRB exposes is based on \textit{generations}.
+Entries within the same generation do not depend on each other.
+But an entry from a newer generation depends on all log entries in all previous generations.
+When an entry is written, the writer must indicate whether the entry should be placed in a new generation or whether the existing \textit{open generation} should be used.
+
+After a system crash, the zpool is in the state of the last synced transaction group, the \textit{precrash-txg}.
+The changes that need to be applied to the dataset $D$ are exactly those changes $C_i$ for which $C_i_{txg} > \text{precrash-txg}$ holds true.
+%We store $C_i_{txg}$ in the metadata of the entry $E_i$ that represents change $C_i$.
+To apply those changes, the PRB consumer provides the value of precrash-txg and a callback to the \textit{replay algorithm}.
+The replay algorithm determines the set of $C_i$ that need to be replayed and determines a replay sequence that respects the entries' logical dependencies.
+It then invokes the callback for each entry in the replay sequence.
+The callback must perform the following steps in an atomic DMU transaction for each unapplied entry $E$.
+\begin{enumerate}[noitemsep]
+    \item Apply the change that the log writer encoded encoded in the entry to the dataset.
+    \item Record replay progress by updating the ZIL header to an opaque value provided by the replay algorithm.
+\end{enumerate}
+Recording replay progress has two advantages.
+First, it makes replay crash consistent. If the system crashes during replay, and replay is retried after reboot, the replay algorithm skips entries that have already been applied based on the progress information.
+Second, the types of changes that can be encoded in the log need not be idempotent because each change is only applied once.
+
+We visualize the logical log structure that the replay algorithm operates on as a two-dimensional grid.
+Entries are placed in the grid according to the their generation (x-axis) and transaction group (y-axis).
+TOOD
+
+Specifying dependencies through generations results in a list-like structure.
+When starting a new generation for every entry, the structure is a chain of sequentially dependent entries.
+Figure~\ref{fig:prb_logical_structure:seqchain} shows an example for such a structure.
+When writing multiple entries without starting a new generation, the result is still a chain albeit with multiple entries in each segment.
+When visualized as a dependency graph, the generations with multiple entries have a diamond shape.
+Hence we refer to such log structures as \textit{diamond chains}.
+We provide an example in Figure~\ref{fig:prb_logical_structure:diamondchain}.
+
+Note that the purpose of diamond chains is to allow multilpe threads to write log entries to the same log in parallel.
+If the storage hardware can maintain low latency, writing the entries in parallel improves the system's overall scalability.
+We present an application of diamond chains to ZVOLs in Section~\ref{sec:itxgbypass} and show their performance benefits in our evaluation in Section~\ref{ch:eval}\todo{precise}.
+
+\begin{figure}[h]
+    \begin{subfigure}{\textwidth}
+        \includegraphics[height=5cm]{fig/prb_logical_structure__seqchain}
+        \caption{Each entry was written to a new generation.}
+        \label{fig:prb_logical_structure:seqchain}
+    \end{subfigure}
+    \begin{subfigure}{\textwidth}
+        \includegraphics[height=5cm]{fig/prb_logical_structure__diamondchain}
+        \caption{Entry \#3 was written without starting a new generation.}
+        \label{fig:prb_logical_structure:diamondchain}
+    \end{subfigure}
+    \caption{An example for the logical structure of a single HDL's log. Both variants contain the same entries but the dependency structure differs due to different generation assignments.}
+    \label{fig:prb_logical_structure}
+\end{figure}
+
+
+
+
+During replay, PRB guarantees that an entry $E$ is only replayed if all of the changes encoded in the entries that $E$ logically depends on have already been applied to $D$.
+
+Such logical 
+When an entry is written, the writer provides entry's transaction group $C_{txg}$ and indicate whether the entry should be placed in a new generation.
+During replay, this information is sufficient to answer the question whether all changes that an entry an entry's dependencies change  has been applied.
+
+
+An entry $E$ logically depends on 
+
+
+If $E$ depends on a change in another entry $E'$ that is missing and younger than \textit{precrash-txg}, replay fails with an error that identifies $E$ as the \textit{offending entry}.\textit{language?}
+
+This information in addition to the \textit{precrash-txg} is sufficent to determine whether an entry's can be replayed.
+
+The simplest log structure that  is a chain of entries where each entry depends on its predecessor.
+To produce such a structure the log writer starts a new generation every time it writes a log entry.
+Figure~\ref{fig:prb_logical_structure:seqchain} visualizes such a sequential chain.
+
+An entry that does not logically depend on the other entries in the open generation can be written without starting a new generation.
+When visualizing the resulting log as a dependency graph, generations with multiple entries have the shape of a diamond.
+Hence we refer to such log structures as \textit{diamond chains}.
+We provide an example in Figure~\ref{fig:prb_logical_structure:diamondchain}.
+
+
+If an entry can not be replayed, replay fails with an error that identifies the entry whose dependencies are missing as the \textit{offending entry}.
+
+
+needs to  should 
+The only metadata that PRB requires when writing an entry is is the transaction group $C_{txg}$ in which the logical its logical change was made.
+ and an indication whether a new \textit{generation} needs to be started for the entry.
+Generations are PRB's concept to express logical dependencies between entries.
+Dependencies are critical for replay correctness.
+
+only entries whose dependencies are either alreadhave been replayed and that an entry will not be replayed if its  it depends on one or more missing entries.
+
+
+
+
+The replay algorithm takes as inputs a callback and the last transaction group that was successfully synced to the zpool before the system crashed (:=\~\textit{precrash-txg}).
+The callback is invoked for exactly those log entries that have been successfully committed to PRB but not synced to the zpool before the system crashed.
+It is the callback's responsibility to atomically apply the change encoded in the log entry and to record replay progress in the zpool.
+
+
+
+
+
+Generations are the concept to express logical dependencies between entries.
+If an entry is missing during 
+Entries within the same generation do not depend on each other.
+But an entry from a later generation depends on all log entries in all previous generations.
+The replay algorithm respects these dependencies when determining the replay order and refuses to replay an entry if one or more of its dependencies is missing, e.g., due to data corruption.
+
+PRB takes care of crash consistency, data integrity, scalability on the write path, and correct replay on the recovery path.
+
+
+ log that PRB consumers write through a HDL is that of a \textbf{sequence of generations of log entries}.
 \begin{description}
-    \item[Log Entry] A log entry is an opauqe variable-length data blob provided by the PRB API consumer.
-        Along with data blob, the log writer must provide the transaction group in which the entry becomes obsolete.
-        It must also indicate whether the entry should start a new generation or whether it should be added to the currently open generation.
+    \item[Log Entry] A log entry describes a change $C$ to the zpool state that will be synced to disk in a certain transaction group $C_{txg}$
+        The consumer of PRB encodes $C$ as an opaque blob $LR(C)$ and writes it to the PRB using a method on its HDL.
+        The only metadata required is $C_{txg}$ and an indication whether the entry should start a new generation or whether it should be added to the currently open generation.
     \item[Generation] Generations are used to express logical dependencies between entries.
         Entries within the same generation do not depend on each other.
         But an entry from a later generation depends on all log entries in all previous generations.
-        The replay algorithm chooses a replay order that respects these dependencies and refuses to replay an entry if one or more of its dependencies is missing, e.g., due to data corruption.
+        The replay algorithm respects these dependencies when determining the replay order and refuses to replay an entry if one or more of its dependencies is missing, e.g., due to data corruption.
     \item[Sequence] The log is a sequence of generations.
         Entries can only be added to the most recent generation.
         It is referred to as the \textit{open generation}.
@@ -1164,38 +1287,18 @@ For example, if a file is written simultaneously by two different threads, the w
 Consequently, the log entries for these writes can be placed into the same generation.
 If the storage hardware can maintain low latency, writing the entries in parallel improves the system's scalability.
 
-After a system crash the log chain can be replayed by providing a callback and the last transaction group that was successfully synced to the zpool before the system crashed (:=\~\textit{precrash-txg}).
-The callback is invoked for \textbf{exactly} those log entries that have been successfully logged to PRB but not synced to the zpool before the system crashed.
-The invocations happen sequentially and in a deterministic order that respects the logical dependencies expressed through the generations.
+After a system crash the log chain can be replayed.
+The replay algorithm takes as inputs a callback and the last transaction group that was successfully synced to the zpool before the system crashed (:=\~\textit{precrash-txg}).
+The callback is invoked for exactly those log entries that have been successfully committed to PRB but not synced to the zpool before the system crashed.
+The invocations happen sequentially in a deterministic order that respects the logical dependencies expressed through the generations.
 It is the callback's responsibility to atomically apply the change encoded in the log entry and to record replay progress in the zpool.
 
-The emphasis on the word "exactly" in the previous paragraph is critical because log entries are not idempotent --- the effect encoded in the log entry must be applied exactly once.
-This has two critical implications for replay:
+PRB does not require log entries to be idempotent % thus the "exactly" in the previous paragraph.
+which has two critical implications for replay:
 First, replay progress must be recorded atomically with the application of the change.
 We have already described above how we delegate this responsibility to the callback.
 Second, PRB must ensure that only entries from txgs younger than the precrash-txg are replayed since entries for txgs older or in in the precrash-txg are already part of the synced out state.
-We address this problem by remembering We use the transaction group provided with each entry and the to decide this second 
-
-
-have already synced   since the changes encoded in entries for txgs $\le$ precrash-txg 
-  that have not yet been synced newer than entries that encode changes for txgs   which have already been synced from txgs that have  that are already the txg is invoked so that  in the zpool so First, if the callback successfully persisted an entry the PRB implementation must not invoke the callback multiple times must 
-Also, the effe since the ZIL and txg sync 
-
-The purpose of replay is to apply \textbf{exactly} those changes to the filesystem or ZVOL dataset that were successfully logged to PRB but not synced to the zpool before the system crashed.
-We emphasize the word "exactly" because we do not require to be idempotent.
-
-that were successfully logged  to the ZIL and not yet logged bring the filesystem into the state that was committed is to catch up the zpool's last synced state transaction group and the state that was reported committed.
-(See Section X.Y.Z\todo{ref} for an introduction  a conceptual model )
-
-
-The goal of replay is tocatch up the main pool state  reco advance the system state committed  catch  to recover system state.
-The input to the replay algorithm is the last-synced transaction group 
- pool's last synced transaction callbac
-The replay procedure is callback-driven: the API consumer provides a callback function that is invoked by the replay algorithm for every entry that  that is invoked for every entry whose effect has not yet been applied to the pool.
-
-after a system crash.
-Log chains can be replayed after a system crash.
-The replay is always sequential and fully deterministic. regardless of whether  regardless   Regardless of the shape Log chains can be replayed  can 
+We solve this problem by filtering out entries that were written for txgs before or equal to the precrash-txg, using the metadata provided by the log writer.
 
 %Note that a fully sequential chain of entries is sufficient for today's ZIL since the commit list assembled by the ITX code\todo{ref} is already sequential.
 %However, as pointed out by the example in the previous paragraph, full sequentiality is not always semantically necessary.
