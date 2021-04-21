@@ -1115,21 +1115,21 @@ The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, 
 
 We present PRB in a top-down manner, starting with the logical structure of a single log in Section~\ref{di:prb:structure}, followed by a walkthrough of the API that PRB exposes towards \lstinline{zil\_pmem.c} (Section~\ref{di:prb:api}).
 Equipped with a black-box understanding of PRB's functionality we proceed with its internal design and implementation.
-In Section~\ref{di:prb:phys} we describe PRB's persistent data structures and their invariants.
+In Section~\ref{di:prb:phys} we describe PRB's persistent data structure.
 The design and implementation techniques of the scalability-oriented the write path are presented in Section~\ref{di:prb:write}.
 Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path (\ref{di:prb:recovery}).
 
 
 
 \subsection{Logical Structure}\label{di:prb:structure}
-We model the log that is written and replayed through a HDL as a \textbf{sequence of generations of log entries}.
+The conceptual model for the log that PRB consumers write through a PRB is that of a \textbf{sequence of generations of log entries}.
 \begin{description}
-    \item[Log Entry] A log entry consists of a variable-length opauqe body provided by the log writer and a fixed-length header.
-        When writing a log entry the PRB API consumer must provide the transaction group in which the entry becomes obsolete.
-        It must also indicate whether the entry should start a new generation.
+    \item[Log Entry] A log entry is an opauqe variable-length data blob provided by the PRB API consumer.
+        Along with data blob, the log writer must provide the transaction group in which the entry becomes obsolete.
+        It must also indicate whether the entry should start a new generation or whether it should be added to the currently open generation.
     \item[Generation] Generations are used to express logical dependencies between entries.
         Entries within the same generation do not depend on each other.
-        But an entry from a later generation always depends on all log entries in all previous generations.
+        But an entry from a later generation depends on all log entries in all previous generations.
         The replay algorithm chooses a replay order that respects these dependencies and refuses to replay an entry if one or more of its dependencies is missing, e.g., due to data corruption.
     \item[Sequence] The log is a sequence of generations.
         Entries can only be added to the most recent generation.
@@ -1139,7 +1139,7 @@ The simplest log structure is a chain of entries where each entry depends on its
 To produce such a structure the log writer starts a new generation every time it writes a log entry.
 Figure~\ref{fig:prb_logical_structure:seqchain} visualizes such a sequential chain.
 
-An entry that does not logically depend on the other entries in the open generation can be written to it as well.
+An entry that does not logically depend on the other entries in the open generation can be written without starting a new generation.
 When visualizing the resulting log as a dependency graph, generations with multiple entries have the shape of a diamond.
 Hence we refer to such log structures as \textit{diamond chains}.
 We provide an example in Figure~\ref{fig:prb_logical_structure:diamondchain}.
@@ -1163,14 +1163,48 @@ The purpose of diamond chains is to allow multilpe threads to write log entries 
 For example, if a file is written simultaneously by two different threads, the write operations cannot be logically interdependent.
 Consequently, the log entries for these writes can be placed into the same generation.
 If the storage hardware can maintain low latency, writing the entries in parallel improves the system's scalability.
-If one of the two log entries is lost, the other can still be replayed.
-In contrast, if a log entry is lost in the sequential chain, none of the subsequent entries can be replayed.
 
-Note that a fully sequential chain of entries is sufficient for today's ZIL since the commit list assembled by the ITX code\todo{ref} is already sequential.
-However, as pointed out by the example in the previous paragraph, full sequentiality is not always necessary.
-This observation has already led to a prototype design for ZIL-LWB that allows for more parallel I/O if the entries in written LWBs are not interdependent~\cite{openzfsZILPerformanceImprovements2020}.
-We interpret these findings as indicators that ZIL-PMEM --- and thus PRB --- should support parallelism on the write path in the form of diamond chains.
-We present an application of diamond chains to ZVOLs in Section~\ref{sec:itxgbypass} and evaluate it in Section~\ref{ch:eval}\todo{precise}.
+After a system crash the log chain can be replayed by providing a callback and the last transaction group that was successfully synced to the zpool before the system crashed (:=\~\textit{precrash-txg}).
+The callback is invoked for \textbf{exactly} those log entries that have been successfully logged to PRB but not synced to the zpool before the system crashed.
+The invocations happen sequentially and in a deterministic order that respects the logical dependencies expressed through the generations.
+It is the callback's responsibility to atomically apply the change encoded in the log entry and to record replay progress in the zpool.
+
+The emphasis on the word "exactly" in the previous paragraph is critical because log entries are not idempotent --- the effect encoded in the log entry must be applied exactly once.
+This has two critical implications for replay:
+First, replay progress must be recorded atomically with the application of the change.
+We have already described above how we delegate this responsibility to the callback.
+Second, PRB must ensure that only entries from txgs younger than the precrash-txg are replayed since entries for txgs older or in in the precrash-txg are already part of the synced out state.
+We address this problem by remembering We use the transaction group provided with each entry and the to decide this second 
+
+
+have already synced   since the changes encoded in entries for txgs $\le$ precrash-txg 
+  that have not yet been synced newer than entries that encode changes for txgs   which have already been synced from txgs that have  that are already the txg is invoked so that  in the zpool so First, if the callback successfully persisted an entry the PRB implementation must not invoke the callback multiple times must 
+Also, the effe since the ZIL and txg sync 
+
+The purpose of replay is to apply \textbf{exactly} those changes to the filesystem or ZVOL dataset that were successfully logged to PRB but not synced to the zpool before the system crashed.
+We emphasize the word "exactly" because we do not require to be idempotent.
+
+that were successfully logged  to the ZIL and not yet logged bring the filesystem into the state that was committed is to catch up the zpool's last synced state transaction group and the state that was reported committed.
+(See Section X.Y.Z\todo{ref} for an introduction  a conceptual model )
+
+
+The goal of replay is tocatch up the main pool state  reco advance the system state committed  catch  to recover system state.
+The input to the replay algorithm is the last-synced transaction group 
+ pool's last synced transaction callbac
+The replay procedure is callback-driven: the API consumer provides a callback function that is invoked by the replay algorithm for every entry that  that is invoked for every entry whose effect has not yet been applied to the pool.
+
+after a system crash.
+Log chains can be replayed after a system crash.
+The replay is always sequential and fully deterministic. regardless of whether  regardless   Regardless of the shape Log chains can be replayed  can 
+
+%Note that a fully sequential chain of entries is sufficient for today's ZIL since the commit list assembled by the ITX code\todo{ref} is already sequential.
+%However, as pointed out by the example in the previous paragraph, full sequentiality is not always semantically necessary.
+%This observation has already led to a prototype design for ZIL-LWB that allows for more parallel I/O if the entries in written LWBs are not interdependent~\cite{openzfsZILPerformanceImprovements2020}.
+%We interpret these findings as indicators that ZIL-PMEM --- and thus PRB --- should support parallelism on the write path in the form of diamond chains.
+%We present an application of diamond chains to ZVOLs in Section~\ref{sec:itxgbypass} and evaluate it in Section~\ref{ch:eval}\todo{precise}.
+
+
+
 
 %A generation is identified by its \textit{generation number} which is positive integer.
 %An entry is always associated with exactly one generation but a generation can contain many entries.
