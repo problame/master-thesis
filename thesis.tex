@@ -1630,10 +1630,10 @@ typedef struct zil_header_pmem {
 
 
 \subsection{Traversal}\label{di:prb:traversal}
-As described in the previous section\todo{check ref} PRB stores entries in chunks as a contiguous sequence.
-In this section we describe the algorithm that is used to iterate over the entries in a chunk.
+As described in the previous section\todo{check ref}, PRB stores entries in chunks as a contiguous sequence.
+In this section we describe the algorithm that is used to iterate over the entries in that sequence.
 
-The data format for the sequence was defined in Section~\ref{di:prb:persistent:chunks}:
+As a reminder, the data layout within the chunk is as follows:
 \begin{itemize}[noitemsep]
     \item The first entry header starts at chunk offset zero. Its size is fixed (256 bytes).
     \item The variable-length body starts immediately after the header. Its length is stored in the header.
@@ -1647,8 +1647,8 @@ In the absence of data corruption in PMEM, it is guaranteed that every entry in 
 In the presence of data corruption, we distinguish several cases:
 \begin{description}
     \item[Machine check exception (MCE)] If the PMEM hardware detects uncorrectable data corruption, it raises an MCE.
-        We use a variant of \lstinline{memcpy} that that converts such exceptions into error values.
-        If the error occurs when reading a header, the traversal is stopped.
+        We use the Linux kernel's \lstinline{memcpy_mcsafe} function that converts such exceptions into error values.
+        The error handling for MCE errors is the same as for invalid checksums in entry header and body, which we describe below.
     \item[Header checksum detects corrupted header]
         If the header checksum validation fails, the header was either corrupted by bitflitps or similar phenomena or never completely written.
         The latter case is critical for crash consistency, as we will elaborate on in Section~\ref{di:prb:write:crashconsistency}.
@@ -1672,9 +1672,12 @@ In the presence of data corruption, we distinguish several cases:
 The following listing provides pseudo code for chunk iteration.
 \begin{lstlisting}
 Algorithm: iter_chunk() - Iterate over the entries in a chunk.
+
 Inputs:
+
     ch_base    chunk's base address
     ch_len     chunk's length
+
 Procedure:
     assert ch_base % 256 == 0
     assert ch_len >= sizeof(entry_header_t)
@@ -1717,7 +1720,9 @@ Procedure:
         yield Some((eh, read_body))
 
     }
-Example Use case:
+
+Example:
+
     for (entry_header, read_body) in iter_chunk(ch_base, ch_len) {
         if entry_header.txg <= precrash_txg {
             continue;
@@ -1727,75 +1732,6 @@ Example Use case:
         ...
     }
 \end{lstlisting}
-
-
-
-    % The first sizeof(entry) bytes of a chunk are an entry header.
-    % E := pointer to those first sizeof(entry) bytes
-    % loop:
-    % Otherwise:
-    % If the txg stored in the header is less than min_txg, move to the next chunk (and ignore all entries in the current chunk; insertion guarantees that they have the same txg as E).
-    % Get the body length from E, checksum the body. If the body checksum does not match the one we found in the header, move to the next chunk (and drop all entries in the current chunk).
-    % Otherwise:
-    % Invoke callback with E.
-
-
-% The internal C API for iterating over a physical chunk is as follows:
-% \begin{lstlisting}
-% typedef struct prb_chunk_iter {
-%     uint8_t *cur;
-%     uint8_t *end;
-% } prb_chunk_iter_t;
-
-% void prb_chunk_iter_init(uint8_t *base_pmem, size_t len,
-%     prb_chunk_iter_t *iter);
-
-% typedef enum prb_chunk_iter_result {
-%     PRB_CHUNK_ITER_OK,
-%     PRB_CHUNK_ITER_ERR_HDR_CHECSUM,
-%     PRB_CHUNK_ITER_ERR_INVALID_LEN,
-% } prb_chunk_iter_result_t;
-
-% prb_chunk_iter_result_t
-% prb_chunk_iter(prb_chunk_iter_t *iter, uint8_t **entry);
-
-% // Example
-
-% prb_chunk_iter_t iter;
-% prb_chunk_iter_init(..., ..., &iter);
-% uint8_t *entry;
-% prb_chunk_iter_result_t res;
-% while ((res = prb_chunk_iter(&iter, &entry)) == PRB_CHUNK_ITER_OK) {
-%     ...
-% }
-% if res != ... 
-% \end{lstlisting}
-
-
-
-% Algorithm: pss_ring_traverse(base, len, min_txg, callback, arg)
-% For each chunk (we know its start because chunks are fixed size), traverse its entries:
-% The first sizeof(entry) bytes of a chunk are an entry header.
-% E := pointer to those first sizeof(entry) bytes
-% loop:
-% If E is invalid (zero fields, header checksum error), move to the next chunk (if it’s a bitflip, we now lose all remaining entries of this chunk)
-% Otherwise:
-% If the txg stored in the header is less than min_txg, move to the next chunk (and ignore all entries in the current chunk; insertion guarantees that they have the same txg as E).
-% Get the body length from E, checksum the body. If the body checksum does not match the one we found in the header, move to the next chunk (and drop all entries in the current chunk).
-% Otherwise:
-% Invoke callback with E.
-
-
-
-% in a single 
-% need to iterate over the entries in a chunk in order to discover which entries have been logged before the system crash, and to decide which entries need to be replayed.
-
-% In this section, we describe the \textit{traversal} algorithm that implements this functionality for a single chunk.
-% Scanning the entire PRB for entries is then a mere application of this algorithm to all chunks added to the PRB.
-
-
-
-% Traversal
 
 \subsection{Write Path}\label{di:prb:write}
 % reqs: crash consistent append, deptrack, checksumming, scalability, pmem overload
