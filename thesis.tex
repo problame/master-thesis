@@ -1121,29 +1121,30 @@ In Section~\ref{di:prb:background} we recapitulate the role of the ZIL in ZFS to
 Afterwards, in Section~\ref{di:prb:structure}, we present the mental modal for the log abstraction exposed by PRB.
 We proceed with a description of the API that PRB exposes toward \textit{zil\_pmem.c} (Section~\ref{di:prb:api}).
 Equipped with a black-box understanding of PRB's functionality we proceed with the internal design and implementation.
-In Section~\ref{di:prb:phys} we describe PRB's persistent data structure.
-The design and implementation techniques of the scalability-oriented the write path are presented in Section~\ref{di:prb:write}.
-Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path (\ref{di:prb:recovery}).
+In Section~\ref{di:prb:persistent} we describe PRB's persistent data structure.
+The design and implementation techniques of the scalability-oriented write path are presented in Section~\ref{di:prb:write}.
+Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path.
 
 \subsection{Background}\label{di:prb:background}
 Remember from section \ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
-When the system call handler finishes the DMU transaction by calling \lstinline{dmu_tx_commit(T_i)}, the logical change $C_i$ that $T_i$ makes is not yet persisted to stable storage.
-Instead, the DMU accumulates the changes from many DMU transactions in DRAM, grouped by the transaction's txg.
-Eventually, the \textit{txg sync} background thread syncs the txg out to the zpool's storage devices.
-It first \textit{quiesces} the currently \textit{open txg} by not admitting new DMU transactions to it and waits for existing DMU transactions to finish.
+After the system call handler has finished the DMU transaction by calling \lstinline{dmu_tx_commit(T_i)}, the logical change $C_i$ made in $T_i$ is not yet persisted to stable storage.
+Instead, the DMU accumulates the changes from many DMU transactions in DRAM as so-called \textit{dirty state}, grouped by the transaction's txg.
+Eventually, the \textit{txg sync} background thread syncs out a new version of the zpool state that contains the accumulated changes of the txg:
+it first \textit{quiesces} the currently \textit{open txg} by not admitting new DMU transactions to it and waits for existing DMU transactions to finish.
 Once all DMU transactions have finished, it is guaranteeed that the accumulated dirty state for this txg is not going not change.
 The txg transitions to the \textit{syncing} state and txg sync starts to write out an updated version of the on-disk state.
-After this process is complete, the transaction group is the pool's \textit{last synced} txg.
-Note that there are three unsynced txgs at every given time, one for each of the three states \textit{open}, \textit{quiescing}, and \textit{syncing}.
+After this process is complete, the transaction group is the pool's new \textit{last synced} txg.
+Note that there are three unsynced txgs at any given time, one for each of the three states \textit{open}, \textit{quiescing}, and \textit{syncing}.
 This improves DMU transaction latency because it decouples new DMU transactions from the \textit{txg sync} thread:
 new DMU transactions can always operate on the open txg while txg sync only operates on the syncing txg.
 
-The purpose of the ZIL is to bridge the gap between the time at which a DMU transaction $T_i$ is committed and the time at which the changes made by $T_i$ actually reach the main pool through \textit{txg sync}.
-For that purpose, the system call handler encodes the change $C_i$ that was made in $T_i$ as a \textit{log record} and \textit{assigns} it, wrapped in an ITX, to the ZIL.
-If the system call has synchronous semantics, the handler calls \lstinline{zil_commit} before returning to userspace.
+The purpose of the ZIL is to bridge the gap between the time at which a DMU transaction $T_i$ is finished (\lstinline{dmu_tx_commit}) and the time at which the changes made by $T_i$ actually reach the main pool through \textit{txg sync}.
+For that purpose, the system call handler encodes the change $C_i$ that was made in $T_i$ as a \textit{log record}, wraps it in an \textit{ITX} and \textit{assigns} it to the ZIL.
+If the system call has synchronous semantics, the system call handler invokes \lstinline{zil_commit} before returning to userspace.
 \lstinline{zil_commit} uses the \lstinline{itxg} data structure to determine the sequence of log records that needs to be written out to persistent storage.
 This sequence is called the \textit{commit list}.
-At this point, the ZIL-kind specific implementation takes over: it is responsible for appending the commit list to the previously written lists in some form of stable storage.
+At this point, the ZIL-kind specific implementation takes over: it is responsible for concatenating the current \lstinline{zil_commit} call's commit list to previously written commit lists.
+The logical structure of the log, regardless of ZIL kind, is thus a sequential chain of log records that is extended by \lstinline{zil_commit}.
 
 After a system crash, the zpool is in the state of the last synced transaction group which we call \textit{precrash-txg}.
 Our dataset $D$ is lacking exactly those changes $C_i$ whose transactions $T_i$ were made in transaction groups younger than precrash-txg (their $T_{i_{txg}} > precrash\text{-}txg$).
@@ -1152,7 +1153,7 @@ The ZIL API for this task is called \lstinline{zil_replay}.
 Its implementation is specific to each ZIL kind but the API contract is the same:
 the caller provides a callback that the implementation invokes for every log record that represents a missing change $C_i$.
 The callback interprets the log record and performs a DMU transaction that atomically applies the change to the dataset and records replay progress in the ZIL header.
-The invocation order is given by the commit list, but entries for transactions before or in \textit{precrash-txg} must be skipped because the change encoded in them is already part of the dataset state.
+The invocation order is given by the commit list, but entries for transactions before or in precrash-txg ($T_{i_{txg}} \le precrash\text{-}txg$) must be skipped because the change encoded in them is already part of the dataset state.
 We provide an example for the commit list and the replay sequence for different precrash-txgs in Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level}.
 
 \begin{figure}[H]
@@ -1170,44 +1171,50 @@ We provide an example for the commit list and the replay sequence for different 
 \subsection{Model}\label{di:prb:structure}
 We identify the following requirements for the persistence layer of any ZIL kind:
 \begin{itemize}[noitemsep]
-\item On the write path, it needs to append entries to a sequential log that is synchronously persisted to stable storage.
+\item On the write path, it needs to append entries to a log that is synchronously persisted to stable storage.
 \item In the event of a crash, it needs to recover the exact subset of log records that represent changes that have not been synced to the main pool.
+    It must be able to sort the subset by insertion order.
 \item Finally, since storage is pooled in ZFS, there needs to be an abstraction that constructs such a log from the pool's raw storage space.
+    \todo{LWBs + metaslab + ZIO for ZIL-PMEM, is that clear or should we explain? see how the next paragraph starts.}
 % the ZIL is a per-dataset log but we add PMEM as a shared resource to the pool, ZIL-PMEM needs an abstraction that virtualizes the physical PMEM space into per-dataset logs.
 \end{itemize}
 
 PRB and its HDL abstraction are our solution to address these requirements in ZIL-PMEM.
 The PRB is an in-DRAM struct that is allocated once per zpool during pool import.
-It is set up with many segments of PMEM (\textit{chunks}) that it uses for storage.
-For each dataset, it exposes a \textit{HDL} which implements a (virtual) log persisted in PMEM.
-The log is created when dataset is first mounted.
-Then, it is available for writing \textit{log entries} to it.\todo{language... help}
+It is set up with many segments of PMEM called \textit{chunks} that it uses for storage.
+For each dataset, it exposes a \textit{HDL} which implements a virtual log that is persisted in the PMEM chunks.
+The log is created when dataset is first mounted
+Then, it is available for writing \textit{log entries}.\todo{language... help}
 Log entries can only be appended and are automatically garbage-collected after their transaction group has been synced out by txg sync.
-The log is never read except during recovery after the system crash.
+The log as a logical structure is never read, except during recovery after a system crash.
 For that purpose, HDL provides the replay interface described in the previous section: a callback that is invoked for exactly those changes that were made after the \textit{precrash-txg}.
 
 The unit that can be written to a log is the \textit{log entry}.
 It is the representation of a logical change $C_i$ that was made in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
-The consumer of PRB encodes $C_i$ as an opaque blob and passes it to its HDL's \lstinline{write_entry} method.
+The log entry's payload is an opaque binary blob that encodes the change $C_i$ --- it is the log writer's and replay callback's responsibility to define the encoding.
+However, PRB guarantees data integrity using checksums and handles machine check exceptions raised by the PMEM hardware.
 
 HDL allows for limited parallelism when writing log entries.
-The motivation for this feature is that, although a sequential chain is sufficient for the ZIL's \textit{commit list} model, the sequentiality inherent in the list-based model is a scalability bottleneck.
+The motivation for this feature is that, although a sequential chain is sufficient for the ZIL's \textit{commit list}, the sequentiality inherent in a list-based model is a scalability bottleneck.
 For example, if multiple threads modify the same file simultaneously, their modifications cannot be causally dependent and could be logged in parallel without coordination.
 If the storage medium can maintain low latency for these parallel writes, overall throughput can be improved without latency cost.
 We present an application of parallel logging to ZVOLs in Section~\ref{sec:itxgbypass}.
-Our evaluation in Section~\ref{ch:eval}\todo{precise} demonstrates that significant speedups are possible without weakening crash consistency guarantees.
+Our evaluation in Section~\ref{ch:eval}\todo{precise} demonstrates that significant scalability improvements over baseline ZIL-PMEM with sequential commits lists are possible without weakening crash consistency guarantees.
 
-Due to the support for parallel writes, the logical structure of the log is more complicated than the concatenated commit list introduced in the previous section.
+Due to the support for parallel writes, the logical structure of the log is more complicated than a simple concatenated commit list.
 For this purpose, we introduce the concept of \textit{generations}.
 The log is structured as a sequence of generations, each of which contains many log entries.
-The most recent generation in the log is called the open generation.
+The most recent generation in the log is called the \textit{open generation}.
 When a thread writes a log entry it indicates whether the entry should be written to the open generation or whether a new generation should be started.
-If no new generation is started, the log entry is allowed to be written in parallel with other threads that write to the open generation.
+If no new generation is started, the log entry is allowed to be written in parallel with other threads that also write to the open generation.
 
 Generation assignment is critical for replay correctness because generation membership encodes logical dependencies between entries.
+The dependency relationship induced by generation is defines as follows:
+\begin{displayquote}
 Entries within the same generation do not depend on each other.
 Entries from newer generations unconditionally depend on all entries in all previous generations.
-If an entry $E$ depends on an entry $E'$ that is missing and $E'$'s txg is younger than the precrash-txg, replay stops with an error at entry $E$.
+\end{displayquote}
+If an entry $E$ depends on an entry $E'$ that is missing and $E'$'s txg is younger ($>$) than the precrash-txg, replay stops with an error at entry $E$.
 Figure~\ref{fig:prb_logical_structure} provides three examples for the log structures that can be expressed using \textit{generations}, and how generation assignment affects log recovery.
 
 \begin{figure}[H]
@@ -1284,27 +1291,29 @@ void zilpmem_prb_add_chunk_for_claim(
     zilpmem_prb_t *prb, prb_chunk_t *chunk);
 \end{lstlisting}
 
-We start the PRB lifecycle starts by allocating it using the \lstinline{zilpmem_prb_alloc} function.
-The returned \lstinline{zilpmem_prb_t} is owned by the caller which is responsible for freeeing it using \lstinline{zilpmem_prb_free}.
+The PRB lifecycle starts during zpool import when we allocate it using the \lstinline{zilpmem_prb_alloc} function.
+The returned \lstinline{zilpmem_prb_t} is owned by the caller which is responsible for freeeing it using \lstinline{zilpmem_prb_free} during pool export.
 
-The next step is to give PRB access to segments of PMEM in the form of \textit{chunks}.
+The next step during pool import is to give PRB access to segments of PMEM in the form of \textit{chunks}.
 A chunk is a contiguous segment of kernel virtual address space that maps directly to PMEM.
-We allocate the chunk using \lstinline{prb_chunk_alloc} and add it to the PRB using the \lstinline{zilpmem_prb_add_chunk_for_write} or \lstinline{zilpmem_prb_add_chunk_for_claim} functions.
-When the PRB is constructed for the first time, we use \lstinline{_for_write}.
-Otherwise, we use \lstinline{_for_claim} to indicate that the chunks need to be held back for claiming and replay.
+We allocate the chunk using \lstinline{prb_chunk_alloc} and add it to the PRB using either the \lstinline{zilpmem_prb_add_chunk_for_write} or the \lstinline{zilpmem_prb_add_chunk_for_claim} function.
+When a chunk is added to the PRB for the first time, we use \lstinline{_for_write}.
+Otherwise, e.g. after a system crash, we use \lstinline{_for_claim} to indicate that the chunk needs to be held back for claiming and replay.
 The PRB assumes ownership of the chunks that are added to it.
 When freeing the PRB using \lstinline{zilpmem_prb_free}, the \lstinline{free_chunks} argument determines whether the chunks are freed immediately or whether ownership moves back to the caller.
 
-The PRB consumer is responsible for ensuring that the PRB is initialized with the same chunks of PMEM for its entire lifecycle.
+The PRB consumer is responsible for ensuring that the PRB is always initialized with the same chunks of PMEM every time.
 We expect the API consumer to partition PMEM into chunks once and to store the partitioning scheme somewhere external to PRB.
-In ZIL-PMEM, we currently simplify this task by hard-coding a fixed chunk size (\SI{128}{MiB}\todo{check}) and partitioning the PMEM SLOG vdev's allocatable space into contiguous segments of that size.
+In terms of ZIL-PMEM, this means that the PMEM SLOG vdev is partitioned into chunks when it is added to the pool, and that this partitioning does not change until the PMEM SLOG vdev is removed.
+In our current implementation we simplify the partitioning by hard-coding a fixed chunk size (\SI{128}{MiB}\todo{check}) and partitioning the PMEM SLOG vdev's allocatable space into contiguous segments of that size.
+\todo{future work: dynamically add and remove chunks}
+
+For robustness against data corruption, it is advisable to limit the size of chunks, i.e., have many more chunks than \lstinline{ncommitters}.
+We elaborate on this topic in the Section~\ref{di:prb:recovery} where we describe the algorithms for claiming and replay.
 
 The \textit{ncommitters} parameter to \lstinline{zilpmem_prb_alloc} determines the number of threads that can write to PMEM concurrently.
 Since a chunk can only be written by one thread at a given time, at least \lstinline{ncommitters} chunks should be added to the PRB for multi-core scalability.
-
-\textbf{Note}
-For robustness against data corruption, it is advisable to limit the size of chunks, i.e., have many more chunks than \lstinline{ncommitters}.
-We elaborate on this topic in the Section~\ref{di:prb:recovery} where we describe the algorithms for claiming and replay.
+However, the value of \lstinline{ncommitters} is also relevant for efficient use of CPU time, as we will elaborate on in Section~\ref{di:prb:write:scalability}.
 
 \subsubsection{HDL Setup}\label{di:prb:api:hdl}
 \begin{lstlisting}
@@ -1316,17 +1325,18 @@ void zilpmem_prb_teardown_objset(zilpmem_prb_handle_t *zph,
 \end{lstlisting}
 
 PRB multiplexes PMEM into many logical logs, one for each ZFS head dataset.
-The in-DRAM representation of the per-head dataset state is the HDL (\lstinline{zilpmem_prb_handle_t}).
-We instantiate HDLs using the \lstinline{zilpmem_prb_setup_objset} API on pool import or whenever a new head dataset is created.
-The returned HDL is owned by the caller and can be used to create a log, and write, replay or destroy it.
-When the head dataset is destroyed or the pool is exported, we must call \lstinline{zilpmem_prb_teardown_objset} to free the HDL in-DRAM state.
+The in-DRAM representation of the per-head dataset state is the HDL represented by struct \lstinline{zilpmem_prb_handle_t}.
+We instantiate HDLs during pool import or when a new head dataset is created (\lstinline{zilpmem_prb_setup_objset}).
+The returned HDL is owned by the caller and can be used to create, write to, replay, and destroy a log.
+When the head dataset is destroyed or the pool is exported, we must call \lstinline{zilpmem_prb_teardown_objset} to destroy the HDL.
 
-Some HDL state needs to be persisted to the main zpool so that log recovery can attribute log entries to the correct log after a crash.
+In addition to the log entries which are stored in PMEM chunks, some HDL state needs to be persisted to the main zpool so that log recovery can attribute log entries to the correct log after a crash.
 In the context of the ZIL, the natural location for storing this data is the ZIL header due to the 1:1 relationship between head dataset and ZIL chains.
 The type that represents serialized HDL state in the ZIL header is the \lstinline{zil_header_pmem_t}.
 We cover its exact contents in more detail in Section~\ref{di:prb:persistent}.
-For modularity and testability, we split the responsibility of persisting HDL state: whereas the HDL APIs are responsible for serialization, the API user is responsible for persistence.
-The to-be-persisted update is returned to the API user in the form of an \textit{out-parameter}.
+For modularity and testability, we split the responsibility of persisting HDL state: whereas the HDL APIs are responsible for serialization, the API consumer is responsible for persistence.
+The to-be-persisted update is returned to the API consumer in the form of an \textit{out-parameter}.
+This pattern is used for all HDL-scoped APIs that need to update the ZIL header.
 % Whereas PRB unit tests can simply store the ZIL header on the stack, ZIL-PMEM passes a pointer to the in-DRAM dirty copy of the dataset's ZIL header (\lstinline{os_zil_header}).
 % After the PRB API function returns, ZIL-PMEM marks the dataset as dirty and waits for the open txg to sync.
 
@@ -1342,16 +1352,23 @@ check_replayable_result_t zilpmem_prb_claim(
 \end{lstlisting}
 % NOTE: we omitted the whole claimstore stuff from the thesis because we rule out WR_INDIRECT support in the 'requirements' section.
 
-When the pool is imported after a crash we must \textit{claim} log entries to prevent them from getting overwritten until they have been replayed.
+After the PRB is constructed and HDLs are set up, we must \textit{claim} log entries to prevent them from getting overwritten until they have been replayed.
 For this purpose, \lstinline{zilpmem_prb_claim} must be called in the first transaction group during pool import (\lstinline{pool_first_txg}) for every HDL.
 It returns the ZIL header update that records the successful claiming of the HDL's log through the \lstinline{upd} out-parameter.
 
-Claiming can fail, e.g., if entries are lost due to data corruption but depended upon by other entries.
-The caller defines the error handling policy.
+The \lstinline{zilpmem_prb_claim} function must be called every time the pool is imported, for every dataset.
+The reason is that the data structure that tracks which chunks need to be held back for replay is only held in DRAM.
+\todo{Can't reference chunks in PMEM because they have no explicit repr. But it's also better this way because it minimizes the impact of data corruption in a hypothetical repr.}
+\lstinline{zilpmem_prb_claim}'s reconstructs that data structure during pool import by scanning the chunks that were added using \lstinline{zilpmem_prb_add_chunk_for_claim} for replayable log entries.
+The data that is used to decide whether a log entry need to be kept alive is stored in the ZIL header, hence the requirement to invoke \lstinline{zilpmem_prb_claim} for each dataset.
+
+Claiming can fail, e.g., if entries are lost due to data corruption but are depended upon by other entries.
+The API consumer defines the error handling policy.
 It can either abort pool import or choose to abandon the log by tearing down the HDL using \lstinline{zilpmem_prb_teardown_objset(..., abandon_claim=true, ...)} and re-creating it from a freshly initialized header (\lstinline{zil_header_pmem_init}).
 \todo{retry with an override flag that discards the unreplayable part of the log}
 
-\textbf{Note} The \lstinline{zilpmem_prb_claim} function must be called every time the pool is imported because it is responsible for determining which of the chunks that were added using \lstinline{zilpmem_prb_add_chunk_for_claim} actually need to be held back for replay.
+After we have finished claiming the pool syncs out the first txg and becomes ready for use.
+From that point on there is no need to coordinate HDL operations on different datasets.
 
 % Remember from Section~\ref{bg:zfs:logreplay} that ZIL replay can be deferred for an indefinite amount of pool import/export cycles and system shutdowns.
 % Claiming scans the PMEM chunks that were added with \lstinline{zilpmem_prb_add_chunk_for_claim} for log entries that need to be replayed.
@@ -1388,9 +1405,11 @@ zilpmem_prb_replay_read_replay_node(
     size_t *body_required_size);
 \end{lstlisting}
 
-After we have completed claiming we can replay individual logs using \lstinline{zilpmem_prb_replay}.
-It invokes the \lstinline{zilpmem_replay_cb_t} callback for each log entry that needs to be replayed.
-The callback must perform the following steps in an atomic DMU transaction:
+When a dataset is mounted we always replay its log to recover changes that were committed to the application but not synced to the main pool.
+The API for this task is \lstinline{zilpmem_prb_replay}.
+If there is no log for the dataset or all log entries are obsolete, the function only resets ZIL header.
+If there are replayable log entries, it invokes the \lstinline{zilpmem_replay_cb_t} callback for each log entry that needs to be replayed according to the model presented in Section~\ref{di:prb:structure}.
+The callback must perform the following steps in an single DMU transaction:
 \begin{enumerate}[noitemsep]
     \item Apply the change that the log writer encoded in the entry to the dataset.
     \item Record replay progress by updating the ZIL header to the value as a second argument.
@@ -1403,14 +1422,14 @@ Second, the types of changes that can be encoded in the log need not be idempote
 
 The callback is not given a raw pointer to the log entry in PMEM.
 Instead, it must use the \lstinline{zilpmem_prb_replay_read_replay_node} function.
-It validates the PRB-managed checksum of the log entry's body.
-Also, it ensures that machine-check exceptions (MCEs) raised\todo{caused?} by PMEM are converted to errors.
+The function ensures that data corruption is handled correctly:
+it validates the PRB-managed checksum of the log entry's body and ensures that machine-check exceptions (MCEs) raised\todo{caused?} by PMEM are converted to errors.
 
 \lstinline{zilpmem_prb_replay} can fail either due to an error in the callback or because log entries are missing.
-The result type returned by the API contains the log entry where the missing log entry that prompted the failure.
-The caller decdes whether to retry replay or abandon the unreplayable part of the log\todo{retry with an override flag that discards the unreplayable part of the log}.
+The struct returned by the API contains the log entry that prompted the failure, e.g., the first entry that was missing a logical dependency (as defined in Section~\ref{di:prb:structure}).
+The caller decides whether to retry replay or abandon the unreplayable part of the log\todo{retry with an override flag that discards the unreplayable part of the log}.
 End of replay must be acknowledged explicitly by calling \lstinline{zilpmem_prb_replay_done}.
-It is also possible to destroy the log using \lstinline{zilpmem_prb_destroy_log}.
+Abandonding the log is done using \lstinline{zilpmem_prb_destroy_log}.
 
 %The invocation order corresponds to the order in which the entries were written.
 %Entries that were written in parallel (\lstinline{needs_new_gen == false}) are replayed in a deterministic order to allow for resumability.
@@ -1434,17 +1453,20 @@ After replay the HDL is in a state that requires creation of a new log in order 
 We use the \lstinline{zilpmem_prb_create_log_if_not_exists} to perform this task idempotently.
 The return value indicates whether a header update is actually necessary.
 
-Once the log has been created we write entries to it using \lstinline{zilpmem_prb_write_entry}.
-The caller provides the entry body as opaque byte slice is stored verbatim in PMEM.
-In addition to the body, the caller must provide two pieces of metadata:
+We use the \lstinline{zilpmem_prb_write_entry} function to write \textit{log records} to the created log.
+As explained in Section~\ref{di:prb:structure}, PRB treats log records as opaque blobs that encode a logical change to the dataset.
+The log writer and callback must agree on an encoding and encode (decode) the log record before writing it to (replaying it from) PRB.
+In addition to the encoded log record (\lstinline{body_dram}, \lstinline{body_len}), the log writer must provide two pieces of metadata:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[txg] The transaction group in which the entry becomes obsolete.
-        Obsolete entries are not replayed and are eligible for garbage collection.
-        In practice, the value is always the txg in which the DMU transaction whose effect is encoded in the entry's body is synced to the main pool (the \lstinline{lrc_txg} field).
+    \item[txg] The transaction group $T_{i_{txg}}$ of the DMU transaction $T_i$ whose changes $C_i$ are encoded in the log entry (see Section~\ref{di:prb:structure}).
+        During normal operation, this information is used to garbage-collect log entries obsoleted by txg sync.
+        During claiming and replay, this metadata is used to determine whether the entry needs to be replayed.
+        Note: for ZIL-PMEM, this value is always the same as the log record's \lstinline{lrc_txg} field.
     \item[needs\_new\_gen] Indicates whether a new generation should be started for this log entry (see Section~\ref{di:prb:structure}).
-        The caller of \lstinline{zilpmem_prb_write_entry} is responsible for serializing the start of a new generation:
-        if a thread invokes \lstinline{zilpmem_prb_write_entry} with \lstinline{needs_new_gen == true}, that thread must be the only thread executing that function for the given HDL.
-        The inverse\todo{contrary?} is not true: if \lstinline{needs_new_gen == false}, multiple threads may execute \lstinline{zilpmem_prb_write_entry} in parallel for the same HDL.
+        It is the responsiblity of the caller to serialize the start of a new generation:
+        if a thread writes an entry with \lstinline{needs_new_gen} is \lstinline{true}, that thread must be the only thread executing \lstinline{zilpmem_prb_write_entry} for the given HDL.
+        The inverse\todo{contrary?} is not true: if \lstinline{needs_new_gen} is \lstinline{false}, multiple threads may write entries in parallel to the same HDL.
+        Note that writers for different HDLs need not coordinate at all.\todo{language?}
 \end{description}
 
 \subsubsection{Garabge Collection}
@@ -1453,18 +1475,18 @@ In addition to the body, the caller must provide two pieces of metadata:
 void zilpmem_prb_gc(zilpmem_prb_t *prb, uint64_t synced_txg);
 \end{lstlisting}
 
-Whenever \textit{txg sync} has finished syncing a txg to the main pool it must call \lstinline{zilpmem_prb_gc} with \lstinline{synced_txg == the synced txg}.
-The function frees up the PMEM space occupied by log entries that affect txgs older or equal to \lstinline{synced_txg}.
+Whenever \textit{txg sync} has finished syncing a txg $T$ to the main pool it must call \lstinline{zilpmem_prb_gc} with \lstinline{synced_txg == T}.
+The function makes chunks available for writing that were previously held that are full and only contain log entries written for txgs older \lstinline{synced_txg}.
 Note that unlike writing or recovering an individual log, garbage collection is a PRB-level operation.
 It is safe to call \lstinline{zilpmem_prb_gc} without synchronization with HDL-level APIs.
 
 \subsection{Persistent Data Structure}\label{di:prb:persistent}
-In this section we describe PRB's persistent data structure.
-It encodes the content of each HDL's logs, their logical structure and the HDL state that is necessary for claiming and crash-consistent replay.
+In this section we describe how we persist PRB to stable storage.
+The state that must be persisted is the content of each HDL's logs and the HDL state that is necessary for claiming and crash-consistent replay.
 Our basic design principle is the decoupling of storage location and logical log structure.
 Separating these concerns allows us to optimize the write path (Section~\ref{di:prb:write}) for latency at the expense of more but tolerable complexity during recovery (Section~\ref{di:prb:recovery}).
 
-The persistent data structure is comprised of three entities:
+The persistent state is comprised of the following entities:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[PMEM chunks] The segments of contiguous PMEM space that are added to the PRB during setup (see Section~\ref{di:prb:api:setup}).
     \item[Entry] The representation of a log entry. It consists of PRB-managed metadata and the actual log record data provided by the PRB API user.
@@ -1492,20 +1514,21 @@ Figure~\ref{fig:prb_physical_data_structure_entities} puts everything together i
 
 \subsubsection{Chunks}
 PRB stores log entries in the PMEM chunks that were assigned to it.
-As explained in Section~\ref{di:prb:api:setup} the responsibility to partition PMEM into segments, allocate \lstinline{prb_chunk_t} DRAM objects and add them to the PRB during pool import is delegated to the PRB consumer.
-Therefore, PRB does not need to define persistent structures that track PMEM partitioning.
-From PRB's perspective, chunks are mere slices of PMEM defined by a kernel-virtual \textbf{base address} and their \textbf{length}.
-The chunks' base address is allowed to change every time the PRB is instantiated as long as the effective PMEM space that it refers to remains the same.
+As explained in the API walkthrough (Section~\ref{di:prb:api:setup}), it is the PRB API consumer's responsibility to deterministically partition PMEM into segments, allocate \lstinline{prb_chunk_t} DRAM objects, and add them to the PRB during pool import.
+Therefore, PRB does not need to define persistent structures that track the PMEM partitioning.
+From PRB's perspective, chunks are mere slices of PMEM defined by a \textbf{base address} and \textbf{length} value.
+The base address is allowed to change every time the PRB is instantiated as long as the effective PMEM space that it refers to remains the same.
 Due to Intel Optane-specific performance characteristics, we require that the base address must be aligned to 256 bytes and that the length in bytes must be a multiple of 256.
+We will elaborate on this requirement in Section~\ref{di:prb:write:optanespecifics}.
 
-Chunks act as containers for entries.
+Chunks act as containers for \textit{entries}.
 They are stored within the chunk's PMEM slice as a contiguous sequence, starting with the first entry at the base address.
 The space after an entry is zero-padded to the next multiple of 256 bytes.
 The next entry starts after the padding.
 The sequence is terminated either explicitly by an invalid entry header or implicitly if the last entry has filled the chunk completely.
 Figure~\ref{fig:prb_physical_data_structure__chunklayout} provides an example chunk layout.
 
-Note that chunks must be sufficiently large to hold at least one entry because entries are never split across chunks.
+Note that chunks must be sufficiently large to hold at least one entry because entries cannot be split across chunks.
 The choice of chunk size is a trade-off between PMEM space-efficiency (fragmentation at the end of the chunk), the acceptable blast radius\todo{this is a common ops term but not sure if academic enough...} of data corruption (traversal, see Section~\ref{di:prb:traversal}), and multi-core scalability on the write path (see Section~\ref{di:prb:write}).
 
 \begin{figure}[h]
@@ -1515,7 +1538,7 @@ The choice of chunk size is a trade-off between PMEM space-efficiency (fragmenta
 \end{figure}
 
 \subsubsection{Entry}
-Log entries are represented as a fixed-length header and a variable-length opaque body as visualized in Figure~\ref{fig:prb_physical_data_structure__chunklayout}.
+Log entries are represented as a fixed-length header and a variable-length body as visualized in Figure~\ref{fig:prb_physical_data_structure__chunklayout}.
 The body is a verbatim copy of the byte slice passed to \lstinline{zilpmem_prb_write_entry}.
 The header's contents are managed by the PRB implementation.
 It stores metadata that allows the recovery procedures to
@@ -1523,7 +1546,7 @@ It stores metadata that allows the recovery procedures to
     \item iterate over the entry sequence stored in the chunk,
     \item ensure data integrity,
     \item attribute entries to a given HDL's log, and to subsequently
-    \item determine a replay order for each HDL's log that respects the logical structure defined by the log writer (see Section~\ref{di:prb:structure}).
+    \item determine the set and order\todo{weird language, how to phrase this?} of entries that need to be replayed (see Section~\ref{di:prb:structure}).
 \end{itemize}
 
 The following metadata enables \textbf{iteration} over the entries in a chunk:
@@ -1540,14 +1563,14 @@ In order to ensure \textbf{end-to-end data integrity} for the payload stored in 
     \item[Body Checksum] Fletcher 64bit checksum of the body data.\todo{parametrize checksum algorithm, store in HDL?}
 \end{description}
 
-We attribute entries to a given HDL's log through the \textit{log GUID}:
+We \textbf{attribute} entries to a given HDL's log through the \textit{log GUID}:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Log GUID] A 128 bit random identifier stored in the HDL's ZIL header and repeated in every entry written through that HDL.
 \end{description}
 
-Claiming and replay use the following data to determine a replay order:
+Claiming and replay use the following data to determine which entries need to be replayed and the order in which that must happen:\todo{also not great language...}
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Transaction Group (txg)] The transaction group in which the entry's effect was or would have been synced out by \textit{txg sync}.
+    \item[Transaction Group (txg)] The transaction group in which the change encoded in the entry was or would have been synced out by \textit{txg sync}.
         The value is provided as an argument to \lstinline{zilpmem_prb_write_entry} by the log writer.
     \item[Generation Number (gen)] We represent generations as unsigned 64-bit non-zero integers.
         The ordering of the generations in the log is given by the ordering of the generation numbers.
@@ -1556,24 +1579,24 @@ Claiming and replay use the following data to determine a replay order:
         %When an entry is written, the log's current generation number is stored in the entry header.
         %If the log writer requests that the log entry be placed in a new generation, the generation number is incremented.
         %There are no provisions for wrap-around.
-    \item[Generation-Scoped ID (gsid)] Within a generation, we identify and order entries by a unique unsigned 64-bit non-zero integer called \textit{generation-scoped-id} (GSID).
+    \item[Generation-Scoped ID (gsid)] Within a generation, we identify and order entries by a unique unsigned 64-bit non-zero integer.
         As the name suggests, the gsid only need to be unique within a generation.
     \item[Counters Table] Each entry contains a table that stores the number of entries that have been written up to generation $gen$, by transaction group.
         Only the counters for transaction groups $txg$, $txg - 1$, and $txg - 2$ are stored in the table.
 \end{description}
-The Counters Table is the same for all entries in a generation because it does not count the entries of the currently open generation.
-However, we currently replicate it in each entry to minimize coordination between parallel writers.
+Note that the Counters Table is the same for all entries in a generation because, by the definition above, it does not count the entries of the open generation at the time the entries are written.
+%We currently replicate it in each entry to minimize coordination between parallel writers.
 %The Counters Table is critical for detecting missing entries during claiming and replay (Section~\ref{di:prb:recovery}).
 
 \subsubsection{ZIL header}
-The ZIL header (\lstinline{zil_header_pmem_t}) is the persistent representation of HDL state.
-However, not every aspect of the runtime state of HDL is reflected in it, but only the information needed for claiming and replay.
+The ZIL header (\lstinline{zil_header_pmem_t}) is the persistent representation of the HDL state.
+Not every aspect of the runtime state of HDL is reflected in it, but only the information needed for claiming and replay.
 The ZIL header has the following states, some of which have associated data:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[nozil] There is no log for this dataset. (No associated data.)
-    \item[logging] The log has been created and entries might have been written but claiming has never been completed.
-        The log remains in this state for the entire time in which the log is written. Associated data: \textit{Log GUID}.
-    \item[replaying] The log has been claimed and replay is ongoing. Associated data: \textit{Log GUID}, \textit{serialized replay algorithm state}.
+    \item[logging] The log has been created and entries might have been written to PMEM, but claiming has never been completed.
+        The log remains in this state for the entire time until it is destroyed or the system crashes. Associated data: \textit{Log GUID}.
+    \item[replaying] The log has been claimed and replay is ongoing. Associated data: \textit{Log GUID} and \textit{serialized replay algorithm state}.
 \end{description}
 The diagram in Figure~\ref{fig:prb_persistent_structure__header_states_plus_example} visualizes the state transitions that the ZIL header goes through as the log is created, written and recovered.
 
@@ -1597,7 +1620,7 @@ typedef enum zil_header_pmem_state {
     ZHPM_ST_REPLAYING,
 } zil_header_pmem_state_t;
 
-typedef struct zil_header_pmem_impl {
+typedef struct zil_header_pmem {
     uint64_t zhpm_st; /* zil_header_pmem_state_t */
     uint64_t zhpm_guid_1;
     uint64_t zhpm_guid_2;
@@ -1616,7 +1639,9 @@ typedef struct zil_header_pmem_impl {
 
 \subsubsection{Physical Append To PMEM}
 
-\subsubsection{Scalability}
+\subsubsection{Intel Optane Specifics}\label{di:prb:write:optanespecifics}
+
+\subsubsection{Scalability}\label{di:prb:write:scalability}
 
 \subsection{Recovery Path}\label{di:prb:recovery}
 
