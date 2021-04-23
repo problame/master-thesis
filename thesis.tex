@@ -705,7 +705,7 @@ Whereas battery-backed NVDIMMs have existed for decades\todo{reference}, Intel O
 We develop ZIL-PMEM on this platform and want to determine the maximum performance that can be achieved with it.
 
 \csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
-PMEM I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
+The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
 \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
 Write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
 In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at 15~threads.~\cite[fig.4]{yangEmpiricalGuideBehavior2020}
@@ -1537,7 +1537,7 @@ The choice of chunk size is a trade-off between PMEM space-efficiency (fragmenta
     \label{fig:prb_physical_data_structure__chunklayout}
 \end{figure}
 
-\subsubsection{Entry}
+\subsubsection{Entry}\label{di:prb:persistent:entry}
 Log entries are represented as a fixed-length header and a variable-length body as visualized in Figure~\ref{fig:prb_physical_data_structure__chunklayout}.
 The body is a verbatim copy of the byte slice passed to \lstinline{zilpmem_prb_write_entry}.
 The header's contents are managed by the PRB implementation.
@@ -1734,15 +1734,151 @@ Example:
 \end{lstlisting}
 
 \subsection{Write Path}\label{di:prb:write}
-% reqs: crash consistent append, deptrack, checksumming, scalability, pmem overload
-% high-level control flow
-% bottom-up details
+In this section we present the design and implementation techniques that we employ to persist log entries in PMEM.
+Our primary goal is performance: we want our design to minimize PRB's latency overhead and maintain this for parallel writers on a multicore system.
+At the scope of PRB (not ZIL-PMEM as a whole), the following activities on the write path are relevant for latency:
+\begin{description}[noitemsep]
+    \item[Checksumming] We must compute the Fletcher checksums of the header and body for each log entry that is being written.
+        This task adds latency but does not concern multicore scalability since no coordination is required between writers.
+    \item[Log Structure Encoding] We must compute the \textit{Counters Table} every time a log write starts a new generation (see Section~\ref{di:prb:persistent:entry}).
+        As the name indicates, we must maintain a precise counter of the number of log entries that were written for each txg.
+        This presents a multicore scalability concern.
+    \item[Chunk Selection] Before writing an entry we must select the chunk into which the entry should be written, which might require coordination with other writers.
+    \item[Crash Consistency] The procedure that appends the log entry to the target chunk's sequence must do so in a crash-consistent manner.
+        This typically requires the insertion of store barriers for correctness and comes with a latency cost.
+    \item[Optane-Specific Performance Characteristics]
+        We develop and evaluate ZIL-PMEM for/on Intel Optane DC Persistent Memory.
+        The performance characteristics of Optane DIMMs are significantly different from regular DRAM.
+        For example, the access granularity and kind of store and cache flush instruction have significant impact on the achievable write bandwidth~\cite{yangEmpiricalGuideBehavior2020}.
+        \todo{need background section for pmem characteristics papers?}
+\end{description}
+The secondary goal for the write path is the efficient use of CPU time. This concerns the following domains:
+\begin{description}[noitemsep]
+    \item[Checksumming] Use ZFS's optimized implementations of the Fletcher to compute the entry header and body checksum.
+    \item[Writing Entries] Use AVX512 non-temporal store instructions for writing log entries to PMEM.
+        For the size of log entries written by ZIL-PMEM, this is the recommended technique for maximum bandwidth in \cite{yangEmpiricalGuideBehavior2020}.
+    \item[PMEM Bandwidth Limits \& Multicore Scalability] The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
+        This is problematic from a CPU utilization perspective: if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
+        \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
+        Write bandwidth decreases to \SI{1}{GB/s} at ten or more concurrently writing CPU cores ~\cite{yangEmpiricalGuideBehavior2020}.
+        Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, we cannot make assumptions about the system's overall CPU priorities in a filesystem such as ZFS.
+        Given that PRB shares PMEM among all HDLs, and that HDLs can be written in parallel, our design must address this concern.
+\end{description}
+%Finally, we want to address the limitations of our design as declared in Section~\ref{sec:requirements}.
+%\begin{description}[noitemsep]
+%    \item[No Encryption] We do not OpenZFS native encryption. If we did, it would affect software latency and CPU efficiency in the same way the to the checksumming does.
+%    \item[No Protection Against Scribbles] Low-latency mechanisms to protect against scribbles have been presented in prior work. We would not expect a significant latency impact.
+%    \item[No Data Redundancy] Latency overheads would have to be expected if this feature were added in the future.
+%    \item[No Software Striping Of PMEM] We would expect latency overhead with this feature because access to striped PMEM would need to be coordinated.
+%        However, Intel Optane's hardware striping seems promising.
+%    \item[No Support for WR\_INDIRECT] Support for \lstinline{WR_INDIRECT} records would incur significant latency cost due to the wait time for the main vdevs in the pool.
+%    \item[Space Efficiency] 
+%\end{description}
 
-\subsubsection{Physical Append To PMEM}
+In the remainder of this section we present our design and describe how it addresses the challenges listed above.
+%We take a top-down approach, starting with an overview of the high-level control flow in Section~\ref{di:prb:write:controlflow}.
+%In Section~\ref{di:prb:write:chunksel} we describe how 
+%In Section~\ref{di:prb:write:logstructureencoding} we present the algorithm that is used to compute the Counter Tables for each new generation.
+% ...
 
-\subsubsection{Intel Optane Specifics}\label{di:prb:write:optanespecifics}
+\subsubsection{High-Level Overview}\label{di:prb:write:controlflow}
+A thread that writes an entry first aquires a \textit{committer slot} which is our mechanism to limit concurrent writes to PMEM.
+Afterwards, it updates the structure that is used to compute the counter table.
+If the thread is starting a new generation, this step involves the computation of the counter table that the entries of the new generation will contain.
+The next step is the selection of a the target PMEM chunk that has sufficient space for the entry. This task falls in the domain of the committer slot abstraction.
+After the chunk has been aquired we can write the entry which consists of several sub-steps:
+First we must temporarily disable preemption and saving of FPU context to enable the use of AVX-512.
+Next, we compute the Fletcher checksum of the entry body and header.
+Finally, we append the entry to the sequence stored in the chunk in a crash-consistent manner.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=14cm]{fig/prb_writepath_highlevel_activity_diagram}
+    \caption{Flow chart of the activities on the write path.}
+\end{figure}
+
+\subsubsection{Committer Slots}\label{di:prb:write:chunksel}
+The committer slot abstraction is our solution to coordinate access to PMEM among multiple parallel writers.
+The goal is to allow up to \lstinline{ncommitters} threads simultaneous access to PMEM.
+For this purpose, a thread that wants to write an entry \textit{aquires a committer slot} $S \in {0, 1, \dots, ncommitters-1}$.
+Each thread that is simultaneously committing has a different committer slot.
+If more threads want to aquire a committer slot than are available, the function to aquire the slot blocks.
+
+Associated with each committer slot is the ownership of a PMEM chunk.
+While a slot is held by a thread, the thread owns the associated chunk.
+The thread can write its entry to the currently associated chunk or replace it with a new one if the capacity of the current chunk is insufficient.
+Replacing a chunk involves putting the chunk on the \textit{full queue} where it will be eventually garbage-collected, and dequeuing a new chunk from the \textit{free queue}.
+Dequeuing a chunk from the \textit{free queue} might fail if there are no free chunks.
+The log writer can choose whether to block and wait or fail the log entry write operation with an error.\todo{no deadlock potential with zil\_commit because it is called without DMU tx open, but that's too much detail here. also the current impl doesn't handle non-block correctly because we don't rollback the dependency tracking state. but actually we need nonblock for itxg bypass so maybe we should always do nonblock}
+Regardless of whether the chunk is replaced or not, the ownership of the chunk that was effectively written to moves to the slot as soon as the thread releases its hold on it.
+Figure~\ref{fig:flowchart_committer_slot_aquision_and_chunk_selection} visualizes the procedure described above.
+
+We implement committer slots using a semaphore and a bitmask.
+The aquiring thread must enter the semaphore first, then aquire a slot by finding a zero bit in the \lstinline{ncommitters} least significant bits of the bitmask.
+We use atomic compare-and-swap operation and GCC's \lstinline{__builtin_ffs} function to find and flip a zero bit in the bitmask without requiring a lock.
+We retry indefinitely if the compare-and-swap operation detects a race with another thread.
+While this technique does not technically guarantee a bounded wait time, we found it to not be problematic in practice in our evaluation.\todo{we have the dtrace probe, but I think we don't have an automated benchmark for this yet.}
+The following listing describes the algorithm for committer slot aquisition and release.
+
+\begin{lstlisting}
+typedef struct zilpmem_prb {
+    ...
+    size_t ncommitters; /* immutable */
+	semaphore_t committer_sem;
+	uint64_t committer_slots;
+    ...
+} zilpmem_prb_t;
+
+size_t aquire_committer_slot(zilpmem_prb_t *prb) {
+
+    < aquire prb.committer_sem >
+
+    // get a snapshot of prb->committer_slots
+	uint64_t committer_slots;
+	const uint64_t ncommitters_mask = (1ULL << prb->ncommitters) - 1;
+	committer_slots = atomic_load(&prb->committer_slots);
+
+	while (true) {
+
+        // find first set bit on the inverted committer_slots snapshot
+		int idx_plus_1 = __builtin_ffs(~committer_slots);
+		int idx = idx_plus_1 - 1;
+		const uint64_t slot_mask = (1ULL << idx);
+		bool won = compare_exchange(
+            ptr: &prb->committer_slots,
+            expect: &committer_slots,
+            updated: committer_slots | slot_mask
+        );
+
+		if (won) {
+			return idx;
+		} else {
+            // Ee lost the race with another thread.
+            // committer_slots contains the updated value.
+            // retry
+        }
+
+	}
+}
+
+void release_committer_slot(zilpmem_prb_t *prb, size_t slot)
+{
+    // set the `slot` bit in the bitmask to zero
+	const uint64_t slot_mask = 1ULL << slot;
+	atomic_and(&prb->committer_slots, ~slot_mask);
+
+    < release prb->committer_sem >
+}
+\end{lstlisting}
+
+\subsubsection{Log Structure Encoding}\label{di:prb:write:logstructureencoding}
+\subsubsection{}
+
+\subsubsection{Crash-Consistent Append}\label{di:prb:write:crashconsistency}
 
 \subsubsection{Scalability}\label{di:prb:write:scalability}
+
+\subsubsection{Intel Optane Specifics}\label{di:prb:write:optanespecifics}
 
 \subsection{Recovery Path}\label{di:prb:recovery}
 
