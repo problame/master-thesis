@@ -64,6 +64,7 @@
   frame=single,
   xleftmargin=\parindent,
   alsodigit={:},
+  tabsize=4,
 }
 \lstset{style=figurec}
 
@@ -584,7 +585,7 @@ On the write path, the following ZIL APIs are relevant:
 \end{description}
 The activity diagrams in Figure~\ref{fig:zil_api_syscall_activity_diagrams} visualize how these APIs are used in \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()} system calls.
 \begin{figure}[h]
-    \includegraphics[height=0.8\textheight]{fig/zil_api_syscall_activity_diagrams}
+    \includegraphics[height=0.8\textheight]{fig/zil_api_syscall_activity_diagram}
     \caption{
         ZIL API usage on the write path in \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()} system calls.
     }
@@ -1340,7 +1341,7 @@ This pattern is used for all HDL-scoped APIs that need to update the ZIL header.
 % Whereas PRB unit tests can simply store the ZIL header on the stack, ZIL-PMEM passes a pointer to the in-DRAM dirty copy of the dataset's ZIL header (\lstinline{os_zil_header}).
 % After the PRB API function returns, ZIL-PMEM marks the dataset as dirty and waits for the open txg to sync.
 
-\subsubsection{Claiming}
+\subsubsection{Claiming}\label{di:prb:api:claiming}
 
 \begin{lstlisting}
 typedef struct check_replayable_result { ... };
@@ -1733,6 +1734,92 @@ Example:
     }
 \end{lstlisting}
 
+\subsection{Chunk Ownership}\label{prb:di:chunkownership}
+% In this section we provide an overview of the in-DRAM data structures used by PRB and HDL.
+% PRB is represented by the \lstinline{zilpmem_prb_t} structure.
+% It acts as the root for all PRB-related runtime state.
+% \begin{description}
+%     \item[HDL Tree] PRB tracks HDLs in a search tree for their entire in-DRAM lifetime (\lstinline{zilpmem_prb_setup_objset} and \lstinline{zilpmem_prb_teardown_objset}).
+%     The search tree is used to enforce API contracts, e.g., that a HDL must only be \lstinline{setup} once and that all HDLs must have been torn down before the PRB is freed.
+%     \item[Per-HDL State] Each HDL 
+%     The HDLs themselves have internal state with associated data. 
+%     The state stored within the HDLs is specific to the write path and recovery  is only relevant during replay and will thus be presented in the corresponding Section~\ref{di:prb:recovery}.
+%     \item[Chunk Ownership: Chunk Lists \& Committer Slots] PRB needs  uses chunks to allow as the  tracks chunk ownership  the chunks that were assigned to it during construction in a set of lists.
+%     We describe committer slots below.
+% \end{description}
+
+% \subsubsection{Chunks}
+Each chunk in PMEM is represented by a corresponding \lstinline{prb_chunk_t} DRAM object that is allocated by the PRB API consumer during PRB construction.
+Each chunk object has the following runtime state:
+\begin{description}[noitemsep]
+    \item[PMEM location] The chunk's start and end address in PMEM. These values do not change for the lifetime of the chunk.
+    \item[Claim refcount] Each HDL that requires one or more entries in the chunk for replay must hold a reference to the HDL so that garbage-collection skips the chunk.
+        HDLs add references during claiming and remove them after replay is complete or the log is abandoned.
+    \item[Write position] The PMEM address where the next entry will be written. The value is reset to the chunk's start address by garbage collection.
+    \item[Max txg] The maximum transaction group of the entries that were written to this chunk. The value is reset to zero by garbage collection.
+\end{description}
+
+% \subsubsection{Chunk Ownership}\label{prb:di:chunkownership}
+We use an ownership model to define which entity is allowed exclusive access to a chunk's state, both in DRAM and in PMEM.
+Initially, the chunk is owned by the API consumer that allocated it.
+When the API consumer adds the chunk to the PRB, ownership of the chunk moves to the PRB until the PRB is freed.
+Within the PRB, the chunk is either put on one of several lists or it is held by a \textit{committer slot}.
+The number of committer slots is determined by the \lstinline{ncommitters} argument\todo{param?} during PRB construction.
+A committer slot can hold at most one chunk at any given time.
+When a log write wants to write an entry it first aquires a commit slot and then writes the entry to the commit slot's chunk.
+All chunks that are not owned by a commit slot are tracked in exactly one of the following lists:
+\begin{description}[noitemsep]
+    \item[Free List]
+        The \textit{free list} holds empty chunks.
+        Their \textit{claim refcount} and \textit{max txg} is zero and their write position is reset to the chunk's base address.
+        In PMEM, the entry sequence is empty because the entry header at the chunk's base address is invalid.
+        The list is filled by \lstinline{zilpmem_prb_add_chunk_for_write} and from garbage collection.
+        It is used by log writers that cannot fit their entry into their commit slot's current chunk:
+        the log writer puts the commit slot's current chunk on the \textit{full list} (see below) and gets a new chunk from the \textit{free list}.
+    \item[Full Lists]
+        The \textit{full lists} contains chunks that wait for garbage collection.
+        PRB maintains one full list for each txg $T_i$. The \textit{full list} for $T_i$ contains exactly those chunks whose \textit{max txg} is $T_i$.
+        When \textit{txg sync} triggers garbage collection for $T_i$, the chunks on the corresponding \textit{full list} are reset and moved to the \textit{free list}.
+        Note that it is sufficient to maintain three full lists at any given time --- one for each of the three unsynced transaction groups \textit{open}, \textit{quiescing}, and \textit{syncing}.
+        The three lists can be represented as an array of three lists that is indexed by $T_i mod 3$.
+        The implementation follows the common ZFS idiom of using four lists that are indexed by \lstinline{T_i & 3} where \lstinline{&} is a \textit{bitwise and} operation.
+        \todo{ref central explainer for this}
+    \item[Wait Replay List]
+        The \textit{wait replay list} contains the chunks that were added to the PRB using \lstinline{zilpmem_prb_add_chunk_for_claim}.
+        When a HDL log is claimed, the claiming procedure scans the chunks on this list and increments the \textit{claim refcount} for chunks that need to be kept.
+        Once claiming is done and\textit{txg sync} triggers the first garbage collection cycle after pool import, any chunk on this list that has a zero refcount is reset and moved to the \textit{free list}.
+        The list is also scanned for zero refcounts during all future garbage collection cycles.
+\end{description}
+We visualize the ownership transitions in Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} and provide an example in Figure~\ref{fig:prb_chunk_ownership_cycle__example}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_chunk_ownership_cycle__transitions}
+    \caption{The different owners of a chunk and the events that cause ownership transitions.}
+    \label{fig:prb_chunk_ownership_cycle__transitions}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=12cm]{fig/prb_chunk_ownership_cycle__example}
+    \caption{
+        Example for chunk ownership transitions.
+        The PRB is constructed with all eight chunks added as \lstinline{_for_claim}.
+        Claiming (\textit{A}) determines that chunks 0, 1, 3, 4, and 6 need to remain on the \textit{wait replay list} because they contain entries for HDL logs that need replay.
+        Chunks 2, 5, and 7 only contain obsolete entries and move to the \textit{free list}.
+        We do not replay any of the logs.
+        However, a log writer starts writing a new log in \textit{B}.
+        It finds that its commit slot (\#0) has no active chunk.
+        Thus, it and moves the first chunk on the \textit{free list} (i.e., chunk 2) to the commit slot.
+        After writing the entry to chunk 2 the log writer releases the commit slot.
+        Another log writer aquires commit slot \#0 and writes entries to it.
+        Chunk 2's capacity is insufficient to hold the last entry (\textit{C}).
+        The thread places chunk 2 on the correct \textit{full list} for chunk 2's \textit{max txg} and finds a new chunk on the free list for the committer slot (not shown).
+        Eventually \textit{txg sync} triggers garbage collection for the txg that is chunk 2's \textit{max txg} which resets chunk 2's in-PMEM and in-DRAM sequence and subsequently places it back onto the free list.
+    }
+    \label{fig:prb_chunk_ownership_cycle__example}
+\end{figure}
+
 \subsection{Write Path}\label{di:prb:write}
 In this section we present the design and implementation techniques that we employ to persist log entries in PMEM.
 Our primary goal is performance: we want our design to minimize PRB's latency overhead and maintain this for parallel writers on a multicore system.
@@ -1740,10 +1827,10 @@ At the scope of PRB (not ZIL-PMEM as a whole), the following activities on the w
 \begin{description}[noitemsep]
     \item[Checksumming] We must compute the Fletcher checksums of the header and body for each log entry that is being written.
         This task adds latency but does not concern multicore scalability since no coordination is required between writers.
-    \item[Log Structure Encoding] We must compute the \textit{Counters Table} every time a log write starts a new generation (see Section~\ref{di:prb:persistent:entry}).
+    \item[Log Structure Encoding] We must compute the \textit{Counters Table} every time a log writer starts a new generation (see Section~\ref{di:prb:persistent:entry}).
         As the name indicates, we must maintain a precise counter of the number of log entries that were written for each txg.
-        This presents a multicore scalability concern.
-    \item[Chunk Selection] Before writing an entry we must select the chunk into which the entry should be written, which might require coordination with other writers.
+        This presents a multicore scalability concern since the counter is shared across all log writers.
+    \item[Chunk Selection] Before writing an entry we must select a target chunk. This selection process might require coordination with other writers, depending on the implementation.
     \item[Crash Consistency] The procedure that appends the log entry to the target chunk's sequence must do so in a crash-consistent manner.
         This typically requires the insertion of store barriers for correctness and comes with a latency cost.
     \item[Optane-Specific Performance Characteristics]
@@ -1754,15 +1841,16 @@ At the scope of PRB (not ZIL-PMEM as a whole), the following activities on the w
 \end{description}
 The secondary goal for the write path is the efficient use of CPU time. This concerns the following domains:
 \begin{description}[noitemsep]
-    \item[Checksumming] Use ZFS's optimized implementations of the Fletcher to compute the entry header and body checksum.
+    \item[Checksumming] Use ZFS's optimized implementations of the Fletcher checksum to compute the entry header and body checksum.
     \item[Writing Entries] Use AVX512 non-temporal store instructions for writing log entries to PMEM.
-        For the size of log entries written by ZIL-PMEM, this is the recommended technique for maximum bandwidth in \cite{yangEmpiricalGuideBehavior2020}.
+        For the size of log entries written by ZIL-PMEM, this is the recommended technique by \citeauthor{yangEmpiricalGuideBehavior2020} \cite{yangEmpiricalGuideBehavior2020}.
     \item[PMEM Bandwidth Limits \& Multicore Scalability] The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
         This is problematic from a CPU utilization perspective: if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
         \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
         Write bandwidth decreases to \SI{1}{GB/s} at ten or more concurrently writing CPU cores ~\cite{yangEmpiricalGuideBehavior2020}.
         Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, we cannot make assumptions about the system's overall CPU priorities in a filesystem such as ZFS.
-        Given that PRB shares PMEM among all HDLs, and that HDLs can be written in parallel, our design must address this concern.
+        Given that PRB shares PMEM among all HDLs, and that HDLs can be written in parallel, we expect that PMEM write bandwidth could be exhausted in practice.
+        Our design mnust therefore find a way to limit concurrent access to PMEM and shift PMEM wait time off the CPU.
 \end{description}
 %Finally, we want to address the limitations of our design as declared in Section~\ref{sec:requirements}.
 %\begin{description}[noitemsep]
@@ -1783,41 +1871,47 @@ In the remainder of this section we present our design and describe how it addre
 
 \subsubsection{High-Level Overview}\label{di:prb:write:controlflow}
 A thread that writes an entry first aquires a \textit{committer slot} which is our mechanism to limit concurrent writes to PMEM.
-Afterwards, it updates the structure that is used to compute the counter table.
-If the thread is starting a new generation, this step involves the computation of the counter table that the entries of the new generation will contain.
-The next step is the selection of a the target PMEM chunk that has sufficient space for the entry. This task falls in the domain of the committer slot abstraction.
-After the chunk has been aquired we can write the entry which consists of several sub-steps:
+Afterwards, it updates the structure that is used to compute the Counter Table.
+If the thread is starting a new generation, this step also involves the computation of the Counter Table.
+The next step is the selection of a target PMEM chunk that has sufficient space for the entry. We tie this task to the committer slot mechanism.
+After the chunk has been aquired we can write the entry.
+This step consits of several sub-steps.
 First we must temporarily disable preemption and saving of FPU context to enable the use of AVX-512.
 Next, we compute the Fletcher checksum of the entry body and header.
 Finally, we append the entry to the sequence stored in the chunk in a crash-consistent manner.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=14cm]{fig/prb_writepath_highlevel_activity_diagram}
-    \caption{Flow chart of the activities on the write path.}
+    \includegraphics[height=10cm]{fig/prb_writepath_highlevel_activity_diagram}
+    \caption{Overview of the steps that are taken on the write path.}
 \end{figure}
 
 \subsubsection{Committer Slots}\label{di:prb:write:chunksel}
 The committer slot abstraction is our solution to coordinate access to PMEM among multiple parallel writers.
 The goal is to allow up to \lstinline{ncommitters} threads simultaneous access to PMEM.
 For this purpose, a thread that wants to write an entry \textit{aquires a committer slot} $S \in {0, 1, \dots, ncommitters-1}$.
-Each thread that is simultaneously committing has a different committer slot.
-If more threads want to aquire a committer slot than are available, the function to aquire the slot blocks.
+Each thread that is simultaneously committing gets a different committer slot.
+The function to aquire a committer slot blocks the calling thread until a committer slot is available.
 
-Associated with each committer slot is the ownership of a PMEM chunk.
-While a slot is held by a thread, the thread owns the associated chunk.
-The thread can write its entry to the currently associated chunk or replace it with a new one if the capacity of the current chunk is insufficient.
-Replacing a chunk involves putting the chunk on the \textit{full queue} where it will be eventually garbage-collected, and dequeuing a new chunk from the \textit{free queue}.
-Dequeuing a chunk from the \textit{free queue} might fail if there are no free chunks.
-The log writer can choose whether to block and wait or fail the log entry write operation with an error.\todo{no deadlock potential with zil\_commit because it is called without DMU tx open, but that's too much detail here. also the current impl doesn't handle non-block correctly because we don't rollback the dependency tracking state. but actually we need nonblock for itxg bypass so maybe we should always do nonblock}
-Regardless of whether the chunk is replaced or not, the ownership of the chunk that was effectively written to moves to the slot as soon as the thread releases its hold on it.
-Figure~\ref{fig:flowchart_committer_slot_aquision_and_chunk_selection} visualizes the procedure described above.
+As explained in Section~\ref{prb:di:chunkownership}, a committer slot can own up to one chunk.
+A thread that aquires a committer slot assumes temporary ownerhsip of the associated chunk.
+The thread can write its entry to the chunk or replace the chunk with a new one if the chunk's capacity is insufficient.
+To replace a chunk, the thread aquires a PRB-wide mutex, then puts chunk on the correct \textit{full list} and gets a new chunk from the \textit{free list}.
+Dequeuing a chunk from the \textit{free list} might fail if there are no free chunks.
+The log writer can choose whether to block and wait or fail the log entry write operation with an error.
+Block-and-wait is implemented through a condition variable that is signalled from garbage collection.
+
+If the log writer chooses to block and wait during chunk replacement, it must guarantee that it does prevent \textit{txg sync} from making progress to avoid a pool-wide deadlock.
+In practice, this means that the log writer must not hold a DMU transaction open when writing an entry with block-and-wait chunk replacement enabled.
+Note that this is the case for ZIL-PMEM proper because \lstinline{zil_commit} is called after the DMU transactions have finished or failed.
+This is not true for the ITXG bypass for ZVOLs (Section~\ref{sec:itxgbypass}\todo{chapter?}) where we need to use the non-blocking mode.
+\todo{maybe we should change the design to always use non-blocking?}
 
 We implement committer slots using a semaphore and a bitmask.
 The aquiring thread must enter the semaphore first, then aquire a slot by finding a zero bit in the \lstinline{ncommitters} least significant bits of the bitmask.
-We use atomic compare-and-swap operation and GCC's \lstinline{__builtin_ffs} function to find and flip a zero bit in the bitmask without requiring a lock.
+We use atomic compare-and-swap operation and GCC's \lstinline{__builtin_ffs} function to find and flip a zero bit in the bitmask.
 We retry indefinitely if the compare-and-swap operation detects a race with another thread.
-While this technique does not technically guarantee a bounded wait time, we found it to not be problematic in practice in our evaluation.\todo{we have the dtrace probe, but I think we don't have an automated benchmark for this yet.}
+While this technique does not \textit{guarantee} a bounded waiting time, we found it to not be problematic in practice in our evaluation.\todo{we have the dtrace probe, but I think we don't have an automated benchmark for this yet.}
 The following listing describes the algorithm for committer slot aquisition and release.
 
 \begin{lstlisting}
