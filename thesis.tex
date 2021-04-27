@@ -66,6 +66,18 @@
   alsodigit={:},
   tabsize=4,
 }
+\lstdefinestyle{figurepseudocode}{
+%   belowcaptionskip=1\baselineskip,
+  belowskip=0pt,
+  showstringspaces=false,
+  language=C,
+  basicstyle=\footnotesize\ttfamily,
+  frame=single,
+  xleftmargin=\parindent,
+  alsodigit={:},
+  tabsize=4,
+}
+%% set default style
 \lstset{style=figurec}
 
 
@@ -2060,6 +2072,56 @@ We coordinate access to the tables as follows.
 % \end{figure}
 
 \subsubsection{Crash-Consistent Append}\label{di:prb:write:crashconsistency}
+After the target chunk and the entry metadata (Log GUID, txg, gen, gsid, Counters Table) have been determined, we are ready to append the entry to the sequence stored in the chunk.
+In order to not lose log entries, the append operation must be crash-consistent with regards to the traversal algorithm (Section~\ref{di:prb:traversal}):
+\begin{displayquote}
+    Appending an entry $E_{n+1}$ to a chunk $C$ that contains a sequence of entries $E_1,~\dots,~E_n$ must be atomic from the perspective of traversal.
+    After a system crash or power failure during the append operation, traversal of $C$ must either find $E_1,~\dots,~E_n$ or $E_1,~\dots,~E_n,~E_{n+1}$.
+\end{displayquote}
+The following algorithm describes the procedure and invariants during the append operation:
+\begin{lstlisting}[style=figurepseudocode]
+Inputs:
+    ch  The chunk into which we append
+    e   The entry that we append to ch's sequence.
+Procedure:
+  Invariant 1: ch.pos points to PMEM space that
+               is an invalid header
+
+  Write e.body to address ch.pos + 256
+  Write an invalid follow header (256 zero bytes)
+    to address ch.pos + 256 + e.body_len
+  Cacheflush + Sfence
+
+  Invariant 2: Neither body nor follow header
+               will be visited by traversal
+               because traversal already stops
+               at address ch.pos.
+
+  Write e.header (256 bytes) to address ch.pos
+  Cacheflush + Sfence
+
+  Invariant 3: Traversal visits the entry and
+               stops at the invalid follow header.
+\end{lstlisting}
+If we crash while writing the header, the header is either partially or fully written.
+A partial write is detected through an invalid header checksum or a checks for invalid values such as a zero log GUIDs.
+The traversal algorithm (Section~\ref{di:prb:traversal}) stops at this point, which is correct because the partial write was never reported complete towards the log writer.
+If the header was fully written, the body is fully written as per invariant 2 and is thus part of the seqeunce.
+Figure~\ref{fig:prb_writepath_crashconsistent_append} contains a step-by-step visualization of the algorithm.
+
+The first \lstinline{sfence} is necessary because...
+The second \lstinline{sfence} is necessary because...
+\todo{discuss the merits / non-merits of inserting the first sfence wrt amount of trust in the checksum? Bogous argument at best...}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=8cm]{fig/prb_writepath_crashconsistent_append}
+    \caption{
+        The crash-consistent append operation to a PMEM chunk.
+        The traversal algorithm reaches the existing entries at all times and reaches the new entry only after its body and header have been written completely.
+    }
+    \label{fig:prb_writepath_crashconsistent_append}
+\end{figure}
 
 \subsubsection{Scalability}\label{di:prb:write:scalability}
 
