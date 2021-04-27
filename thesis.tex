@@ -1773,9 +1773,8 @@ We use an ownership model to define which entity is allowed exclusive access to 
 Initially, the chunk is owned by the API consumer that allocated it.
 When the API consumer adds the chunk to the PRB, ownership of the chunk moves to the PRB until the PRB is freed.
 Within the PRB, the chunk is either put on one of several lists or it is held by a \textit{commit slot}.
-The number of commit slots is determined by the \lstinline{ncommitters} argument\todo{param?} during PRB construction.
 A commit slot can hold at most one chunk at any given time.
-When a log write wants to write an entry it first aquires a commit slot and then writes the entry to the commit slot's chunk.
+When a log write wants to write an entry it first \textit{aquires} a commit slot and then writes the entry to the commit slot's chunk.
 All chunks that are not owned by a commit slot are tracked in exactly one of the following lists:
 \begin{description}[noitemsep]
     \item[Free List]
@@ -1841,7 +1840,9 @@ At the scope of PRB (not ZIL-PMEM as a whole), the following activities on the w
         The Counters Table and thus the counters are private to each log.
         It only presents a scalability concern for parallel writing to the same log, which is not the case for ZIL-PMEM proper but relevant for our ZVOL-specific ITXG bypass (Section~\ref{sec:itxgbypass}).
         \todo{linux percpu counter precise?}
-    \item[Chunk Selection] Before writing an entry we must select a target chunk. This selection process might require coordination with other writers, depending on the implementation.
+    \item[Commit Slot Aquisition \& Chunk Replacement]
+        A thread that writes a log entry must aquire a commit slot and might need to replace its commit slot's current chunk if its capacity is insufficient.
+        These concerns present multicore-scalability challenges since both commit slots and the chunk lists are PRB-wide state that requires coordinated access.
     \item[Crash Consistency] The procedure that appends the log entry to the target chunk's sequence must do so in a crash-consistent manner.
         This typically requires the insertion of store barriers for correctness and comes with a latency cost.
     \item[Optane-Specific Performance Characteristics]
@@ -1856,12 +1857,13 @@ The secondary goal for the write path is the efficient use of CPU time. This con
     \item[Writing Entries] Use AVX512 non-temporal store instructions for writing log entries to PMEM.
         For the size of log entries written by ZIL-PMEM, this is the recommended technique by \citeauthor{yangEmpiricalGuideBehavior2020} \cite{yangEmpiricalGuideBehavior2020}.
     \item[PMEM Bandwidth Limits \& Multicore Scalability] The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
-        This is problematic from a CPU utilization perspective: if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
+        This is problematic from a CPU utilization perspective.
+        For example, if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
         \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
         Write bandwidth decreases to \SI{1}{GB/s} at ten or more concurrently writing CPU cores ~\cite{yangEmpiricalGuideBehavior2020}.
-        Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, we cannot make assumptions about the system's overall CPU priorities in a filesystem such as ZFS.
-        Given that PRB shares PMEM among all HDLs, and that HDLs can be written in parallel, we expect that PMEM write bandwidth could be exhausted in practice.
-        Our design mnust therefore find a way to limit concurrent access to PMEM and shift PMEM wait time off the CPU.
+        Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, a kernel file system such as ZFS cannot make assumptions about the system's overall CPU priorities.
+        We expect that PMEM write bandwidth can be exhausted in real-world use cases for ZIL-PMEM.
+        Our design must therefore find a way to limit concurrent access to PMEM and shift PMEM wait time off the CPU.
 \end{description}
 %Finally, we want to address the limitations of our design as declared in Section~\ref{sec:requirements}.
 %\begin{description}[noitemsep]
@@ -1883,10 +1885,9 @@ In the remainder of this section we present our design and describe how it addre
 \subsubsection{High-Level Overview}\label{di:prb:write:controlflow}
 A thread that writes an entry first aquires a \textit{commit slot} which is our mechanism to limit concurrent writes to PMEM.
 Afterwards, it updates the structure that is used to compute the Counter Table.
-If the thread is starting a new generation, this step also involves the computation of the Counter Table.
-The next step is the selection of a target PMEM chunk that has sufficient space for the entry. We tie this task to the commit slot mechanism.
-After the chunk has been aquired we can write the entry.
-This step consits of several sub-steps.
+If the thread is starting a new generation, this step also involves the computation of the new Counter Table.
+The next step is to select a suitable PMEM chunk. Whereas the commit slot's current chunk is preferred, we might need to get a new chunk if its space is insufficient.
+After a suitable chunk has been selected, we can write the entry.
 First we must temporarily disable preemption and saving of FPU context to enable the use of AVX-512.
 Next, we compute the Fletcher checksum of the entry body and header.
 Finally, we append the entry to the sequence stored in the chunk in a crash-consistent manner.
@@ -1904,25 +1905,25 @@ For this purpose, a thread that wants to write an entry \textit{aquires a commit
 Each thread that is simultaneously committing gets a different commit slot.
 The function to aquire a commit slot blocks the calling thread until a commit slot is available.
 
-As explained in Section~\ref{prb:di:chunkownership}, a commit slot can own up to one chunk.
+A commit slot can hold up to one chunk.
 A thread that aquires a commit slot assumes temporary ownerhsip of the associated chunk.
 The thread can write its entry to the chunk or replace the chunk with a new one if the chunk's capacity is insufficient.
 To replace a chunk, the thread aquires a PRB-wide mutex, then puts chunk on the correct \textit{full list} and gets a new chunk from the \textit{free list}.
-Dequeuing a chunk from the \textit{free list} might fail if there are no free chunks.
+Dequeuing a chunk from the \textit{free list} fails if there are no free chunks.
 The log writer can choose whether to block and wait or fail the log entry write operation with an error.
 Block-and-wait is implemented through a condition variable that is signalled from garbage collection.
 
-If the log writer chooses to block and wait during chunk replacement, it must guarantee that it does prevent \textit{txg sync} from making progress to avoid a pool-wide deadlock.
-In practice, this means that the log writer must not hold a DMU transaction open when writing an entry with block-and-wait chunk replacement enabled.
+If the log writer chooses to block and wait during chunk replacement, it must guarantee that it does not prevent \textit{txg sync} from making progress in order to avoid a pool-wide deadlock.
+In practice, this means that the log writer must not hold a DMU transaction open when writing an entry.
 Note that this is the case for ZIL-PMEM proper because \lstinline{zil_commit} is called after the DMU transactions have finished or failed.
-This is not true for the ITXG bypass for ZVOLs (Section~\ref{sec:itxgbypass}\todo{chapter?}) where we need to use the non-blocking mode.
+However, for the ITXG bypass for ZVOLs (Section~\ref{sec:itxgbypass}\todo{chapter?}), we write log entries from within the DMU transaction and thus need to use the non-blocking mode.
 \todo{maybe we should change the design to always use non-blocking?}
 
 We implement commit slots using a semaphore and a bitmask.
 The aquiring thread must enter the semaphore first, then aquire a slot by finding a zero bit in the \lstinline{ncommitters} least significant bits of the bitmask.
 We use atomic compare-and-swap operation and GCC's \lstinline{__builtin_ffs} function to find and flip a zero bit in the bitmask.
 We retry indefinitely if the compare-and-swap operation detects a race with another thread.
-While this technique does not \textit{guarantee} a bounded waiting time, we found it to not be problematic in practice in our evaluation.\todo{we have the dtrace probe, but I think we don't have an automated benchmark for this yet.}
+While this technique does not guarantee a bounded waiting time, we found it to not be problematic in practice in our evaluation.\todo{we have the dtrace probe, but I think we don't have an automated benchmark for this yet.}
 The following listing describes the algorithm for commit slot aquisition and release.
 
 \begin{lstlisting}
