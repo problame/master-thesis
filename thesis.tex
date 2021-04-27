@@ -1977,8 +1977,83 @@ void release_committer_slot(zilpmem_prb_t *prb, size_t slot)
 }
 \end{lstlisting}
 
-\subsubsection{Log Structure Encoding}\label{di:prb:write:logstructureencoding}
-\subsubsection{}
+\subsubsection{Counter Table}\label{di:prb:write:logstructureencoding}
+The Counters Table is used by claiming and replay (Section~\ref{di:prb:recovery}) to detect missing log entries in a log.
+For an entry in generation $G$, it contains the number of entries that were written to the log since the log was created until generation $G$ started.
+The entries are counted in separate counters $C_t$ for each transaction group:
+if an entry $E$ is written in generation $G$ for transaction group $T$, the counter $C_T$ in the Counters Table of generation $G+1$ is incremented by one.
+
+It is sufficient to include only those counters $C_{t_{u}}$ in the Counters Table whose transaction groups $t_u$ have not yet been synced by txg sync.
+The reason is that log recovery only checks for missing log entries in unsynced transaction groups; changes in synced transaction groups will not be replayed and their corresponding log entries might have already been garbage collected.
+We conservatively approximate the values for $t_u$ based on the log entries that were written in previous generations.
+Assume that $N$ log entries $E_i$ for transaction groups $T_i$ have been written to a log $L$ in generations $G_i < G$.
+Then $t_{max} := \max \{ T_i : i \in 1 \dots N \}$ is the youngest transaction group in which an entry was logged to $L$ in generations $G_i$.
+Let us (most conservatively!) assume that $t_{max}$ is still the \textit{open} transaction group among the three possible unsynced transaction groups (\textit{open}, \textit{quiescing}, \textit{syncing}).
+Then a conservative approximation of the transaction groups that contain changes whose entries were logged to $L$ in generations $G_i$ is $\{ t_{max}, t_{max}-1, t_{max}-2 \}$.
+
+Our implementation uses two separate tables per HDL.
+The first table (\textit{live table}) contains the counters that are updated as new entries are being written.
+The second table (\textit{last table}) is the Counters Table for the entries that are being written.
+It is computed from the state of the \textit{live table} when the currently open generation was started.
+
+We represent the \textit{live table} as an array of four elements.
+Each array entry is a tuple $(T_i, C_i)$ where $i \in {0,1,2,3}$, $C_i$ is the counter value, and $T_i$ is the transaction group of the counter.
+Given an entry for txg $t$, the row that contains the counter that needs to be incremented is $(T_{t\&3}, C_{t\&3})$.
+If $t == T_{t\&3}$, we increment $C_{t\&3}$ and are done.
+If $t > T_{t\&3}$, we can infer that $T_{t\&3}$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by \lstinline{txg&3}.
+In that case, we discard the old counter re-use the row for $t$ by setting $(T_{t\&3}, C_{t\&3}) \leftarrow (t, 0)$.
+Conversely, if $t < T_{t\&3}$, we can infer that the entry we are writing is for a synced txg and hence obsolete.
+In that case, we do not change the \textit{live table} and turn the entry write operation into a no-op.
+
+We compute the \textit{last table} from the \textit{live table} by finding $t_{max} := \max_{i \in \{0,1,2,3\}} T_i$.
+We scan the \textit{live table} two more times for rows that count $t_{max}-1$ and $t_{max}-2$.
+If such rows are found they are copied to the \textit{last table}.
+If the subtraction would overflow or if the \textit{live table} does not contain counters for the given txg, value in the \textit{last table} is $(0,0)$.
+
+Figure~\ref{fig:prb_counters_table__computation} contains a visualization of the tables and the algoritm used to compute the \textit{last table}.
+We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
+
+%
+%\begin{lstlisting}
+%
+%\end{lstlisting}
+%
+%When writing an entry whose txg does not match $T_i$ we know $T_i$ has been synced because there are only three unonly three  that When writing an entry $E$ for a transaction group $$ we find the row $R_{T\&3}$ in the table.
+%
+%We use a  \textit{live} table, we use 
+%
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_counters_table__computation}
+    \caption{
+        Visualization of the \textit{live} and \textit{last table} structures, and the algorithm used to compute the \textit{last table} from the \textit{live table} when a new generation is started.
+        Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
+    }
+    \label{fig:prb_counters_table__computation}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_counters_table__example}
+    \caption{
+        Example for the computation of the Counter Table.
+        The following entries are written to the log:
+        A,B,C,D in generation 1; E,F in generation 2; G in generation 3; H in generation 4; J in generation 5.
+        Note that their txgs differ some times but stay in the corridor of at most three a corridor of three txgs.
+        The table at the bottom shows the Counter Tables in the entry headers:
+        each row represents the counter table that is stored in the entry headers of one generation.
+        The table at the upper right shows the \textit{live table} over time.
+        Instead of counters, we show the entries that would cause the specific counter to be incremented.
+        We visualize row-reuse by separating new row content with a "$|$" in each cell of the reused row.
+    }
+    \label{fig:prb_counters_table__example}
+\end{figure}
+
+% \begin{figure}
+%     \centering
+%     \includegraphics{fig/prb_counters_table__encoding}
+% \end{figure}
 
 \subsubsection{Crash-Consistent Append}\label{di:prb:write:crashconsistency}
 
