@@ -2008,20 +2008,24 @@ In that case, we do not change the \textit{live table} and turn the entry write 
 We compute the \textit{last table} from the \textit{live table} by finding $t_{max} := \max_{i \in \{0,1,2,3\}} T_i$.
 We scan the \textit{live table} two more times for rows that count $t_{max}-1$ and $t_{max}-2$.
 If such rows are found they are copied to the \textit{last table}.
-If the subtraction would overflow or if the \textit{live table} does not contain counters for the given txg, value in the \textit{last table} is $(0,0)$.
+If the subtraction would overflow or if the \textit{live table} does not contain counters for the given txg, the value in the \textit{last table} is $(0,0)$.
 
 Figure~\ref{fig:prb_counters_table__computation} contains a visualization of the tables and the algoritm used to compute the \textit{last table}.
 We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
 
-%
-%\begin{lstlisting}
-%
-%\end{lstlisting}
-%
-%When writing an entry whose txg does not match $T_i$ we know $T_i$ has been synced because there are only three unonly three  that When writing an entry $E$ for a transaction group $$ we find the row $R_{T\&3}$ in the table.
-%
-%We use a  \textit{live} table, we use 
-%
+We coordinate access to the tables as follows.
+\begin{itemize}[noitemsep]
+\item Log writers for different HDLs do not require any coordination because Coutner Tables are scoped to a single HDL's.
+    Each HDL has its own \textit{live} and \textit{last table} stored in the \lstinline{zilpmem_prb_handle_t}.
+\item Log writers for the same HDL hold a spinlock while modifying the \textit{live} or \textit{last table}.
+    The holding time for the spinlock is constant, regardless of whether the log writers starts a new generation or not.
+\item Log writers that start a new generation are required to serialize access to the HDL while they are writing the entry.
+    In ZIL-PMEM proper we use a mutex to serialize \lstinline{zil_commit} calls.
+    In the ZVOL-specific ITXG bypass (Section~\ref{sec:itxgbypass}), we use a read-write-lock.
+    %If a log writer starts a new generation, it aquires an exclusive write lock.
+    %Otherwise, it aquires a shared read lock.
+    %The read-write-lock implementation ensures that readers are drained before a pending write lock gets access.
+\end{itemize}
 
 \begin{figure}[H]
     \centering
