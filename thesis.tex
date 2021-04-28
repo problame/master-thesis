@@ -1537,7 +1537,7 @@ Therefore, PRB does not need to define persistent structures that track the PMEM
 From PRB's perspective, chunks are mere slices of PMEM defined by a \textbf{base address} and \textbf{length} value.
 The base address is allowed to change every time the PRB is instantiated as long as the effective PMEM space that it refers to remains the same.
 Due to Intel Optane-specific performance characteristics, we require that the base address must be aligned to 256 bytes and that the length in bytes must be a multiple of 256.
-We will elaborate on this requirement in Section~\ref{di:prb:write:optanespecifics}.
+We will elaborate on this requirement in Section~\ref{di:prb:di:prb:write:crashconsistency}\todo{check}.
 
 Chunks act as containers for \textit{entries}.
 They are stored within the chunk's PMEM slice as a contiguous sequence, starting with the first entry at the base address.
@@ -2141,7 +2141,7 @@ The \lstinline{sfence} (phase 2) is required for correctness  because we must co
 \end{figure}
 
 The following aspects are relevant for latency and efficient use of CPU time:
-\begin{itemize}
+\begin{itemize}[noitemsep]
     \item For ZIL-PMEM, the use of \lstinline{sfence} in phase 1 came with negligible impact on overall latency during development.\todo{need to prove this? don't have time...}
         We assume that this is because the wait time added by the \lstinline{sfence} is neglible compared to the write time for the entry body.
         For example, the entry body and zero padding for a 4k sync write is $sizeof(lr_write_t) + data + padding = 4096 + 192 + 64 = 4352$ bytes large.
@@ -2155,15 +2155,13 @@ The following aspects are relevant for latency and efficient use of CPU time:
         Again, this addresses established performance properties of Intel Optane DC Persistent Memory~\cite{yangEmpiricalGuideBehavior2020}.
 \end{itemize}
 
-
-\subsubsection{Scalability}\label{di:prb:write:scalability}
-
-\subsubsection{Intel Optane Specifics}\label{di:prb:write:optanespecifics}
-
 \subsection{Recovery Path}\label{di:prb:recovery}
 
-\subsubsection{Crash Consistency}
+\subsubsection{Replay Sequence Construction}
 
+\subsubsection{Claiming}
+
+\subsubsection{Crash Consistent Replay}
 
 % PRB log entries consist of an opaque variable-sized body and a plain fixed-size header.
 % A log entry is always written to exactly one chunk's PMEM segment.
