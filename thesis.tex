@@ -1755,7 +1755,7 @@ Example:
     }
 \end{lstlisting}
 
-\subsection{Chunk Ownership}\label{prb:di:chunkownership}
+\subsection{Chunks \& Chunk Ownership}\label{prb:di:chunkownership}
 % In this section we provide an overview of the in-DRAM data structures used by PRB and HDL.
 % PRB is represented by the \lstinline{zilpmem_prb_t} structure.
 % It acts as the root for all PRB-related runtime state.
@@ -2078,50 +2078,83 @@ In order to not lose log entries, the append operation must be crash-consistent 
     Appending an entry $E_{n+1}$ to a chunk $C$ that contains a sequence of entries $E_1,~\dots,~E_n$ must be atomic from the perspective of traversal.
     After a system crash or power failure during the append operation, traversal of $C$ must either find $E_1,~\dots,~E_n$ or $E_1,~\dots,~E_n,~E_{n+1}$.
 \end{displayquote}
-The following algorithm describes the procedure and invariants during the append operation:
+The following algorithm describes the procedure and invariants during the append operation.
+Figure~\ref{fig:prb_writepath_crashconsistent_append} contains a step-by-step visualization.
 \begin{lstlisting}[style=figurepseudocode]
 Inputs:
     ch  The chunk into which we append
     e   The entry that we append to ch's sequence.
 Procedure:
-  Invariant 1: ch.pos points to PMEM space that
-               is an invalid header
+  Invariant 1: Traversal will stop at ch.pos because
+               either: ch.pos points to PMEM space that
+                       is an invalid header
+               or: there is no space left in the chunk
 
-  Write e.body to address ch.pos + 256
-  Write an invalid follow header (256 zero bytes)
-    to address ch.pos + 256 + e.body_len
-  Cacheflush + Sfence
+  Phase 1:
+    Write e.body to address ch.pos + 256
+    Write trailing zero padding
+    If there is still space in the chunk at
+      address ch.pos + 256 + e.body_len + padding_len:
+        Assert that the space is at least 256 bytes.
+        Write an invalid follow header (256 zero bytes)
+          to that address.
+    Cacheflush + Sfence
 
-  Invariant 2: Neither body nor follow header
+  Corrolary 1: Neither body nor follow header
                will be visited by traversal
-               because traversal already stops
-               at address ch.pos.
+               because traversal still stops
+               at address ch.pos (Invariant 1).
 
-  Write e.header (256 bytes) to address ch.pos
-  Cacheflush + Sfence
+  Phase 2:
+    Write e.header (256 bytes) to address ch.pos
+    Cacheflush + Sfence
 
-  Invariant 3: Traversal visits the entry and
-               stops at the invalid follow header.
+  Corrolary 2: Traversal visits the entry written
+               to ch.pos and stops at the follow
+               header.
 \end{lstlisting}
-If we crash while writing the header, the header is either partially or fully written.
-A partial write is detected through an invalid header checksum or a checks for invalid values such as a zero log GUIDs.
-The traversal algorithm (Section~\ref{di:prb:traversal}) stops at this point, which is correct because the partial write was never reported complete towards the log writer.
-If the header was fully written, the body is fully written as per invariant 2 and is thus part of the seqeunce.
-Figure~\ref{fig:prb_writepath_crashconsistent_append} contains a step-by-step visualization of the algorithm.
+Invariant 1 can be proven by induction:
+if the entry being written is the first entry in the sequence (base case) the chunk was fetched from the \textit{free list} which is defined to only contain chunks that are \textit{reset}.
+(Section~\ref{prb:di:chunkownership}: \textit{reset} means that the write position (\lstinline{ch.pos}) is at the chunk's base address and that the PMEM at the write position is an invalid header.)
+% The induction step is that if invariant 1 holds for a sequence with entries $E_1~\dots~E_n$, it also holds for a sequence with entries $E_1~\dots~E_{n+1}$.
+The induction step is that if an entry $E_{n+1}$ is appended to an existing sequence $E_n$, invariant 1 holds as well.
+This is true because the space occupied by $E_{n+1}$ contains an invalid follow header written by phase 1 when $E_n$ was appended to the sequence.
+Stores made in Phase 1 for $E_n$ are guaranteed to be persistent before any store for $E_{n+1}$ happens due to the \lstinline{cacheflush+sfence} at the end of Phase 1.
+Note that we do not need to address the case where the chunk is full because we cannot append $E_{n+1}$ to a full chunk.
 
-The first \lstinline{sfence} is necessary because...
-The second \lstinline{sfence} is necessary because...
-\todo{discuss the merits / non-merits of inserting the first sfence wrt amount of trust in the checksum? Bogous argument at best...}
+The first \lstinline{sfence} (phase 1) is required for correctness if we trust the body checksum to detect partial writes instead.
+If we omitted the \lstinline{sfence} in phase 1, it would be possible that the valid entry header written in phase 2 reaches PMEM completely but the body written in phase 1 does not.
+In that case, after a crash, the traversal algorithm would observe a valid header with a body space with undefined content.
+When the replayer loads the body using \lstinline{zilpmem_prb_replay_read_replay_node}, we would rely fully on failing body checksum validation to detect the partially written body.
+If the checksum is too weak to detect the partial write, the replayer's interpretation of the undefined body contents determines subsequent behavior.
+
+The \lstinline{sfence} (phase 2) is required for correctness  because we must conservatively assume that the log writer's subsequent store instructions (in program order) depend on the entry having reached stable storage.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=8cm]{fig/prb_writepath_crashconsistent_append}
+    \includegraphics[height=6cm]{fig/prb_writepath_crashconsistent_append}
     \caption{
         The crash-consistent append operation to a PMEM chunk.
         The traversal algorithm reaches the existing entries at all times and reaches the new entry only after its body and header have been written completely.
     }
     \label{fig:prb_writepath_crashconsistent_append}
 \end{figure}
+
+The following aspects are relevant for latency and efficient use of CPU time:
+\begin{itemize}
+    \item For ZIL-PMEM, the use of \lstinline{sfence} in phase 1 came with negligible impact on overall latency during development.\todo{need to prove this? don't have time...}
+        We assume that this is because the wait time added by the \lstinline{sfence} is neglible compared to the write time for the entry body.
+        For example, the entry body and zero padding for a 4k sync write is $sizeof(lr_write_t) + data + padding = 4096 + 192 + 64 = 4352$ bytes large.
+        Assuming \SI{2}{GiB/s} write bandwidth for a single Optane DIMM (\cite{yangEmpiricalGuideBehavior2020}), the write time for the entry body is $\sim$~\SI{2}{us}.
+        In contrast, the derived latency for a 256 byte write at that rate is $\sim$~\SI{0.12}{us}.
+        If we use this value as an approximation for the cost of the \lstinline{sfence}, its latency contribution is only $\frac{0.12}{0.12 + 2} = 5.6\%$.
+        Note that we have not systematically evaluated the effect.\todo{should we do this? if so, need also evaluate on different pmem configurations}
+    \item All writes to PMEM happen in multiples of 256 bytes because 256 bytes is Optane's internal write unit size.
+        Writes below this size cause read-modify-write cycles in the hardware and thus cost performance~\cite{yangEmpiricalGuideBehavior2020,zhangChameleonDBKeyvalueStore2021}.
+    \item In the implementation we use AVX-512 non-temporal store instructions instead of \lstinline{write + cacheflush}.
+        Again, this addresses established performance properties of Intel Optane DC Persistent Memory~\cite{yangEmpiricalGuideBehavior2020}.
+\end{itemize}
+
 
 \subsubsection{Scalability}\label{di:prb:write:scalability}
 
