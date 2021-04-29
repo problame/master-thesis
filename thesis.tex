@@ -2157,18 +2157,17 @@ The following aspects are relevant for latency and efficient use of CPU time:
 
 \subsection{Recovery Path}\label{di:prb:recovery}
 In this section we present how we recover log entries for unsynced transaction groups after a system crash.
-Recovery is split into the claiming phase where we discover replayable log entries for all datasets, and the replay phase were we replay an individual dataset's unsynced log entries.
-As explained in the API overview\todo{chapter name} in Section~\ref{di:prb:api}, these operations are scoped to a single HDL.
-Thus, unless noted otherwise, we describe the recovery procedures for a single HDL.
+Recovery is split into the \textit{claiming phase} and the \textit{replay phase}.
+In the claiming phase during pool import, we discover which chunks need to be held back because they contain replayable log entries for at least one dataset.
+In the per-dataset replay phase, we apply the unsynced changes that are encoded in the entries of a particular log to its dataset.
 
 \subsubsection{Replay Sequence Algorithm}
 The basis for claiming and replay is the \textit{replay sequence algorithm}.
 It consists of a \textit{scanning phase} and a \textit{iteration phase}.
-In the scanning phase, the algorithm uses the traversal algorithm (Section~\ref{di:prb:traversal}) on a provided set of chunks to search for log entries that have the HDL's \textit{log GUID}.
+The scanning phase uses the traversal algorithm (Section~\ref{di:prb:traversal}) on a provided set of chunks to search for log entries that have the HDL's \textit{log GUID}.
 It wraps these candidate entries in a \textit{replay node} and collects the nodes in a b-tree.
-After the scan is complete, the b-tree contains a superset of nodes that might need to be replayed.
-In the \textit{iteration phase}, the algorithm iterates over the b-tree's nodes in replay order.
-For each entry, the algorithm checks whether the entry needs to be replayed and if so, invokes a user-defined callback.
+In the \textit{iteration phase}, the algorithm \textit{visits} each replay node by iterating over the b-tree.
+For each node, it checks whether the corresponding entry needs to be replayed and if so, invokes a user-defined callback.
 It detects missing entries on-the-fly before invoking the callback.
 
 The \textit{replay node} stores the following metadata about an entry:
@@ -2180,71 +2179,130 @@ The \textit{replay node} stores the following metadata about an entry:
     \item[Counter Table] The counter table stored in the entry.
     \item[Pointer To Chunk] A pointer to the \lstinline{prb_chunk_t} that contains the entry.
 \end{description}
-The b-tree identifies and sorts replay nodes by $(gen, gsid)$ in element-wise ascending order.
-For example, the replay nodes $(2,1), (1,1), (1,3)$ are ordered as $(1,1), (1,3), (2,1)$.
-The write path guarantees that there are no entries with the same $(gen, gsid)$.
-(Remember that generations are defined as unique in a HDL log and generation-scoped IDs as unique within a generation).
-However, a number of circumstances can cause such a collision to occur:
-\begin{enumerate}[noitemsep]
-    \item Overflow of $gen$ or $gsid$. We have ruled this out, see Section~\ref{di:prb:persistent:entry}.
-    \item Implementation error on the write path. We cannot protect against this.
-    \item Undetected data corruption. We cannot protect against this, except by using stronger checksums which comes at a performance cost.\todo{explore?}
-    \item A malicious party that deliberately\todo{gezielt...?} modifies entries in PMEM. This is only relevant for encryption which is out of scope for this thesis (see Section~\ref{sec:requirements}).
-    \item Reuse of \textit{log GUIDs}.
-      This is very unlikely because we generate them as 128 bit random numbers.
-       However, future work could systematically prevent log GUID collision in PMEM by traversing all chunks to find used log GUIDs and check for collisions when issuing new log GUIDs.
-       Note that a pool-wide sequence number for log GUIDs does not fix the issue because it would be rolled back if zpool checkpoints are used.\todo{ref ZIL-PMEM?}
-\end{enumerate}
-We detect collisions during the scanning phase of the algorithm when inserting the second entry with the same identity into the b-tree.
-In that case, we abort execution of the the algorithm immediately with an error.
-Until measures that systematically prevent log GUID reuse are implemented, this is the safer approach compared to allowing iteration until the collision.
-The reason is that accidental replay of an entry for a foreign dataset would most certainly, and possibly silently, corrupt the dataset whose log is being replayed.
-\todo{impl currently does this, but I thought about this during writing and it's not a good idea}
+The replay nodes of a well-formed HDL log are uniquely identified by $(gen, gsid)$.
+%The b-tree identifies and sorts replay nodes by $(gen, gsid)$ in element-wise ascending order.
+The lexicographical ordering of that tuple is the replay ordering, and also the ordering used in the b-tree.
+For example, the replay nodes $(2,1), (1,1), (1,3)$ are visisted in order $(1,1), (1,3), (2,1)$.
 
-In the iteration phase, the algorithm keeps all of its state in the \textit{replay progress} structure.
-It contains the following variables:
+The iteration phase keeps all state in the \textit{replay progress} structure which contains the following variables:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[$\mathbf{(gen_{last}, gsid_{last})}$] The $gen$ and $gsid$ of the last visisted replay node.
+        A value of $(0,0)$ means that no replay node has been visited yet.
     \item[precrash-txg] The last transaction group that was completely synced before the system crashed.
-    \item[$\mathbf{(gen_{last}, gsid_{last})}$] The $(gen, gsid)$ of the last replay node that was last replayed.\todo{use 'visited' or 'iterated upon' here? if so, fix usage in rest of paragraph}
-        A value of $(0,0)$ means that no replay node has been replayed.
-    \item[validating counter tables] The same two tables that we use on the write path to compute the entries' \textit{Counters Table}.
+    \item[validating counter tables] A \textit{live} and \textit{last} table; same layout as used on the write path (see Section~\ref{di:prb:write:logstructureencoding}).
 \end{description}
-The purpose of the replay progress structure is to keep track of the log entries that have already been replayed.
-We skip an entry if its $txg \le precrash\text{-}txg$ or its $(gen,gsid) \le (gen_{last}, gsid_{last})$.
-Otherwise, the entry is eligible for replay iff all the changes that it logically depends on have been applied to the dataset.
-This is equivalent to checking that all entries with $txg > precrash\text{-}txg$ have been replayed.
-We use the \textit{validating counter tables} to check this property.
-For every entry that is eligible for replay, we first update the validating counter tables just as we do on the write path:
-if the entry starts a new generation, we compute the \textit{last table} from the \textit{live table}.
-And regardless of whether a new generation was started or not, we then increment the \textit{live table} counter.
-In a second step, we ensure that the \textit{last table}'s counters match the counters stored in the entry.
-We must only check the counters for $txg > precrash\text{-}txg$ since we skipped all entries in $txg \le precrash\text{-}txg$ (see above).
-If the checked counters match, we know that we have not lost entries up to but not including the current entry's generation.
-Thus, all logical dependencies of the entry are satisifed and we can invoke the callback.
-Conversely, if we lost an entry, we do not invoke the callback and return an error which contains the current entry and the replay progress state as a \textit{witness}.
-There are several corrolaries that result from\todo{language} this algorithm:
+% The purpose of the replay progress structure is twofold:
+% First, itmust ensure that the callback is invoked exactly once for each unreplayed entry.
+%  unreplayed entries are visisted  those entries twofold: it keeps track of already visisted entries during iteration, and to determine whether an entry needs to be skipped or replayed.
+The purpose of the replay progress structure is to keep track of already visisted entries and the logical dependencies between them.
+Remember from Section~\ref{di:prb:structure} that an entry $E$ in generation $E.gen$ depends on all entries in all generations $gen < E.gen$, and that an entry must only be replayed if the changes of its transaction group $E.txg$ have not been applied to the dataset.
+Thus, when visiting the replay node that represents entry $E$, we skip it if its $E.txg \le precrash\text{-}txg$ or $(E.gen,E.gsid) \le (gen_{last}, gsid_{last})$.
+Otherwise, we check whether all changes that it logically depends on have already been applied to the dataset using the \textit{validating counter tables}.
+If that is the case, we update $(gen_{last}, gsid_{last}) = (E.gen, E.gsid)$ and invoke the callback.
+If the callback returns an error or the check for dependencies fails, the algorithm stops and returns $E$ as a \textit{witness} for a missing entry or failed replay.
+
+The \textit{validating counter tables} are our mechanism to check that logical dependencies are met before replaying an entry $E$.
+For every entry that is not skipped, we update the validating counter tables in the same way as the write path (Section~\ref{di:prb:write:logstructureencoding}).
+Then, we verify that the Counter Table stored in $E$ matches the \textit{last table} in the validating counter table.
+In more detailed terms, the following steps are taken for each entry that is not skipped:
+\begin{enumerate}[noitemsep]
+    \item If $E.gen \neq gen_{last}$, compute a new \textit{last table} from the \textit{live table} state.
+    \item Increment the \textit{live table} counter for txg $E.txg$.
+    \item Compare the \textit{last table}'s counters to the Counters Table stored in $E$.
+        Note that we must only compare the counters for $txg > precrash\text{-}txg$ since we skipped all entries in $txg \le precrash\text{-}txg$.
+    \item If the counters match, we know that we have not lost any entries in generations $< E.gen$.
+        Thus, all logical dependencies of $E$ are satisifed and we can invoke the callback.
+    \item If the counters do not match, we know that the log has been corrupted.
+        Under the assumption that entries can only be lost but not appear, we can even state that at least one entry has been in the previous generation.
+        We stop the iteration and return an error with $E$ as a witness.
+\end{enumerate}
+A number of critical properties of the overall algorithm results from this counter validation step:
 \begin{enumerate}[noitemsep]
     \item It is guaranteed that the witness $(gen_w, gsid_w)$ for a lost entry $(gen_l, gsid_l)$ is always the first entry in the b-tree whose $gen_w > gen_l$.
-    \item Thus, all other entries $(gen_l,  \_)$ in a generation with a lost entry are replayed before the error is detected.
-        This is correct and desirable because by definition, entries within a generation have no logical dependency on each other (see Section~\ref{di:prb:structure}).
+    \item Thus, all other found entries $(gen_l,  \_)$ in a generation with a lost entry are still replayed before the error is detected and iteration stops.
+    This is correct and desirable because by definition, entries within a generation have no logical dependency on each other.
     \item Loss of entries at the tail of the logical log cannot be detected because there is no record of their existence in prior log entries.
-        Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
+    Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
 \end{enumerate}
+We provide examples for counter table validation in Figure~\ref{todo}.
 
-Both the scanning and iteration phase are resilient against online data corruption in PMEM.
-The reason is that they only operate on DRAM-buffered entry metadata in the replay node.
-Further, if the callback wants to read the entry, it is forced to do DRAM-buffering as well:
-the callback does not receive a pointer into PMEM but a pointer to the (opaque) replay node struct.
-The callback must use the \lstinline{zilpmem_prb_replay_read_replay_node} function to copy the entry into a DRAM buffer which
+The correctness of the replay sequence algorithm and the validation step in particular depends on the assumption that log entries can only disappear but never appear after a system crash.
+An entry \textit{disappears} if it is unreachable by the traversal algorithm, either because the entry itself or an entry earlier in the chunk's sequence was corrupted.
+An entry can only \textit{appear} in the b-tree if all of the following conditions hold:
+\begin{itemize}[noitemsep]
+    \item It has been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
+    \item Its \textit{log GUID} matches the log in which it appears.
+    \item Its \textit{txg} is in one of the unsynced txgs.
+    \item Its $(gen, gsid)$ does not collide with the original entries that are collected in the b-tree.
+\end{itemize}
+If such a false entry appears in the b-tree, the behavior is implementation-dependent and likely leads to data corruption if the callback replays the (likely garbage\todo{language}) entry.
+Whereas we believe that the conditions are sufficiently high hurdles for random data corruption, the following scenarios may also cause entries to appear:
+\begin{itemize}[noitemsep]
+\item Implementation errors on the write path or in the traversal algorithm. Without formal verification, we cannot protect against this.
+\item Deliberate injection of log entries by a malicious party with write access to PMEM.
+    This is out of scope for unencrypted datasets, but important for OpenZFS Native Encryption which authenticates and encrypts the data stored in datasets.
+    While encryption support is out of scope for this thesis, we believe that forgery of entries can be prevented by authenticating the entry header.
+\item Accidental reuse of \textit{log GUIDs}.
+    If two HDLs use the same log GUID to write their entries, replay will collect both logs' entries in the same b-tree.
+    This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers.
+\end{itemize}
+The b-tree allows us to detect some cases of log GUID collisions during the scanning phase when we attempt to insert an entry with a duplicate $(gen, gsid)$.
+In that case, we abort execution of the the algorithm immediately with an error.
+However, we would prefer a more comprehensive approach to systematically prevent log GUID reuse.
+\todo{impl currently does this, but I thought about this during writing and it's not a good idea}
+\todo{future work section on log guid reuse, see latex comment here}
+% Future work could mitigate the risk of log GUID collision in PMEM as follows:
+%  1. Maintain a hashset of active log guids, let's call id H_a.
+%  2. Newly issued log guids must not be in H_a but are added to it once they are issued.
+%  3. During pool import, traverse all chunks and add all guids that are found to H_a.
+% This covers most scenarios except if new entries can 'appear' in the future, e.g. due to weird storage firmware bugs, etc.
+% Note that a pool-wide sequence number for log GUIDs does not fix the issue because it would be rolled back if zpool checkpoints are used.\todo{ref ZIL-PMEM?}
+% We should think about whether we can store the sequence number in PMEM which is not rolled back, but that opens up a whole other can of worms...
+
+%\item If any of the checked counters in the validating \textit{last table} are lower than the corresponding counter in $E$'s Counters Table, we know that we have lost entries.
+%In that case, we do not invoke the callback and return an error which contains $E$ as a witness.
+%\item If any of the checked counters in the validating \textit{last table} are greater than the corresponding counter in $E$'s Counters Table, we have a witness for a structurally corrupted log and stop iteration.
+%Note that we might already have invoked the callback for several log entries before noticing this kind of corruption.
+%We cannot protect against the scenarios that lead to it:
+%\begin{itemize}
+%    \item The witness is false (data corruption of $E$'s Counters Table undetected by the header checksum).
+%    \item An entry appeared that was never written (malicious intent, firmware bugs).
+%    \item Implementation error on the write path.
+%\end{itemize}
+%\end{enumerate}
+
+The replay sequence algorithm is resilient against random \textit{online} data corruption in PMEM, i.e., data corruption while the algorithm executes.
+The reason is that both phases only operate on DRAM-buffered copies of the entry metadata in the replay node.
+Further, if the callback needs to read the entry, our API forces it to use DRAM-buffering as well:
+it does not receive a pointer into PMEM but a pointer to the (opaque) replay node struct.
+To copy the entry into a DRAM buffer, it must use the \lstinline{zilpmem_prb_replay_read_replay_node} function which
 \begin{itemize}[noitemsep]
     \item handles machine-check exceptions (MCEs) through \lstinline{memcpy_mcsafe},
     \item validates the header and body checksums of the entry, and
     \item ensures that the metadata cached in the replay node did not change since the scanning phase.
 \end{itemize}
-The callback must propagate errors returned from the function.
-If the callback returns an error, the iteration is stopped.
 
-\missingfigure{example}
+%%A number of unlikely circumstances can cause collisions in the b-tree, i.e., replay nodes with the same $(gen, gsid)$:
+%%\begin{enumerate}[noitemsep]
+%%    \item Overflow of $gen$ or $gsid$. We have ruled this out, see Section~\ref{di:prb:persistent:entry}.
+%%    \item Implementation error on the write path. We cannot protect against this.
+%%    \item Undetected data corruption. We cannot protect against this, except by using stronger checksums which comes at a performance cost.\todo{explore?}
+%%    \item A malicious party that deliberately\todo{gezielt...?} modifies entries in PMEM. This is only relevant for encryption which is out of scope for this thesis (see Section~\ref{sec:requirements}).
+%%    \item Reuse of \textit{log GUIDs}. This is very unlikely because we generate them as 128 bit random numbers.
+%%\end{enumerate}
+%%We detect collisions during the scanning phase of the algorithm when inserting the second entry with the same identity into the b-tree.
+%%In that case, we abort execution of the the algorithm immediately with an error.
+%%Until measures that systematically prevent log GUID reuse are implemented, this is the safer approach compared to allowing iteration until the collision.
+%%\todo{impl currently does this, but I thought about this during writing and it's not a good idea}
+%%The reason is that accidental replay of an entry for a foreign dataset would most certainly, and possibly silently, corrupt the dataset whose log is being replayed.
+%%\todo{future work section on log guid reuse, see latex comment here}
+%% Future work could mitigate the risk of log GUID collision in PMEM as follows:
+%%  1. Maintain a hashset of active log guids, let's call id H_a.
+%%  2. Newly issued log guids must not be in H_a but are added to it once they are issued.
+%%  3. During pool import, traverse all chunks and add all guids that are found to H_a.
+%% This covers most scenarios except if new entries can 'appear' in the future, e.g. due to weird storage firmware bugs, etc.
+%% Note that a pool-wide sequence number for log GUIDs does not fix the issue because it would be rolled back if zpool checkpoints are used.\todo{ref ZIL-PMEM?}
+%% We should think about whether we can store the sequence number in PMEM which is not rolled back, but that opens up a whole other can of worms...
 
 \subsubsection{Claiming}
 % constructs replay sequence and performs dry-run to determine which chunks need to be held back
