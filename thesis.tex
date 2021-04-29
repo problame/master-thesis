@@ -1390,7 +1390,7 @@ From that point on there is no need to coordinate HDL operations between differe
 % Claiming scans the PMEM chunks that were added with \lstinline{zilpmem_prb_add_chunk_for_claim} for log entries that need to be replayed.
 % Chunks that contain unreplayed log entries are not considered when writing new entries.
 
-\subsubsection{Replay}\label{di:prb}
+\subsubsection{Replay}\label{di:prb:api:replay}
 
 \begin{lstlisting}
 typedef struct zilpmem_prb_replay_result { ... }
@@ -2163,8 +2163,9 @@ In the per-dataset replay phase, we apply the unsynced changes that are encoded 
 
 \subsubsection{Replay Sequence Algorithm}
 The basis for claiming and replay is the \textit{replay sequence algorithm}.
-It consists of a \textit{scanning phase} and a \textit{iteration phase}.
-The scanning phase uses the traversal algorithm (Section~\ref{di:prb:traversal}) on a provided set of chunks to search for log entries that have the HDL's \textit{log GUID}.
+Its input is the HDL's log GUID, a set of \lstinline{prb_chunk_t} references, a mutable reference to \textit{replay state}, and a callback.
+The algorithm consists of a \textit{scanning phase} and a \textit{iteration phase}.
+The scanning phase uses the traversal algorithm (Section~\ref{di:prb:traversal}) on the chunks to search for log entries that have the HDL's \textit{log GUID}.
 It wraps these candidate entries in a \textit{replay node} and collects the nodes in a b-tree.
 In the \textit{iteration phase}, the algorithm \textit{visits} each replay node by iterating over the b-tree.
 For each node, it checks whether the corresponding entry needs to be replayed and if so, invokes a user-defined callback.
@@ -2177,24 +2178,24 @@ The \textit{replay node} stores the following metadata about an entry:
     \item[PMEM Address] The start address of the entry in PMEM.
     \item[Transaction Group (txg)] The entry's transaction group.
     \item[Counter Table] The counter table stored in the entry.
-    \item[Pointer To Chunk] A pointer to the \lstinline{prb_chunk_t} that contains the entry.
+    \item[Pointer To Chunk (chunk\_ref)] A pointer to the \lstinline{prb_chunk_t} that contains the entry.
 \end{description}
 The replay nodes of a well-formed HDL log are uniquely identified by $(gen, gsid)$.
 %The b-tree identifies and sorts replay nodes by $(gen, gsid)$ in element-wise ascending order.
 The lexicographical ordering of that tuple is the replay ordering, and also the ordering used in the b-tree.
 For example, the replay nodes $(2,1), (1,1), (1,3)$ are visisted in order $(1,1), (1,3), (2,1)$.
 
-The iteration phase keeps all state in the \textit{replay progress} structure which contains the following variables:
-\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+The iteration phase needs to keep track of already visisted entries and logical dependencies between them.
+It uses the following state to accomplish this task:
+ \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[$\mathbf{(gen_{last}, gsid_{last})}$] The $gen$ and $gsid$ of the last visisted replay node.
         A value of $(0,0)$ means that no replay node has been visited yet.
     \item[precrash-txg] The last transaction group that was completely synced before the system crashed.
     \item[validating counter tables] A \textit{live} and \textit{last} table; same layout as used on the write path (see Section~\ref{di:prb:write:logstructureencoding}).
 \end{description}
-% The purpose of the replay progress structure is twofold:
+% The purpose of the replay state structure is twofold:
 % First, itmust ensure that the callback is invoked exactly once for each unreplayed entry.
 %  unreplayed entries are visisted  those entries twofold: it keeps track of already visisted entries during iteration, and to determine whether an entry needs to be skipped or replayed.
-The purpose of the replay progress structure is to keep track of already visisted entries and the logical dependencies between them.
 Remember from Section~\ref{di:prb:structure} that an entry $E$ in generation $E.gen$ depends on all entries in all generations $gen < E.gen$, and that an entry must only be replayed if the changes of its transaction group $E.txg$ have not been applied to the dataset.
 Thus, when visiting the replay node that represents entry $E$, we skip it if its $E.txg \le precrash\text{-}txg$ or $(E.gen,E.gsid) \le (gen_{last}, gsid_{last})$.
 Otherwise, we check whether all changes that it logically depends on have already been applied to the dataset using the \textit{validating counter tables}.
@@ -2226,31 +2227,33 @@ A number of critical properties of the overall algorithm results from this count
 \end{enumerate}
 We provide examples for counter table validation in Figure~\ref{todo}.
 
-The correctness of the replay sequence algorithm and the validation step in particular depends on the assumption that log entries can only disappear but never appear after a system crash.
-An entry \textit{disappears} if it is unreachable by the traversal algorithm, either because the entry itself or an entry earlier in the chunk's sequence was corrupted.
-An entry can only \textit{appear} in the b-tree if all of the following conditions hold:
+The correctness of the replay sequence algorithm relies on the assumption that random data corruption is incapable of ``forging'' new log entries that would appear in the b-tree.
+If a forged entry appears, the behavior depends on the callback implementation --- interpretation of the forged log entry by replay may corrupt the dataset.
+All of the following properties need to be fulfilled by an entry to affect the replay sequence algorithm:
 \begin{itemize}[noitemsep]
     \item It has been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
     \item Its \textit{log GUID} matches the log in which it appears.
     \item Its \textit{txg} is in one of the unsynced txgs.
     \item Its $(gen, gsid)$ does not collide with the original entries that are collected in the b-tree.
 \end{itemize}
-If such a false entry appears in the b-tree, the behavior is implementation-dependent and likely leads to data corruption if the callback replays the (likely garbage\todo{language}) entry.
-Whereas we believe that the conditions are sufficiently high hurdles for random data corruption, the following scenarios may also cause entries to appear:
+We believe that it is sufficiently unlikely for random data corruption to produce an entry that fulfills all of these properties.
+Apart from random data corruption, we have considered the following scenarios:
 \begin{itemize}[noitemsep]
-\item Implementation errors on the write path or in the traversal algorithm. Without formal verification, we cannot protect against this.
+\item Implementation errors on the write path or in the traversal algorithm.
+\item Firmware bugs, e.g., in the Optane DIMM's wear-leveling layers, that could make old entries re-appear.
 \item Deliberate injection of log entries by a malicious party with write access to PMEM.
-    This is out of scope for unencrypted datasets, but important for OpenZFS Native Encryption which authenticates and encrypts the data stored in datasets.
-    While encryption support is out of scope for this thesis, we believe that forgery of entries can be prevented by authenticating the entry header.
+    We cannot protect unencrypted datasets from this kind of thread.
+    But it must be part of the threat model for datasets encrypted using OpenZFS Native Encryption.
+    While encryption support is out of scope for this thesis, forged entries should be detectable by authenticating the entry header.
 \item Accidental reuse of \textit{log GUIDs}.
     If two HDLs use the same log GUID to write their entries, replay will collect both logs' entries in the same b-tree.
     This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers.
+    The b-tree allows us to detect some cases of log GUID collisions during the scanning phase when we attempt to insert an entry with a duplicate $(gen, gsid)$.
+    In that case, we abort execution of the the algorithm immediately with an error.
+    However, we would prefer a more comprehensive approach to systematically prevent log GUID reuse.
+    \todo{impl currently does this, but I thought about this during writing and it's not a good idea}
+    \todo{future work section on log guid reuse, see latex comment here}
 \end{itemize}
-The b-tree allows us to detect some cases of log GUID collisions during the scanning phase when we attempt to insert an entry with a duplicate $(gen, gsid)$.
-In that case, we abort execution of the the algorithm immediately with an error.
-However, we would prefer a more comprehensive approach to systematically prevent log GUID reuse.
-\todo{impl currently does this, but I thought about this during writing and it's not a good idea}
-\todo{future work section on log guid reuse, see latex comment here}
 % Future work could mitigate the risk of log GUID collision in PMEM as follows:
 %  1. Maintain a hashset of active log guids, let's call id H_a.
 %  2. Newly issued log guids must not be in H_a but are added to it once they are issued.
@@ -2282,38 +2285,55 @@ To copy the entry into a DRAM buffer, it must use the \lstinline{zilpmem_prb_rep
     \item ensures that the metadata cached in the replay node did not change since the scanning phase.
 \end{itemize}
 
-%%A number of unlikely circumstances can cause collisions in the b-tree, i.e., replay nodes with the same $(gen, gsid)$:
-%%\begin{enumerate}[noitemsep]
-%%    \item Overflow of $gen$ or $gsid$. We have ruled this out, see Section~\ref{di:prb:persistent:entry}.
-%%    \item Implementation error on the write path. We cannot protect against this.
-%%    \item Undetected data corruption. We cannot protect against this, except by using stronger checksums which comes at a performance cost.\todo{explore?}
-%%    \item A malicious party that deliberately\todo{gezielt...?} modifies entries in PMEM. This is only relevant for encryption which is out of scope for this thesis (see Section~\ref{sec:requirements}).
-%%    \item Reuse of \textit{log GUIDs}. This is very unlikely because we generate them as 128 bit random numbers.
-%%\end{enumerate}
-%%We detect collisions during the scanning phase of the algorithm when inserting the second entry with the same identity into the b-tree.
-%%In that case, we abort execution of the the algorithm immediately with an error.
-%%Until measures that systematically prevent log GUID reuse are implemented, this is the safer approach compared to allowing iteration until the collision.
-%%\todo{impl currently does this, but I thought about this during writing and it's not a good idea}
-%%The reason is that accidental replay of an entry for a foreign dataset would most certainly, and possibly silently, corrupt the dataset whose log is being replayed.
-%%\todo{future work section on log guid reuse, see latex comment here}
-%% Future work could mitigate the risk of log GUID collision in PMEM as follows:
-%%  1. Maintain a hashset of active log guids, let's call id H_a.
-%%  2. Newly issued log guids must not be in H_a but are added to it once they are issued.
-%%  3. During pool import, traverse all chunks and add all guids that are found to H_a.
-%% This covers most scenarios except if new entries can 'appear' in the future, e.g. due to weird storage firmware bugs, etc.
-%% Note that a pool-wide sequence number for log GUIDs does not fix the issue because it would be rolled back if zpool checkpoints are used.\todo{ref ZIL-PMEM?}
-%% We should think about whether we can store the sequence number in PMEM which is not rolled back, but that opens up a whole other can of worms...
+The state of the iteration phase needs to be recoverable after a crash because replay must be crash-tolerant.
+Our solution is to externalize all of the iteration phase's state into the \lstinline{zilpmem_replay_state_t} structure.
+The \lstinline{zilpmem_replay_state_t} is the dirty in-DRAM copy of the on-disk \lstinline{zilpmem_replay_state_phys_t} which is stored in the ZIL header (Section~\ref{di:prb:persistent:zilheader}).
+It is the responsibility of claiming and replay to keep the two in sync.
+After a system crash during claiming or replay, the HDL setup routine recovers the in-DRAM state from the last-synced on-disk state in the ZIL header.
+The replay sequence algorithm is thus unaware of the crash.
 
 \subsubsection{Claiming}
-% constructs replay sequence and performs dry-run to determine which chunks need to be held back
-% =>  refcount, wait replay list, HDL's held chunks list (ref chunk ownershiup section)
-% => early detection of missing entries (pool import, reference api overview section)
+The claiming phase during pool import (\lstinline{zilpmem_prb_claim}) uses the replay sequence to find the set of chunks that contain entries of the log that is being claimed.
+This set of chunks is stored in DRAM inside the HDL for later use by replay.
+We refer to it as the HDL's \textit{claimset}.
 
-\subsubsection{Crash Consistent Replay}
+The set of chunks that claiming provides as input to the algorithm are the chunks on the \textit{wait replay list} which was filled by \lstinline{zilpmem_prb_add_chunk_for_claim} during PRB construction (Section~\ref{prb:di:chunkownership}).
+The callback performs the following steps for each replay node $N$ for which it is invoked:
+\begin{enumerate}
+    \item Add the chunk $N.chunk\_ref$ to the HDL's claimset.
+        If the chunk was not yet included in the set, increment the chunk's \textit{claim refcount} (Section~\ref{prb:di:chunkownership}).
+    \item Check for PMEM corruption by reading the log entry from PMEM using \lstinline{zilpmem_prb_replay_read_replay_node}.
+\end{enumerate}
+If log corruption is detected by the replay sequence algorithm or the callback, we fail the pool import operation.
+In that case, the \textit{claim refcount}s are decremented during HDL teardown.
+\todo{in the impl, we currently panic on error because we'd need to change how import works. It's just a bunch of engineering work, not relevant for the thesis.}
+Otherwise, if no errors have occured, the HDL transitions into a state where it waits for replay.
+
+Note that claiming invokes the replay sequence algorithm with a throw-away in-DRAM copy of the replay state because no actual replay is happening in the callback.
+However, claiming is responsible for transitioning the ZIL header from \textit{logging} to \textit{replaying} when the log is first claimed after a crash.
+During this transition, it initializes the \lstinline{zilpmem_replay_state_phys_t} associated with the \textit{replaying} state.
+The value for $precrash\text{-}txg$ is the pool's first transaction group that will be synced once txg sync starts.
+$(gen_{last}, gsid_{last})$ is $(0, 0)$.
+All rows in the \textit{validating counter tables} are invalidated by setting their $txg$ to $0$.
+
+\subsubsection{Replay}
 % reconstructs replay sequence, only scans HDL's held chunks list
 % explain how replay stores its state in a struct
 % state is serialized and passed replay callback for DMU transaction
 % explain how crash during replay and resume works
+Replay (\lstinline{zilpmem_prb_replay}) uses the replay sequence algorithm to recover dataset state.
+Remember from Section~\ref{di:prb:api:replay} that \lstinline{zilpmem_prb_replay} itself receives a callback $C_{consumer}$ from the API consumer.
+The API contract states that $C_{consumer}$ receives the replay node and an updated version of the ZIL header as arguments.
+It must, in one DMU transaction, replay the change encoded in the replay node's entry and apply the ZIL header update.
+This makes \lstinline{zilpmem_prb_replay} is a thin wrapper around the replay sequence algorithm.
+The set of chunks to be traversed by the algorithm is the \textit{claimset} that the claiming procedure stored in the HDL.
+A thin wrapper callback $C_{wrapper}$ translates from the replay sequence algorithm's limited view on replay to the HDL-wide view of the replay API.
+$C_{wrapper}$ receives the replay node $N$ as an argument. It performs the following steps:
+\begin{enumerate}
+    \item Compute the new ZIL header $H_{new}$ from the HDL state.
+        The replay sequence algorithm already updated the replay state before invoking the callback, thus $H_{new}$ will contain the updated \lstinline{zilpmem_replay_state_phys_t}.
+    \item Invoke $C_{consumer}(N, H_{new})$ and return its return value.
+\end{enumerate}
 
 \section{ZIL-PMEM}\label{sec:zilpmem}
 In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
