@@ -2169,7 +2169,6 @@ The scanning phase uses the traversal algorithm (Section~\ref{di:prb:traversal})
 It wraps each of these candidate entries in a \textit{replay node} and collects the nodes in a b-tree.
 In the \textit{iteration phase}, the algorithm \textit{visits} each replay node by iterating over the b-tree.
 For each node, it checks whether the corresponding entry still needs to be replayed and if so, invokes the provided callback.
-It detects missing entries on-the-fly before invoking the callback.
 
 The \textit{replay node} stores the following metadata about an entry:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
@@ -2186,10 +2185,10 @@ The lexicographical ordering of that tuple is the replay ordering, and also the 
 For example, the replay nodes $(2,1), (1,1), (1,3)$ are visisted in order $(1,1), (1,3), (2,1)$.
 
 \begin{samepage}
-In the iteration phase, the algorithm visits each entry in the b-tree in the order defined above.
-It uses the following state to evaluate the subsequently listed steps for each visited replay node $N$.
+The iteration phase iterates over the replay nodes in the b-tree in the order defined above.
+It maintains the following state variables and executes the subsequently listed steps for each visisted replay node $N$:
  \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[precrash-txg] The last transaction group that finished syncing before the system crashed.
+    \item[precrash-txg] The last txg that finished syncing out before the system crashed.
     \item[$\mathbf{(gen_{last}, gsid_{last})}$] The $gen$ and $gsid$ of the last replay node that was visited.
         A value of $(0,0)$ means that no replay node has been visited yet.
     \item[validating counter tables] A \textit{live} and \textit{last} table; same layout as used on the write path (see Section~\ref{di:prb:write:logstructureencoding}).
@@ -2200,73 +2199,40 @@ It uses the following state to evaluate the subsequently listed steps for each v
 Steps per node $N$:
 \begin{enumerate}[noitemsep]
     \item \label{replayStep:skiptxg} Skip $N$ if its $N.txg \le precrash\text{-}txg$.
-    \item \label{replayStep:skipreplayed} $N$ if $(N.gen,N.gsid) \le (gen_{last}, gsid_{last})$.
     \item \label{replayStep:validate} Compare the validating \textit{last table}'s counters to the Counters Table stored in $N$.
-        Only counters for $txg > precrash\text{-}txg$ must be compared because we skip entries for $txg \le precrash\text{-}txg$.
-        Proceed iff the counters match. Otherwise, stop the iteration, and return $N$ as a witness for log corruption.
+        We only compare counters for $txg > precrash\text{-}txg$.
+        Proceed iff the counters match. Otherwise, stop the iteration, and return $N$ as a \textit{witness} for log corruption.
     \item \label{replayStep:bump1} If $N.gen \neq gen_{last}$, compute a new validating \textit{last table} from the validating \textit{live table}.
     \item \label{replayStep:bump2} Increment the validating \textit{live table}'s counter for txg $N.txg$.
+    \item \label{replayStep:skipreplayed} $N$ if $(N.gen,N.gsid) \le (gen_{last}, gsid_{last})$.
     \item \label{replayStep:bump3} Update $(gen_{last}, gsid_{last}) = (N.gen, N.gsid)$.
-    \item \label{replayStep:invoke} Invoke the callback provided by the algorithm's consumer, passing $N$ and the iteration state as arguments.
+    \item \label{replayStep:invoke} Invoke the callback provided by the algorithm's consumer, passing $N$ as an argument.
         If the callback returns an error, rollback the update to $(gen_{last}, gsid_{last})$ and the counter tables, stop the iteration, and return.
         Otherwise, proceed to the next replay node.
 \end{enumerate}
 \end{samepage}
-
-The rationale behind these steps is as follows.
 Step~\ref{replayStep:skiptxg} filters out entries whose changes had already been synced to the pool before the system crashed.
+Comparing the counters in step~\ref{replayStep:validate} ensures that no entries in generations $gen < N.gen$ and $txg > precrash\text{-}txg$ have been lost.
+These are precisely the entries that $N$ logically depends on (Section~\ref{di:prb:structure}).
+Steps~\ref{replayStep:bump1} and \ref{replayStep:bump2} then ensure that step \ref{replayStep:validate} will pass for entries in later generations, their $(gen, gsid) > (N.gen, _)$ unless later entries have been lost.
 Step~\ref{replayStep:skipreplayed} filters out entries for which the callback has already been invoked.
-Comparing the counters in step~\ref{replayStep:validate} ensures that we have already invoked the callback for all entries in generations $gen < N.gen$.
-The subsequent steps \ref{replayStep:bump1}, \ref{replayStep:bump2}, and \ref{replayStep:bump3} record that the callback has been invoked for $N$.
-Specifically, steps~\ref{replayStep:bump1} and \ref{replayStep:bump2} ensure that entries $(gen, gsid) > (N.gen, _)$ pass step \ref{replayStep:validate} as well.
 And \ref{replayStep:bump3} ensures that $N$ is going to be skipped by step~\ref{replayStep:skipreplayed} in the future.
+If the callback invocation in \ref{replayStep:invoke} is successful, the tentative update to the state variables becomes permanent.
 
-We externalize the iteration phase's state into a structure called \lstinline{zilpmem_replay_state_t}.
-structureto achieve crash consistent replay.
-Since replay happens during normal pool operation, it is not atomic because the replayed changes are spread over multiple transaction groups.
-And since replay is also not idempotent, replay after a system crash must resume exactly after the last-synced replay node.
-
-
-at the last-synced replay  rereplay exactly at the replay node before  must not we cannot retry replay from the beginning of the log either.must not replay entries that have already been replayed.
-
-
-
-since 
-the replay callback serializes the iteration phase's state in the \lstinline{zilpmem_replay_state_phys_t} structure that is stored in the ZIL header (Section~\ref{di:prb:persistent:zilheader}).
-If the system crashes during replay, we cannot restart from the beginning because ZIL replay is not idempotent.
-Instead, we must resume exactly where the last 
-
-
-Our solution is to externalize all of the iteration phase's state into the \lstinline{zilpmem_replay_state_t} structure.
-The \lstinline{zilpmem_replay_state_t} is the dirty in-DRAM copy of the on-disk \lstinline{zilpmem_replay_state_phys_t} which is stored in the ZIL header (Section~\ref{di:prb:persistent:zilheader}).
-It is the responsibility of claiming and replay to keep the two in sync.
-After a system crash during claiming or replay, the HDL setup routine recovers the in-DRAM state from the last-synced on-disk state in the ZIL header.
-The replay sequence algorithm is thus unaware of the crash.
-
-This is necessary when the algorithm is used by replay: the callback provided by replay persists the iteration phase's state to the ZIL header.
-
-% The callback invoked in \ref{replayStep:invoke} thus 
-% The callback invocation in \ref{replayStep:invoke} is then supposed 
-% Step~\ref{replayStep:bump3} ensures that $N$ will not be replayed a second time if we restart the iteration.
-% We have to apply the state updates of steps \ref{replayStep:bump1}, \ref{replayStep:bump2}, and \ref{replayStep:bump3} \textit{before} invoking the callback in Step~\ref{replayStep5} because the replay persists the iteration state.
-% Thus if the callback indicates failure, we must roll back the updates so that
-% If the update fails,  If the callback fails, we therefore need therefure need that we have not lost all previous ~and~\ref{replayStep3b} count the number of entries that werwewre-enact 
-
-% Entries  from before the We must replay entries whose change must skip steps We skip  that have alread The logic behind step~\ref{stepValidatingCountersTables} is that 
-
-A number of critical properties of the overall algorithm result from this counter validation step:
+The Counter Table validation in step~\ref{replayStep:validate} is responsible for two critical properties of the overall algorithm:
 \begin{enumerate}[noitemsep]
-    \item It is guaranteed that the witness $(gen_w, gsid_w)$ for a lost entry $(gen_l, gsid_l)$ is always the first entry in the b-tree whose $gen_w > gen_l$.
-    \item Thus, all other found entries $(gen_l,  \_)$ in a generation with a lost entry are still replayed before the error is detected and iteration stops.
-    This is correct and desirable because by definition, entries within a generation have no logical dependency on each other.
+    \item If a log entry is missing in generation $gen_l$, we still replay all other entries within $gen_l$.
+        If step~\ref{replayStep:validate} finds a witness $(gen_w, \_)$ for a missing entry, it is guaranteed that th $gen_w > gen_l$.
+        This behavior correct and desirable because by definition, entries within a generation have no logical dependency on each other.
     \item Loss of entries at the tail of the logical log cannot be detected because there is no record of their existence in prior log entries.
-    Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
+        Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
+    \item If the system crashes while multiple log entries are being written in parallel to the open generation, those entries that were fully written will be replayed, even if other entries have only been partially written.
+        This is critical for correctness because the changes in the fully written entries could have been committed towards user space.
 \end{enumerate}
 We provide examples for counter table validation in Figure~\ref{todo}.
 
-The correctness of the replay sequence algorithm relies on the assumption that random data corruption is incapable of ``forging'' new log entries that would appear in the b-tree.
-If a forged entry appears, the behavior depends on the callback implementation --- interpretation of the forged log entry by replay may corrupt the dataset.
-All of the following properties need to be fulfilled by an entry to affect the replay sequence algorithm:
+The correctness of Counter Table validation relies on the assumption that random data corruption is incapable of ``forging'' new log entries.
+If 
 \begin{itemize}[noitemsep]
     \item It has been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
     \item Its \textit{log GUID} matches the log in which it appears.
@@ -2310,6 +2276,13 @@ Apart from random data corruption, we have considered the following scenarios:
 %    \item Implementation error on the write path.
 %\end{itemize}
 %\end{enumerate}
+
+
+The iteration phase can be checkpointed by snaphotting the state variables from within the callback.
+Restarting the iteration from the checkpointed state causes all replay nodes for which the callback had already been invoked to be skipped.
+Replay relies on this feature for crash-tolerance: for every invocation of the replay callback, it both applies the change encoded in the log entry and persists the checkpointed iteration state to the ZIL header.
+By performing these changes in the same DMU transaction, the effect of the change and the checkpoint are persisted to the main pool atomically.
+If the system crashes and replay restarts from the checkpointed state, it skips exactly all changes that have already been applied.
 
 The replay sequence algorithm is resilient against random \textit{online} data corruption in PMEM, i.e., data corruption while the algorithm executes.
 The reason is that both phases only operate on DRAM-buffered copies of the entry metadata in the replay node.
@@ -2365,6 +2338,16 @@ $C_{wrapper}$ receives the replay node $N$ as an argument. It performs the follo
         The replay sequence algorithm already updated the replay state before invoking the callback, thus $H_{new}$ will contain the updated \lstinline{zilpmem_replay_state_phys_t}.
     \item Invoke $C_{consumer}(N, H_{new})$ and return its return value.
 \end{enumerate}
+
+Our solution is to externalize all of the iteration phase's state into the \lstinline{zilpmem_replay_state_t} structure.
+The \lstinline{zilpmem_replay_state_t} is the dirty in-DRAM copy of the on-disk \lstinline{zilpmem_replay_state_phys_t} which is stored in the ZIL header (Section~\ref{di:prb:persistent:zilheader}).
+It is the responsibility of claiming and replay to keep the two in sync.
+After a system crash during claiming or replay, the HDL setup routine recovers the in-DRAM state from the last-synced on-disk state in the ZIL header.
+The replay sequence algorithm is thus unaware of the crash.
+
+This is necessary when the algorithm is used by replay: the callback provided by replay persists the iteration phase's state to the ZIL header.
+
+
 
 \section{ZIL-PMEM}\label{sec:zilpmem}
 In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
