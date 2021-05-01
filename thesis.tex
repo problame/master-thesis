@@ -1918,7 +1918,7 @@ Each thread that is simultaneously committing gets a different commit slot.
 The function to aquire a commit slot blocks the calling thread until a commit slot is available.
 
 A commit slot can hold up to one chunk.
-A thread that aquires a commit slot assumes temporary ownerhsip of the associated chunk.
+A thread that aquires a commit slot assumes temporary ownerhsip of the chunk.
 The thread can write its entry to the chunk or replace the chunk with a new one if the chunk's capacity is insufficient.
 To replace a chunk, the thread aquires a PRB-wide mutex, then puts chunk on the correct \textit{full list} and gets a new chunk from the \textit{free list}.
 Dequeuing a chunk from the \textit{free list} fails if there are no free chunks.
@@ -2007,9 +2007,11 @@ Our implementation uses two separate tables per HDL.
 The first table (\textit{live table}) contains the counters that are updated as new entries are being written.
 The second table (\textit{last table}) is the Counters Table for the entries that are being written.
 It is computed from the state of the \textit{live table} when the currently open generation was started.
+\todo{it's confusing because both sentences contain 'being written'}
 
 We represent the \textit{live table} as an array of four elements.
-Each array entry is a tuple $(T_i, C_i)$ where $i \in {0,1,2,3}$, $C_i$ is the counter value, and $T_i$ is the transaction group of the counter.
+Each array entry is a tuple $(T_i, C_i)$, $i \in {0,1,2,3}$.
+$C_i$ is the counter value, and $T_i$ is the transaction group of the counter.
 Given an entry for txg $t$, the row that contains the counter that needs to be incremented is $(T_{t\&3}, C_{t\&3})$.
 If $t == T_{t\&3}$, we increment $C_{t\&3}$ and are done.
 If $t > T_{t\&3}$, we can infer that $T_{t\&3}$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by \lstinline{txg&3}.
@@ -2199,12 +2201,12 @@ It maintains the following state variables and executes the subsequently listed 
 Steps per node $N$:
 \begin{enumerate}[noitemsep]
     \item \label{replayStep:skiptxg} Skip $N$ if its $N.txg \le precrash\text{-}txg$.
+    \item \label{replayStep:skipreplayed} Skip $N$ if $(N.gen,N.gsid) \le (gen_{last}, gsid_{last})$.
     \item \label{replayStep:validate} Compare the validating \textit{last table}'s counters to the Counters Table stored in $N$.
         We only compare counters for $txg > precrash\text{-}txg$.
         Proceed iff the counters match. Otherwise, stop the iteration, and return $N$ as a \textit{witness} for log corruption.
     \item \label{replayStep:bump1} If $N.gen \neq gen_{last}$, compute a new validating \textit{last table} from the validating \textit{live table}.
     \item \label{replayStep:bump2} Increment the validating \textit{live table}'s counter for txg $N.txg$.
-    \item \label{replayStep:skipreplayed} $N$ if $(N.gen,N.gsid) \le (gen_{last}, gsid_{last})$.
     \item \label{replayStep:bump3} Update $(gen_{last}, gsid_{last}) = (N.gen, N.gsid)$.
     \item \label{replayStep:invoke} Invoke the callback provided by the algorithm's consumer, passing $N$ as an argument.
         If the callback returns an error, rollback the update to $(gen_{last}, gsid_{last})$ and the counter tables, stop the iteration, and return.
@@ -2212,42 +2214,59 @@ Steps per node $N$:
 \end{enumerate}
 \end{samepage}
 Step~\ref{replayStep:skiptxg} filters out entries whose changes had already been synced to the pool before the system crashed.
+Step~\ref{replayStep:skipreplayed} filters out entries for which the callback has already been invoked.
 Comparing the counters in step~\ref{replayStep:validate} ensures that no entries in generations $gen < N.gen$ and $txg > precrash\text{-}txg$ have been lost.
 These are precisely the entries that $N$ logically depends on (Section~\ref{di:prb:structure}).
 Steps~\ref{replayStep:bump1} and \ref{replayStep:bump2} then ensure that step \ref{replayStep:validate} will pass for entries in later generations, their $(gen, gsid) > (N.gen, _)$ unless later entries have been lost.
-Step~\ref{replayStep:skipreplayed} filters out entries for which the callback has already been invoked.
-And \ref{replayStep:bump3} ensures that $N$ is going to be skipped by step~\ref{replayStep:skipreplayed} in the future.
-If the callback invocation in \ref{replayStep:invoke} is successful, the tentative update to the state variables becomes permanent.
+And \ref{replayStep:bump3} ensures that $N$ is going to be skipped by step~\ref{replayStep:skipreplayed} in the future and thus will not be double-counted by steps~\ref{replayStep:bump1} and \ref{replayStep:bump2}.
 
-The Counter Table validation in step~\ref{replayStep:validate} is responsible for two critical properties of the overall algorithm:
+The iteration phase has a number of important properties (no proof):
 \begin{enumerate}[noitemsep]
-    \item If a log entry is missing in generation $gen_l$, we still replay all other entries within $gen_l$.
+    \item If no entries are missing, the callback is invoked exactly once for each replay node whose log entry needs to be replayed.
+        The invocation order is the replay order (= lexicographical order of $(gen, gsid)$).
+        Thus, the logical dependencies of each entry for which the callback is invoked are expected.
+    \item If a log entry is missing in generation $gen_l$, we still invoke the callback for all other entries within $gen_l$.
         If step~\ref{replayStep:validate} finds a witness $(gen_w, \_)$ for a missing entry, it is guaranteed that th $gen_w > gen_l$.
         This behavior correct and desirable because by definition, entries within a generation have no logical dependency on each other.
+    \item The previous property is particularly important for parallel logging to the same HDL:
+        if multiple threads write entries to a HDL's open generation in parallel, any entry that finished writing before the system crashes will be replayed, even if other threads had not finished writing before the crash.
     \item Loss of entries at the tail of the logical log cannot be detected because there is no record of their existence in prior log entries.
         Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
-    \item If the system crashes while multiple log entries are being written in parallel to the open generation, those entries that were fully written will be replayed, even if other entries have only been partially written.
-        This is critical for correctness because the changes in the fully written entries could have been committed towards user space.
-\end{enumerate}
+    \item The iteration phase correctly handles \textit{online} data corruption in PMEM, i.e., data corruption while the iteration is running.
+        The reason is that we operate on DRAM-buffered copies of the entry metadata in the replay node, and force the callback to use the \lstinline{zilpmem_prb_replay_read_replay_node} function to access the entry.
+        The function copies the entry to PMEM using \lstinline{memcpy_mcsafe}, revalidates the checksums, and esnures that the entry metadata still matches the replay node.
+    \item The iteration phase can be checkpointed by snaphotting its state variables from within the callback invocation for a replay node $N_{cp}$.
+        The replay sequence algorithm can be restarted from the checkpointed state by re-executing the \textit{scanning phase} and restoring the iteration state variables from the checkpoint.
+    \item The restarted algorithm behaves exactly as if the callback invocation for $N_{cp}$ had returned without error.
+        All of the properties above hold for the for the restarted aI.e., all of the already replayed entries are skipped in step~\ref{replayStep:skipreplayed}, including $N_{cp}$.
+    \item All properties listed above hold for across resume from checkpoints.
+            \item Loss of entries $N_{l} \le N_{cp}$ does not affect the behavior of the restarted algorithm.
+            \item Loss of entries $N_{l} > N_{cp}$ affects the behavior the same way as without checkpointing.
+        \end{itemize}
+        \item Data corruption in entries that would be skipped, their $(gen, gsid) <= (gen_{last}, gsid_{last})$ does not 
+        Loss of entries $ \le N_{cp}$ does not affect the behavior of the restarted algorithm.
+        \item Loss of entries $N_{l} > N_{cp}$ affects the behavior the same way as without checkpointing.
+    \end{enumerate}
 We provide examples for counter table validation in Figure~\ref{todo}.
 
-The correctness of Counter Table validation relies on the assumption that random data corruption is incapable of ``forging'' new log entries.
-If 
+The use of counters to validate that no log entries are missing (step~\ref{replayStep:validate}) relies on the assumption that random data corruption is incapable of ``forging'' new log entries.
+If forged entries were possible, a forged entry could compensate a lost entry in the counter table.
+The loss of the entry would go unnoticed and the replay of the forged entry would likely corrupt the dataset.
+We believe that it is sufficiently unlikely for random data corruption to accidentally forge an entry.
+A forged entry would have to fulfill the following requirements to affect counter validation for a given log:
 \begin{itemize}[noitemsep]
-    \item It has been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
-    \item Its \textit{log GUID} matches the log in which it appears.
-    \item Its \textit{txg} is in one of the unsynced txgs.
-    \item Its $(gen, gsid)$ does not collide with the original entries that are collected in the b-tree.
+    \item It must have been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
+    \item Its \textit{log GUID} value must match the log in which it appears.
+    \item Its $(gen, gsid)$ must not collide with the original entries that are collected in the b-tree. Such a collision would already be noticed in the \textit{scanning} phase.
+    \item Its \textit{txg} value must be in the correct corridor of unsynced txgs that.\todo{how to explain corridor?}
 \end{itemize}
-We believe that it is sufficiently unlikely for random data corruption to produce an entry that fulfills all of these properties.
-Apart from random data corruption, we have considered the following scenarios:
+Apart from random data corruption, we have considered the following scenarios and concluded that they are out of scope for ZIL-PMEM:
 \begin{itemize}[noitemsep]
 \item Implementation errors on the write path or in the traversal algorithm.
 \item Firmware bugs, e.g., in the Optane DIMM's wear-leveling layers, that could make old entries re-appear.
 \item Deliberate injection of log entries by a malicious party with write access to PMEM.
-    We cannot protect unencrypted datasets from this kind of thread.
-    But it must be part of the threat model for datasets encrypted using OpenZFS Native Encryption.
-    While encryption support is out of scope for this thesis, forged entries should be detectable by authenticating the entry header.
+    This needs to be part of the threat model if ZIL-PMEM is extended to support OpenZFS Native Encryption.
+    Forged entries should be trivially detectable by cryptographically authenticating the entry header, e.g. using the AEAD ciphers that are already in use for the encryption feature.
 \item Accidental reuse of \textit{log GUIDs}.
     If two HDLs use the same log GUID to write their entries, replay will collect both logs' entries in the same b-tree.
     This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers.
@@ -2297,13 +2316,13 @@ To copy the entry into a DRAM buffer, it must use the \lstinline{zilpmem_prb_rep
 
 
 \subsubsection{Claiming}
-The claiming phase during pool import (\lstinline{zilpmem_prb_claim}) uses the replay sequence to find the set of chunks that contain entries of the log that is being claimed.
+The claiming phase during pool import (\lstinline{zilpmem_prb_claim}) uses the \textit{replay sequence algorithm} to find the set of chunks that contain entries of the log that is being claimed.
 This set of chunks is stored in DRAM inside the HDL for later use by replay.
 We refer to it as the HDL's \textit{claimset}.
 
-The set of chunks that claiming provides as input to the algorithm are the chunks on the \textit{wait replay list} which was filled by \lstinline{zilpmem_prb_add_chunk_for_claim} during PRB construction (Section~\ref{prb:di:chunkownership}).
-The callback performs the following steps for each replay node $N$ for which it is invoked:
-\begin{enumerate}
+The set of chunks that claiming provides as input are the chunks on the \textit{wait replay list} which was filled by \lstinline{zilpmem_prb_add_chunk_for_claim} during PRB construction (Section~\ref{prb:di:chunkownership}).
+The claiming callback performs the following steps for each replay node $N$ for which it is invoked:
+\begin{enumerate}[noitemsep]
     \item Add the chunk $N.chunk\_ref$ to the HDL's claimset.
         If the chunk was not yet included in the set, increment the chunk's \textit{claim refcount} (Section~\ref{prb:di:chunkownership}).
     \item Check for PMEM corruption by reading the log entry from PMEM using \lstinline{zilpmem_prb_replay_read_replay_node}.
@@ -2313,12 +2332,15 @@ In that case, the \textit{claim refcount}s are decremented during HDL teardown.
 \todo{in the impl, we currently panic on error because we'd need to change how import works. It's just a bunch of engineering work, not relevant for the thesis.}
 Otherwise, if no errors have occured, the HDL transitions into a state where it waits for replay.
 
-Note that claiming invokes the replay sequence algorithm with a throw-away in-DRAM copy of the replay state because no actual replay is happening in the callback.
-However, claiming is responsible for transitioning the ZIL header from \textit{logging} to \textit{replaying} when the log is first claimed after a crash.
-During this transition, it initializes the \lstinline{zilpmem_replay_state_phys_t} associated with the \textit{replaying} state.
+Claiming is responsible for transitioning the ZIL header from \textit{logging} to \textit{replaying} when the log is first claimed after a crash.
+It initializes the associated \lstinline{zilpmem_replay_state_phys_t} value which contains the checkpointed iteration state used by replay.
 The value for $precrash\text{-}txg$ is the pool's first transaction group that will be synced once txg sync starts.
 $(gen_{last}, gsid_{last})$ is $(0, 0)$.
 All rows in the \textit{validating counter tables} are invalidated by setting their $txg$ to $0$.
+
+Note that the transition of the ZIL header from \textit{logging} to \textit{}only occurs once for every log.
+If the system crashes and we claim we claim 
+If the ZIL header is already in state \textit{replaying} when c the checkpointed iteration state is simply restored to DRAM.
 
 \subsubsection{Replay}
 % reconstructs replay sequence, only scans HDL's held chunks list
