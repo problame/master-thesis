@@ -1206,13 +1206,205 @@ We put the following requirements on\todo{towards?} the \textbf{storage substrat
 \end{itemize}
 
 \section{Approach / High-Level Overview}
-We introduce 
+We introduce the pool-wide \textit{PRB} object which abstracts the PMEM SLOG vdev's space as a persistent, unordered set of log entries.
+A log entry entry encodes a logical change to a particular dataset that was applied in a single DMU transaction.
+PRB provides facilities for adding log entries to the set and for iterating over its contents.
+It automatically garbage-collects entries after they become obsolete because their transaction group has synced.
+
+Log entries are created by the thread that performs the DMU transaction.
+However, the thread does not write them directly to PRB but to the \textit{HDL} object of the modified dataset.
+HDL builds on top of PRB a virtual log that puts individual entries into a mostly sequential structure.
+After a system crash, the HDL provides a replay facility that recovers the replayable entries of a dataset, orders them according to their logical dependencies, and handles missing entries.
+
 \section{HDL Lifecycle}
+
+At any time, there exists one HDL for each head dataset in the pool.
+They are set up early during pool import and torn down late during export.
+If a dataset is created or destroyed, the corresponding HDL is set up or torn down as well.
+HDL is stateful.
+Its internal states represent the different phases that a dataset goes through with regards to the ZIL.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=5cm]{fig/prb_hdl_runtime_states}
+    \caption{TODO}
+\end{figure}
+
+When the HDL is created, it does not have a log and is in state \textit{nozil}.
+When the dataset is mounted, the HDL allocates a log GUID which uniquely identifies the log's entries in the PRB and persists it to the ZIL header.
+The HDL is now in state \textit{logging} and threads can write entries to it.
+If the dataset is unmounted, the log GUID is discarded and the log transitions back to state \textit{nozil}.
+Otherwise, the HDL remains in state \textit{logging} until the system crashes.
+
+When a zpool is imported, the \textit{claiming} phase examines the ZIL header of each dataset to recover the HDL's runtime state from before the crash.
+If the HDL state was \textit{logging}, the claiming procedure saves the zpool's \textit{last synced} txg as the \textit{precrash-txg} and transitions the HDL and ZIL header to state \textit{replaying} in initial replay position.
+If the HDL was already in state \textit{replaying}, the precrash-txg and replay position are recovered from the ZIL header.
+At this point, all HDLs are either in state \textit{nozil} or \textit{replaying}.
+HDLs in state \textit{replaying} scan the PRB for log entries that need to be held back for replay.
+Entries that are held back by at least one HDL are exempt from PRB's garbage collection.
+After this step, the claiming phase is done and the txg sync thread starts.
+HDLs are not replayed until their dataset is mounted which happens on a per-dataset basis at a user-controlled point in time. %which can be deferred indefinitely by the user, might not happen for several zpool import/export cycles, or system crashes.
+After replay is complete, the HDL discards the log GUID and transitions to state \textit{nozil}.
+At this point, the mount procedure behaves as if log replay had not happened and starts a new log with a new log GUID, thereby closing the circle.
+Note that the HDL (and PRB) are able to tolerate a system crash in any of the HDL or ZIL header states.
+We address this issue in Section~\ref{di:prb:ccrecovery}.
+
 \section{Log Structure}
+The structure of the virtual log that each HDL represents is defined by metadata stored with each entry that is written to PRB.
+
+We \textbf{attribute} entries to a given HDL's log through the \textit{log GUID}:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[Log GUID] A 128 bit random identifier stored in the HDL's ZIL header and repeated in every entry written through that HDL.
+\end{description}
+
+The following pieces of metadata define the structure of the log.
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[Transaction Group (txg)] The transaction group in which the change encoded in the entry was or would have been synced out by \textit{txg sync}.
+    \item[Generation Number (gen)] The log is a sequence of generations, each of which contains many log entries.
+        The generations encode logical dependencies between entries.
+        Entries within the same generation do not depend on each other.
+        Entries from newer generations unconditionally depend on all entries in all previous generations.
+        We represent generations as unsigned 64-bit non-zero integers.
+    \item[Generation-Scoped ID (gsid)] Within a generation, we identify entries by another by the $gsid$, another unique unsigned 64-bit non-zero integer.
+        As the name suggests, the $gsid$ only needs to be unique within a generation.
+\end{description}
+Note that the tuple $(gen, gsid)$ unqiuely identifies an entry within a log.
+
+We visualize the structure of the log in a grid.
+The rows represent the transaction group ($txg$) and the columns represent the generation ($gen$).
+For readability, we represent entries not by $(gen, gsid)$ but by a single unique letter.
+The projection of entries onto the horizontal axis shows the dependency relationship encoded by the generations.
+The projection of entries onto the vertical axis shows the sets in which entries are garbage-collected.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=6cm]{fig/prb_hdl_log_structure_example}
+    \caption{TODO}
+    \label{fig:prb_hdl_log_structure_example}
+\end{figure}
+
 \section{Recovery}
 \subsection{Replay}
+Replay must apply the changes that were successfully logged to the HDL but whose DMU transaction did not sync before the system crashed ($E.txg > precrash\_txg$).
+The \textit{replay order}, i.e., the order in which these changes need to be applied, is given by $(gen, gsid)$:
+\begin{displayquote}
+Given log entries $E_a, E_b$ of the same HDL log (their $E_a.logid = E_b.logid$), $E_a < E_b \equiv (E_a.gen, E_a.gsid) <_{lexicographical} \equiv E_a.gen < E_b.gen \vee (E_a.gen = E_b.gen \wedge E_a.gsid < E_b.gsid)$.
+\end{displayquote}
+For our example in Figure~\ref{fig:prb_hdl_log_structure_example}, this results in the following replay sequences, depending on the value of $precrash\_txg$.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=4cm]{fig/prb_hdl_log_structure_example__replay}
+    \caption{TODO}
+    \label{fig:prb_hdl_log_structure_example__replay}
+\end{figure}
+
+Note that the definition of the replay order does not account for overflows of $gen$ or $gsid$.
+This condition must be handled in software, e.g., by temporarily destroying the log of the dataset and creating a new one with a fresh log GUID.
+Our implementation does not handle overflow because even with the (absurdly) conservative of \SI{1}{ns} write time per log entry, the first overflow event would only occur in \SI{584}{years} if $gen$ starts at $1$.
+
 \subsection{Dependency Tracking}
-\subsection{Crash-Consistent Recovery}
+% \begin{description}
+    %     % \item[Garbage Collection] After a txg $t_{synced}$ has been synced, PRB garbage-collects all entries $\mathcal{E}_{gc} := { E : E.txg \le t_{synced}}$.
+    %     %     This does not interfere with replay because, if the system crashes, it is guaranteed that $precrash\_txg \le t_{synced}$ and hence $\mathcal{e}_{gc}$ would never be part of a replay sequence.
+    %     \item[Loss of Entries] If such a missing entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
+        % However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
+    % \end{description}
+Replay is complicated by the fact the entries that were stored in the PRB can be lost.
+For example, bitflips in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
+If such a missing entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
+However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
+
+We detect missing entries through a set of counters that we store in the metadata of each entry.
+For an entry $E$, the counter $E.C_{ctxg_i} := \#{ D : D.gen < E.gen \wedge D.txg = ctxg\_i}$, i.e., the counter stores the number of entries that were written to the log since its inception, for a DMU transction with txg $ctxg\_i$, until generation $E.gen$.
+During replay, we first construct the replay sequence (Example in the previous section, Figure~\ref{fig:prb_hdl_log_structure_example__replay}).
+Then, we re-compute and compare the counters for each entry in the replay sequence.
+
+The per-txg scoping of the counters is critical to accomodate garbage collection.
+Suppose we only used a single sequence counter for all log entries of a HDL.
+After a txg $t_{synced}$ has been synced, PRB garbage-collects all entries $\mathcal{E}_{gc} := { E : E.txg \le t_{synced}}$.
+These entries no longer show up when the claiming or replay procedures scan the PRB for entries with the HDL's log GUID.
+If we used a single sequence counter to check for missing entries, we would be unable to discern garbage-collected entries from missing entries.
+
+It is sufficient include only those counters $E.C_{txg_i}$ in the entry metadata whose transaction groups $txg_i$ had not yet been synced at the time that $E.gen$ started.
+The reason is that a~) the replay sequence only contains entries in unsynced txgs and b~) $E$ only depends on entries $D$ with $D.gen < E.gen$.
+Since there are only three possible unsynced txgs at any time (\textit{open}, \textit{quiescing}, \textit{syncing}), we only need to store three $(txg_i, C_{txg_i})$ tuples per log entry.
+In fact, since txgs never skip a number, we only store the value of $txg_{open}$ and compute $txg_{quiescing} = txg_{open} - 1$ and $txg_{sycing} = txg_{open} - 2$ on demand.
+\todo{just an idea,  not in impl}
+
+We use the same implementation to compute (re-compute) counters on the write (recovery) path.
+This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
+The counters are stored in a table with four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
+When an entry $E$ is written to the HDL for txg $T := E.txg$, it modifies the counter in the row with index $I_T := T \mod 4$.
+We distinguish the following conditions:
+\begin{itemize}[noitemsep]
+\item If $R_{I_T}.txg = T$, we simply increment $R_{I_T}.ctr$ and are done.
+\item If $T > R_{I_T}.txg$, we can infer that txg $R_{I_T}.txg$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by $T\mod 4$.
+In that case, we can discard the state in the row and reuse it for $T$ by setting $R_{I_T} \leftarrow (T, 1)$.
+\item Conversely, if $T < R_{I_T}$, we can infer that the entry we are writing is for an already synced txg and hence obsolete.
+In that case, we do not change the \textit{live table} and turn the entry write operation into a no-op.
+Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&4}).
+\end{itemize}
+
+To detect the start of a new generation, we maintain a separate variable $open\_gen$.
+When an entry $E$ is written to the HDL, we compare $E.gen$ and $open\_gen$.
+The case $E.gen < open\_gen$ is prohibited because the API contract for log writers is that generation numbers must be monotonically increasing.
+If $E.gen = open\_gen$, the writer did not start a new generation and we leave the \textit{last table} unmodified.
+If $E.gen > open\_gen$, we snapshot \textit{live table} and replace the \textit{last table} with the snapshot.
+Then, we update $open\_gen \leftarrow E.gen$ and increment the counter in the \textit{live table} as described in the previous paragraph.
+
+By definition, the counters $E.C_{txg_i}$ are the same for all entries in generation $E.gen$.
+We compute them from the generation's \textit{last table} as follows:
+\begin{enumerate}[noitemsep]
+    \item Determine row index $i_{max} := \max_{i \in \{0,1,2,3\}} R_i.txg$ where $R_i \in \text{last table}$.
+    \item Invariant: $R_{i_{max}}.txg$ is the highest potentially unsynced txg in generations $< open\_gen$.
+        We make the most conservative assumption that $R_{i_{max}}.txg$ was the \textit{open txg} in generation $open\_gen - 1$.
+    \item Find the counters for \textit{quiescing} and \textit{syncing txg}.
+        We scan the \textit{last table} twice to find counters for transaction groups $R_{i_{max}}.txg - 1$ and $R_{i_{max}}.txg - 2$.
+        If the \textit{last table} does not contain those counters, we use a value of zero.
+\end{enumerate}
+
+Figure~\ref{fig:prb_counters_table__computation} contains a graphical illustration of the algorithm described above.
+Figure~\ref{fig:prb_counters_table__encoding} shows how we encode the counters in the entry header.
+We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
+\todo{figures need some rework, they still use the 'live' and 'last' table approach to explain everything}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_counters_table__computation}
+    \caption{
+        Visualization of the \textit{live} and \textit{last table} structures, and a graphical illustration of the algorithm that is used to determine the counters that are stored in the entries of a generation.
+        Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
+    }
+    \label{fig:prb_counters_table__computation}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics{fig/prb_counters_table__encoding}
+    \caption{Space-efficient encoding of the counters.}
+    \label{fig:prb_counters_table__encoding}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_counters_table__example}
+    \caption{
+        Example for the computation of the counters that are stored in the entry.
+        The following entries are written to the log:
+        A,B,C,D in generation 1; E,F in generation 2; G in generation 3; H in generation 4; J in generation 5.
+        Note that their txgs differ some times but stay in the corridor of at most three a corridor of three txgs.
+        The table at the bottom shows the counter values in the entry headers:
+        each row represents the counter table that is stored in the entry headers of one generation.
+        The table at the upper right shows the algorithm's table's content over time.
+        Instead of counters, we show the entries that would cause the specific counter to be incremented.
+        We visualize row-reuse by separating new row content with a "$|$" in each cell of the reused row.
+    }
+    \label{fig:prb_counters_table__example}
+\end{figure}
+
+
+\subsection{Crash-Consistent Recovery}\label{di:prb:ccrecovery}
 \section{PMEM Data Structure}
 \section{Traversal}
 \section{Write Path}
@@ -2043,38 +2235,6 @@ For an entry in generation $G$, it contains the number of entries that were writ
 The entries are counted in separate counters $C_t$ for each transaction group:
 if an entry $E$ is written in generation $G$ for transaction group $T$, the counter $C_T$ in the Counters Table of generation $G+1$ is incremented by one.
 
-It is sufficient to include only those counters $C_{t_{u}}$ in the Counters Table whose transaction groups $t_u$ have not yet been synced by txg sync.
-The reason is that log recovery only checks for missing log entries in unsynced transaction groups; changes in synced transaction groups will not be replayed and their corresponding log entries might have already been garbage collected.
-We conservatively approximate the values for $t_u$ based on the log entries that were written in previous generations.
-Assume that $N$ log entries $E_i$ for transaction groups $T_i$ have been written to a log $L$ in generations $G_i < G$.
-Then $t_{max} := \max \{ T_i : i \in 1 \dots N \}$ is the youngest transaction group in which an entry was logged to $L$ in generations $G_i$.
-Let us (most conservatively!) assume that $t_{max}$ is still the \textit{open} transaction group among the three possible unsynced transaction groups (\textit{open}, \textit{quiescing}, \textit{syncing}).
-Then a conservative approximation of the transaction groups that contain changes whose entries were logged to $L$ in generations $G_i$ is $\{ t_{max}, t_{max}-1, t_{max}-2 \}$.
-
-Our implementation uses two separate tables per HDL.
-The first table (\textit{live table}) contains the counters that are updated as new entries are being written.
-The second table (\textit{last table}) is the Counters Table for the entries that are being written.
-It is computed from the state of the \textit{live table} when the currently open generation was started.
-\todo{it's confusing because both sentences contain 'being written'}
-
-We represent the \textit{live table} as an array of four elements.
-Each array entry is a tuple $(T_i, C_i)$, $i \in {0,1,2,3}$.
-$C_i$ is the counter value, and $T_i$ is the transaction group of the counter.
-Given an entry for txg $t$, the row that contains the counter that needs to be incremented is $(T_{t\&3}, C_{t\&3})$.
-If $t == T_{t\&3}$, we increment $C_{t\&3}$ and are done.
-If $t > T_{t\&3}$, we can infer that $T_{t\&3}$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by \lstinline{txg&3}.
-In that case, we discard the old counter re-use the row for $t$ by setting $(T_{t\&3}, C_{t\&3}) \leftarrow (t, 0)$.
-Conversely, if $t < T_{t\&3}$, we can infer that the entry we are writing is for a synced txg and hence obsolete.
-In that case, we do not change the \textit{live table} and turn the entry write operation into a no-op.
-
-We compute the \textit{last table} from the \textit{live table} by finding $t_{max} := \max_{i \in \{0,1,2,3\}} T_i$.
-We scan the \textit{live table} two more times for rows that count $t_{max}-1$ and $t_{max}-2$.
-If such rows are found they are copied to the \textit{last table}.
-If the subtraction would overflow or if the \textit{live table} does not contain counters for the given txg, the value in the \textit{last table} is $(0,0)$.
-
-Figure~\ref{fig:prb_counters_table__computation} contains a visualization of the tables and the algoritm used to compute the \textit{last table}.
-We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
-
 We coordinate access to the tables as follows.
 \begin{itemize}[noitemsep]
 \item Log writers for different HDLs do not require any coordination because Coutner Tables are scoped to a single HDL's.
@@ -2089,37 +2249,6 @@ We coordinate access to the tables as follows.
     %The read-write-lock implementation ensures that readers are drained before a pending write lock gets access.
 \end{itemize}
 
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{fig/prb_counters_table__computation}
-    \caption{
-        Visualization of the \textit{live} and \textit{last table} structures, and the algorithm used to compute the \textit{last table} from the \textit{live table} when a new generation is started.
-        Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
-    }
-    \label{fig:prb_counters_table__computation}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{fig/prb_counters_table__example}
-    \caption{
-        Example for the computation of the Counter Table.
-        The following entries are written to the log:
-        A,B,C,D in generation 1; E,F in generation 2; G in generation 3; H in generation 4; J in generation 5.
-        Note that their txgs differ some times but stay in the corridor of at most three a corridor of three txgs.
-        The table at the bottom shows the Counter Tables in the entry headers:
-        each row represents the counter table that is stored in the entry headers of one generation.
-        The table at the upper right shows the \textit{live table} over time.
-        Instead of counters, we show the entries that would cause the specific counter to be incremented.
-        We visualize row-reuse by separating new row content with a "$|$" in each cell of the reused row.
-    }
-    \label{fig:prb_counters_table__example}
-\end{figure}
-
-% \begin{figure}
-%     \centering
-%     \includegraphics{fig/prb_counters_table__encoding}
-% \end{figure}
 
 \subsubsection{Crash-Consistent Append}\label{di:prb:write:crashconsistency}
 After the target chunk and the entry metadata (Log GUID, txg, gen, gsid, Counters Table) have been determined, we are ready to append the entry to the sequence stored in the chunk.
@@ -2288,6 +2417,7 @@ The iteration phase has a number of important properties (no proof):
     \item The restarted algorithm behaves exactly as if the callback invocation for $N_{cp}$ had returned without error.
         All of the properties above hold for the for the restarted aI.e., all of the already replayed entries are skipped in step~\ref{replayStep:skipreplayed}, including $N_{cp}$.
     \item All properties listed above hold for across resume from checkpoints.
+        \begin{itemize}
             \item Loss of entries $N_{l} \le N_{cp}$ does not affect the behavior of the restarted algorithm.
             \item Loss of entries $N_{l} > N_{cp}$ affects the behavior the same way as without checkpointing.
         \end{itemize}
