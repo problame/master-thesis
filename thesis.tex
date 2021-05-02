@@ -1120,25 +1120,8 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
 \end{figure}
 
 \clearpage
-\section{PRB/HDL}
-In this section we describe the PRB data structure which implements the bulk of ZIL-PMEM's functionality.
-PRB abstracts shared physical PMEM into virtual logs for each dataset in the pool.
-The \textit{zil\_pmem.c} module (Section~\ref{sec:zilpmem}\todo{chapter}) uses these virtual logs to implement the ZIL-PMEM ZIL kind.
-%A single PRB instance supports multiple logs with independent lifecycles.
-%Each log is represented by a HDL object that provides methods for writing and replaying log entries.
-%Log entries are opaque to PRB --- the only ZFS-specific metadata is the transaction group (txg) in which the log entry's effect will be synced.
-%Knowledge of the entry's txg is necessary for log replay and log entry garbage collection.
-%The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, acts as a mere integration layer between the remainder of ZFS and PRB.
-We present the design and implementation of PRB in a top-down manner.
-In Section~\ref{di:prb:background} we recapitulate the role of the ZIL in ZFS to isolate ZIL-PMEM's requirements toward PRB.
-Afterwards, in Section~\ref{di:prb:structure}, we present the mental modal for the log abstraction exposed by PRB.
-We proceed with a description of the API that PRB exposes toward \textit{zil\_pmem.c} (Section~\ref{di:prb:api}).
-Equipped with a black-box understanding of PRB's functionality we proceed with the internal design and implementation.
-In Section~\ref{di:prb:persistent} we describe PRB's persistent data structure.
-The design and implementation techniques of the scalability-oriented write path are presented in Section~\ref{di:prb:write}.
-Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path.
-
-\subsection{Background}\label{di:prb:background}
+\chapter{PRB/HDL}
+\section{OpenZFS Background} \label{di:prb:background}
 Remember from section \ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
 After the system call handler has finished the DMU transaction by calling \lstinline{dmu_tx_commit(T_i)}, the logical change $C_i$ made in $T_i$ is not yet persisted to stable storage.
 Instead, the DMU accumulates the changes from many DMU transactions in DRAM as so-called \textit{dirty state}, grouped by the transaction's txg.
@@ -1169,6 +1152,18 @@ The callback interprets the log record and performs a DMU transaction that atomi
 The invocation order is given by the commit list, but entries for transactions before or in precrash-txg ($T_{i_{txg}} \le precrash\text{-}txg$) must be skipped because the change encoded in them is already part of the dataset state.
 We provide an example for the commit list and the replay sequence for different precrash-txgs in Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level}.
 
+Note that the DMU transactions during replay only re-enact the logical changes but do not imitate the original dataset.
+For example, changes that would have been spread across transaction groups 23, 24, and 25 at write time may land in transaction groups 42 and 43 during replay.
+Further, the system could crash again, during replay.
+For example, we could lose power so that txg 42 is the last-synced txg whereas 43 was still in \textit{syncing} state.
+Since the replay callbacks for the individual log records are not idempotent, the ZIL must ensure that, after the crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
+For example, the second replay attempt could apply the remaining set of changes in transaction group 83, but it may also be possible that they are spread over several txgs, e.g., 83 and 84.
+The consequence for any ZIL implementation is that it needs to persist (e.g. in the ZIL header)
+\begin{itemize}[noitemsep]
+    \item the \textit{precrash-txg} for open logs at the first time during pool import so that it can filter log entries by that criterion, and
+    \item replay progress that tracks which log entries have already been replayed so that replay can be resumed correctly after a crash.
+\end{itemize}
+
 \begin{figure}[H]
     \centering
     \includegraphics[height=7cm]{fig/zil_writepath_and_replay_sequence_logical_level}
@@ -1180,17 +1175,70 @@ We provide an example for the commit list and the replay sequence for different 
     \label{fig:zil_writepath_and_replay_sequence_logical_level}
 \end{figure}
 
+\section{Analysis}
 
-\subsection{Model}\label{di:prb:structure}
 We identify the following requirements for the persistence layer of any ZIL kind:
 \begin{itemize}[noitemsep]
-\item On the write path, it needs to append entries to a log that is synchronously persisted to stable storage.
-\item In the event of a crash, it needs to recover the exact subset of log records that represent changes that have not been synced to the main pool.
-    It must be able to sort the subset by insertion order.
-\item Finally, since storage is pooled in ZFS, there needs to be an abstraction that constructs such a log from the pool's raw storage space.
-    \todo{LWBs + metaslab + ZIO for ZIL-PMEM, is that clear or should we explain? see how the next paragraph starts.}
-% the ZIL is a per-dataset log but we add PMEM as a shared resource to the pool, ZIL-PMEM needs an abstraction that virtualizes the physical PMEM space into per-dataset logs.
+\item During normal operation, it acts as a write-only sink for log records.
+\item A log record is the encoded representation of the change that was made in a single DMU transaction.
+    The representation is shared between all ZIL kinds.
+    Log entries are always scoped to a single dataset.
+\item In the event of a crash, the persistence layer must replay exactly those log records that have been successfully written to the ZIL but whose DMU transaction's txg did not sync before the crash.
+    The code that decodes the log records and applies the changes encoded in them is shared among all ZIL kinds.
+    It applies each log record's change in separate DMU transactions and gives the persistence layer an opportunity to update the ZIL header in the same transaction.
+\item Each dataset has a separate log that is written and replayed independently.
 \end{itemize}
+We derive the following abstract view of \textbf{what} needs to be stored \textbf{per log}:
+\begin{itemize}
+    \item The log records themselves.
+    \item The transaction group of the DMU transaction that the log record encodes.
+    \item Structural information that defines replay order and/or logical dependencies between log entries that replay must respect.
+    \item As pointed out in the previous section, the \textit{precrash-txg} to discern replayable from obsolete log records, and some form of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
+\end{itemize}
+We put the following requirements on\todo{towards?} the \textbf{storage substrate} that stores the log entries:
+\begin{itemize}
+    \item On the write path, the overhead that it adds to the raw PMEM latency should be minimal.
+    \item It must scale well on a multicore system since many datasets write their log entries in parallel.
+        This scalability requirement includes efficient use of CPU time in case the PMEM write badwidth is exceeded.
+    \item The storage substrate is responsible for garbage-collecting log entries after they are obsolete, either by txg sync during normal operation or because they have been replayed.
+    \item It must provide a facility to retrieve non-obsolete log entries of a dataset for replay.
+    \item It must detect data corruption using checksums. (Repair and redundancy are out of scope for this thesis, see Section~\ref{sec:requirements}.)
+\end{itemize}
+
+\section{Approach / High-Level Overview}
+We introduce 
+\section{HDL Lifecycle}
+\section{Log Structure}
+\section{Recovery}
+\subsection{Replay}
+\subsection{Dependency Tracking}
+\subsection{Crash-Consistent Recovery}
+\section{PMEM Data Structure}
+\section{Traversal}
+\section{Write Path}
+\subsection{Crash-Consistent Insert}
+\subsection{Scalability}
+
+In this section we describe the PRB data structure which implements the bulk of ZIL-PMEM's functionality.
+PRB abstracts shared physical PMEM into virtual logs for each dataset in the pool.
+The \textit{zil\_pmem.c} module (Section~\ref{sec:zilpmem}\todo{chapter}) uses these virtual logs to implement the ZIL-PMEM ZIL kind.
+%A single PRB instance supports multiple logs with independent lifecycles.
+%Each log is represented by a HDL object that provides methods for writing and replaying log entries.
+%Log entries are opaque to PRB --- the only ZFS-specific metadata is the transaction group (txg) in which the log entry's effect will be synced.
+%Knowledge of the entry's txg is necessary for log replay and log entry garbage collection.
+%The \textit{zil\_pmem.c} module, which we present in Section~\ref{sec:zilpmem}, acts as a mere integration layer between the remainder of ZFS and PRB.
+We present the design and implementation of PRB in a top-down manner.
+In Section~\ref{di:prb:background} we recapitulate the role of the ZIL in ZFS to isolate ZIL-PMEM's requirements toward PRB.
+Afterwards, in Section~\ref{di:prb:structure}, we present the mental modal for the log abstraction exposed by PRB.
+We proceed with a description of the API that PRB exposes toward \textit{zil\_pmem.c} (Section~\ref{di:prb:api}).
+Equipped with a black-box understanding of PRB's functionality we proceed with the internal design and implementation.
+In Section~\ref{di:prb:persistent} we describe PRB's persistent data structure.
+The design and implementation techniques of the scalability-oriented write path are presented in Section~\ref{di:prb:write}.
+Finally, Section~\ref{di:prb:recovery} describes\todo{word} the algorithms used on the recovery path.
+
+
+\section{Model}\label{di:prb:structure}
+
 
 PRB is our solution to address these requirements in ZIL-PMEM.
 The PRB is an in-DRAM structure that exists once per zpool.
@@ -1287,10 +1335,10 @@ Figure~\ref{fig:prb_logical_structure} provides three examples for the log struc
 %Entries within the same generation are identified through an \textit{id field} which is a positive integer.
 %Given entries $a$ and $b$, $a \text{depends on} b \Leftrightarrow a.gen > b.gen$ where $x.gen$ denotes the generation of entry $x$.
 
-\subsection{API Overview}\label{di:prb:api} % API Overview?
+\section{API Overview}\label{di:prb:api} % API Overview?
 In this section we provide a guide-level walkthrough of the PRB's API to illustrate the lifecycle of the PRB and HDL.
 
-\subsubsection{PRB Setup}\label{di:prb:api:setup}
+\section{PRB Setup}\label{di:prb:api:setup}
 
 \begin{lstlisting}
 zilpmem_prb_t* zilpmem_prb_alloc(size_t ncommitters);
