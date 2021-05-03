@@ -1334,8 +1334,9 @@ In fact, since txgs never skip a number, we only store the value of $txg_{open}$
 
 We use the same implementation to compute (re-compute) counters on the write (recovery) path.
 This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
-The counters are stored in a table with four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
-When an entry $E$ is written to the HDL for txg $T := E.txg$, it modifies the counter in the row with index $I_T := T \mod 4$.
+The counters are stored in a table called \textit{live table}.
+If has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
+When an entry $E$ is written or visisted, it modifies the counter in the row with index $I_T := T \mod 4$ where $T := E.txg$.
 We distinguish the following conditions:
 \begin{itemize}[noitemsep]
 \item If $R_{I_T}.txg = T$, we simply increment $R_{I_T}.ctr$ and are done.
@@ -1346,12 +1347,14 @@ In that case, we do not change the \textit{live table} and turn the entry write 
 Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&4}).
 \end{itemize}
 
-To detect the start of a new generation, we maintain a separate variable $open\_gen$.
-When an entry $E$ is written to the HDL, we compare $E.gen$ and $open\_gen$.
-The case $E.gen < open\_gen$ is prohibited because the API contract for log writers is that generation numbers must be monotonically increasing.
-If $E.gen = open\_gen$, the writer did not start a new generation and we leave the \textit{last table} unmodified.
-If $E.gen > open\_gen$, we snapshot \textit{live table} and replace the \textit{last table} with the snapshot.
-Then, we update $open\_gen \leftarrow E.gen$ and increment the counter in the \textit{live table} as described in the previous paragraph.
+To detect the start of a new generation and support crash-consistent replay, we maintain a separate variable $E_{last} := (gen, gsid)$.
+When an entry $E$ is written or visisted, we compare it to $E_{last}$ using the following rules.
+The case $E < E_{last}$ (replay ordering) is prohibited because the API contract for log writers is that generation numbers must be monotonically increasing.
+We consider the log corrupted if such an entry $E$ is found.
+If $E.gen = E_{last}.gen$, the writer did not start a new generation and we leave the \textit{last table} unmodified.
+If $E.gen > E_{last}.gen$, we create a copy of the \textit{live table}.
+We refer to this snapshot as \textit{last table}.
+Regardless of whether a new generation was started or not, we then update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph.
 
 By definition, the counters $E.C_{txg_i}$ are the same for all entries in generation $E.gen$.
 We compute them from the generation's \textit{last table} as follows:
@@ -1403,9 +1406,102 @@ We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
     \label{fig:prb_counters_table__example}
 \end{figure}
 
+\subsubsection{Underlying Model For Data Corruption}
+The use of counters to validate that no log entries are missing elies on the assumption that random data corruption is incapable of ``forging'' new log entries.
+If forged entries were possible, a forged entry could compensate a lost entry in the counter table.
+The loss of the entry would go unnoticed and the replay of the forged entry would likely corrupt the dataset.
+
+We believe that it is sufficiently unlikely for random data corruption to accidentally forge an entry.
+A forged entry would have to fulfill the following requirements to affect counter validation for a given log $L$:
+\begin{itemize}[noitemsep]
+    \item It must have been correctly added to PRB's data structures such that a scan of PRB will find it during recovery.
+        (We address the PRB's data structure in Section~\ref{di:prb:pmemdatastructure}.)
+    \item Its \textit{log GUID} value must match log $L$'s log GUID.
+    \item Its $(gen, gsid)$ must not collide with the original entries.
+        Such a collision would be noticed when constructing the replay sequence.
+        (Our implementation uses a b-tree that identifies and sorts nodes by $(gen, gsid)$).
+    \item Its \textit{txg} value must be in the correct corridor of unsynced txgs and generation.
+        If the txg is too old or too young, the forged entry would be noticed by the dependency tracking code when re-computing the counters (see previous section).
+\end{itemize}
+
+Apart from random data corruption, we have considered the following scenarios and concluded that they are out of scope for ZIL-PMEM:
+\begin{itemize}[noitemsep]
+\item Implementation errors on the write path that produce 
+\item Firmware bugs, e.g., in the Optane DIMM's wear-leveling layers, that could make old entries re-appear.
+\item Deliberate injection of log entries by a malicious party with write access to PMEM.
+    This needs to be part of the threat model if ZIL-PMEM is extended to support OpenZFS Native Encryption.
+    Forged entries should be trivially detectable by cryptographically authenticating the entry header, e.g. using the AEAD ciphers that are already in use for the encryption feature.
+\item Accidental reuse of \textit{log GUIDs}.
+    If two HDLs use the same log GUID to write their entries, the HDLs will each claim their and the other HDL's entries.
+    This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers and check for collisions with other HDLs.
+    \todo{the impl currently doesn't check for collisions, need to mention that?}
+\end{itemize}
 
 \subsection{Crash-Consistent Recovery}\label{di:prb:ccrecovery}
-\section{PMEM Data Structure}
+
+The PRB and its HDLs must be able to tolerate a system crash at any time in their lifecycle.
+With regards to recovery, this means that claiming must be restartable and replay resumable across crashes.
+Further, the restarted or resumed recovery procedure must be able to handle online and offline loss of entries due to data corruption.
+
+Crash-consistency for claiming is trivial because it runs during pool import before txg sync starts.
+Thus, all changes made by claiming are accumulated in DRAM and atomically persisted by the first transaction group that is synced after pool import.
+From the perspective of HDLs that are in state \textit{logging}, this first transaction group is $precrash\_txg + 1$.
+If the system crashes before that txg is synced, a subsequent import attempt restarts from the same state as the previous one.
+HDLs that are already in state \textit{replaying} make no modifications during claiming --- they only build up DRAM state, i.e., the set of entries held back for replay.
+
+Replay is more complicated by two aspects:
+\begin{itemize}[noitemsep]
+    \item Replay of an individual log entry is not idempotent.
+    \item Log replay is spread across several transaction groups and hence not atomic.
+        (See this chapter's Section~\ref{di:prb:background} on OpenZFS background.)
+\end{itemize}
+Our solution is to externalize all state of the replay algorithm, including the counters used for dependency tracking, to a structure called \textit{replay state}.
+Whenever we replay an entry, we checkpoint \textit{replay state}.
+We store the latest checkpoint in the ZIL header every time we replay an entry.
+If the system crashes, we recover \textit{replay state} from the checkpoint in the ZIL header.
+
+The following variables are stored in \textit{replay state}:
+\begin{description}[noitemsep]
+    \item[Live Table] The \textit{live table} at the time the entry was replayed, i.e., $R_i$, $i \in {0,1,2,3}$.
+    \item[Last Table] The \textit{last table} at the time the entry was replayed.
+    \item[$E_{last}$] The last entry that was replayed.
+\end{description}
+The crash-safe replay procedure performs the following steps:
+\begin{enumerate}[noitemsep]
+    \item \label{ccReplay:claimscan} Claiming reads the log GUID from the ZIL header, then scans the PRB and holds back the log's entries from garbage collection.
+    \begin{itemize}[noitemsep]
+        \item If the HDL is in state \textit{logging}, claiming transitions the ZIL header to \textit{replaying} and initializes the \textit{replay state} checkpoint in the ZIL header.
+        \item If the HDL is already in state \textit{replaying}, the ZIL header is not modified.
+    \end{itemize}
+    \item Replay recovers \textit{replay state} $C$ from the checkpoint stored in the ZIL header.
+    \item \label{ccReplay:construct_sequence} Replay constructs a replay sequence $S$ from the held back entries.
+    \item While replaying $S$, the following happens for each entry $E_s \in S$:
+        \begin{enumerate}[noitemsep]
+            \item \label{ccReplay:skipreplayed} Skip $E_s$ if it has already been replayed, i.e., $(E_s.gen, E_s.gsid) \le (C.E_{last}.gen, C.E_{last}.gsid)$.
+            Otherwise:
+            \item Create a backup checkpoint $C_b$ of \textit{replay state}.
+            \item Perform dependency tracking as described in the previous section.
+            \item Create a checkpoint $C_{E_s}$.
+            \item In one DMU transaction, replay $E_s$ and store $C_{E_s}$ in the ZIL header.
+            \item If replay fails or the DMu transaction fails, abort the transaction and roll back the in-DRAM version of \textit{replay state} to $C_b$.
+    \end{enumerate}
+\end{enumerate}
+
+Note that steps~\ref{ccReplay:claimscan}~and~\ref{ccReplay:construct_sequence} construct a \textit{new} replay sequence every pool import.
+This allows handling of offline data corruption in PRB.
+Assume that we lose an entry $E_m$ while the system is offline.
+If $E_m.txg \le precrash\_txg$, the loss of the entry is unnoticed because $E_m$ is by definition not part of the replay sequence.
+If $E_m$ is skipped by step~\ref{ccReplay:skipreplayed}, the loss of the entry might be worth reporting but does not affect replay because it has already been replayed.
+Otherwise, dependency tracking will eventually detect that $E_m$ is missing.\todo{unless it's at the end of the chain, but we don't need to mention that here...}
+
+We handle online data corruption as follows.
+Claiming and replay only operate on DRAM-buffered copies of the entry metadata called \textit{replay node}.
+When replaying an entry, the replay callback is forced to use a special function that attempts to read the entry from PRB and buffers it in DRAM.
+Before allowing access to the entry, it ensures that the entry metadata still matches the data in the \textit{replay node}.
+If either the read from PRB fails (e.g. due to checksum errors) or if the metadata does not match, we know that the entry has been corrupted since the PRB scan.
+\todo{have a section on DRAM usage? better have it be one big section where we discuss this...}
+
+\section{PMEM Data Structure}\label{di:prb:pmemdatastructure}
 \section{Traversal}
 \section{Write Path}
 \subsection{Crash-Consistent Insert}
@@ -2426,41 +2522,6 @@ The iteration phase has a number of important properties (no proof):
         \item Loss of entries $N_{l} > N_{cp}$ affects the behavior the same way as without checkpointing.
     \end{enumerate}
 We provide examples for counter table validation in Figure~\ref{todo}.
-
-The use of counters to validate that no log entries are missing (step~\ref{replayStep:validate}) relies on the assumption that random data corruption is incapable of ``forging'' new log entries.
-If forged entries were possible, a forged entry could compensate a lost entry in the counter table.
-The loss of the entry would go unnoticed and the replay of the forged entry would likely corrupt the dataset.
-We believe that it is sufficiently unlikely for random data corruption to accidentally forge an entry.
-A forged entry would have to fulfill the following requirements to affect counter validation for a given log:
-\begin{itemize}[noitemsep]
-    \item It must have been correctly appended to a chunk's sequence as described in Section~\ref{di:prb:write:crashconsistency}.
-    \item Its \textit{log GUID} value must match the log in which it appears.
-    \item Its $(gen, gsid)$ must not collide with the original entries that are collected in the b-tree. Such a collision would already be noticed in the \textit{scanning} phase.
-    \item Its \textit{txg} value must be in the correct corridor of unsynced txgs that.\todo{how to explain corridor?}
-\end{itemize}
-Apart from random data corruption, we have considered the following scenarios and concluded that they are out of scope for ZIL-PMEM:
-\begin{itemize}[noitemsep]
-\item Implementation errors on the write path or in the traversal algorithm.
-\item Firmware bugs, e.g., in the Optane DIMM's wear-leveling layers, that could make old entries re-appear.
-\item Deliberate injection of log entries by a malicious party with write access to PMEM.
-    This needs to be part of the threat model if ZIL-PMEM is extended to support OpenZFS Native Encryption.
-    Forged entries should be trivially detectable by cryptographically authenticating the entry header, e.g. using the AEAD ciphers that are already in use for the encryption feature.
-\item Accidental reuse of \textit{log GUIDs}.
-    If two HDLs use the same log GUID to write their entries, replay will collect both logs' entries in the same b-tree.
-    This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers.
-    The b-tree allows us to detect some cases of log GUID collisions during the scanning phase when we attempt to insert an entry with a duplicate $(gen, gsid)$.
-    In that case, we abort execution of the the algorithm immediately with an error.
-    However, we would prefer a more comprehensive approach to systematically prevent log GUID reuse.
-    \todo{impl currently does this, but I thought about this during writing and it's not a good idea}
-    \todo{future work section on log guid reuse, see latex comment here}
-\end{itemize}
-% Future work could mitigate the risk of log GUID collision in PMEM as follows:
-%  1. Maintain a hashset of active log guids, let's call id H_a.
-%  2. Newly issued log guids must not be in H_a but are added to it once they are issued.
-%  3. During pool import, traverse all chunks and add all guids that are found to H_a.
-% This covers most scenarios except if new entries can 'appear' in the future, e.g. due to weird storage firmware bugs, etc.
-% Note that a pool-wide sequence number for log GUIDs does not fix the issue because it would be rolled back if zpool checkpoints are used.\todo{ref ZIL-PMEM?}
-% We should think about whether we can store the sequence number in PMEM which is not rolled back, but that opens up a whole other can of worms...
 
 %\item If any of the checked counters in the validating \textit{last table} are lower than the corresponding counter in $E$'s Counters Table, we know that we have lost entries.
 %In that case, we do not invoke the callback and return an error which contains $E$ as a witness.
