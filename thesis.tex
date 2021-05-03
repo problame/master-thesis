@@ -1501,7 +1501,96 @@ Before allowing access to the entry, it ensures that the entry metadata still ma
 If either the read from PRB fails (e.g. due to checksum errors) or if the metadata does not match, we know that the entry has been corrupted since the PRB scan.
 \todo{have a section on DRAM usage? better have it be one big section where we discuss this...}
 
-\section{PMEM Data Structure}\label{di:prb:pmemdatastructure}
+\section{PRB DRAM Data Structure}
+The central requirements for PRB are
+\begin{itemize}[noitemsep]
+    \item persistence of log entries in PMEM,
+    \item parallel insertion of log entries from multiple threads and HDLs,
+    \item garbage collection of obsolete log entries,
+    \item measures to detect data corruption.
+\end{itemize}
+
+Our design is built around the \textit{chunk} abstraction.
+A chunk is a contiguous segment of PMEM that acts as an insert-only container for log entries.
+PRB's role is to mediate access between HDLs and chunks.
+When a thread writes an entry to the conceptual \textit{set of entries} that is the PRB, it actually inserts the entry into one of the PRB's chunks.
+Once a chunk is full, PRB lets it sit unmodified until all entries in it are obsolete.
+Garbage collection then removes all entries in those obsolete-only chunks and makes them available for reuse by writers.
+The PRB scanning done by claiming is implemented as an iteration over the entries in all chunks of the PRB.
+If a chunk contains at least one candidate entry for replay, the claming HDL the chunk back from the write path and/or garbage collection.
+Note that this design fully decouples storage location (chunk) from log structure (encoded in entry metadata, see previous sections).
+
+Each chunk is represented by a DRAM object that holds the following values:
+\begin{description}[noitemsep]
+    \item[PMEM location] The chunk's start and end address in PMEM. These values do not change for the lifetime of the chunk.
+    \item[Claim refcount] The number of HDLs that claimed at least one entry in the chunk for replay.
+        Chunks with non-zero claim refcount are exempt from garbage collection and the write path.
+    \item[Max txg] The maximum transaction group of the entries that were written to this chunk.
+        This value is used by garbage collection to determine when all entries in the chunk are obsolete.
+    \item[Write position] The PMEM address where the next entry will be written.
+        We dicsuss the PMEM layout of the chunk in more detail in Section~\ref{todo}.
+\end{description}
+
+Chunks can only be modified by one thread at a time.
+To support parallel writes, PRB maintains a roster of \textit{commit slots}, each of which has an associated \textit{open chunk}.
+When a thread writes an entry through a HDL, the thread first \textit{aquires} a commit slot to gain temporary exclusive access to its \textit{open chunk}.
+Then, it writes the entry to the open chunk and immediately releases the slot so that other threads can aquire it.
+Chunks that are not associated with a commit slot are always on exactly one of the following lists:
+\begin{description}[noitemsep]
+    \item[Free List]
+        The \textit{free list} holds empty chunks.
+        Their \textit{claim refcount} and \textit{max txg} is zero and their write position is reset to the chunk's start address.
+        A log writers that need a new chunk for their commit slot puts the commit slot's current open chunk on the \textit{full list} (see below) and gets a new chunk from the \textit{free list}.
+    \item[Full Lists]
+        The \textit{full lists} contains chunks that wait for garbage collection.
+        PRB maintains one full list for each unsynced txg $T_i$. The \textit{full list} for $T_i$ contains exactly those (full) chunks whose \textit{max txg} is $T_i$.
+        After $T_i$ has been synced, the chunks on the corresponding \textit{full list} are emptied and moved to the \textit{free list}.
+        Note that it is sufficient to maintain three full lists at any given time --- one for each of the three unsynced transaction groups \textit{open}, \textit{quiescing}, and \textit{syncing}.
+        The three lists can be represented as an array of three lists that is indexed by $T_i \mod 3$.
+        Our implementation follows the common ZFS idiom of using four lists that are indexed by \lstinline{T_i&3} where \lstinline{&} is the \textit{bitwise and} operation.
+    \item[Wait Replay List]
+        During the claiming phase, all of the PRB's chunks are on the \textit{wait replay list}.
+        The HDL's scan the chunks on this list during claiming.
+        If a chunk contains at least one entry that needs to be held back for replay, the HDL increments the chunk's \textit{claim refcount}.
+        Once claiming is done and \textit{txg sync} triggers the first garbage collection cycle, any chunk on this list that has a zero refcount is emptied and moved to the \textit{free list}.
+        The list is also scanned for zero refcounts during all future garbage collection cycles to garbage-collect chunks that are no longer held by HDLs because they finished replay.
+        Note that it is critical for replay crash consistency to defer garbage collection until \textit{after} the last txg of replay of the last HDL that held the chunk has synced.
+        If we garbage-collected entries before the last holding HDL's ZIL header's has transitioned to state \textit{nozil} on disk and crashed inbetween, the garbage-collected entries might be missing when resuming replay.
+\end{description}
+The following Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} visualizes the different owners of a chunk over its lifetime.
+Figure~\ref{fig:prb_chunk_ownership_cycle__example} then provides an example.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/prb_chunk_ownership_cycle__transitions}
+    \caption{The different owners of a chunk and the events that cause ownership transitions.}
+    \label{fig:prb_chunk_ownership_cycle__transitions}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=12cm]{fig/prb_chunk_ownership_cycle__example}
+    \caption{
+        Example for chunk ownership transitions.
+        The PRB is constructed with all eight chunks added as \lstinline{_for_claim}.
+        Claiming (\textit{A}) determines that chunks 0, 1, 3, 4, and 6 need to remain on the \textit{wait replay list} because they contain entries for HDL logs that need replay.
+        Chunks 2, 5, and 7 only contain obsolete entries and move to the \textit{free list}.
+        We do not replay any of the logs.
+        However, a log writer starts writing a new log in \textit{B}.
+        It finds that its commit slot (\#0) has no active chunk.
+        Thus, it and moves the first chunk on the \textit{free list} (i.e., chunk 2) to the commit slot.
+        After writing the entry to chunk 2 the log writer releases the commit slot.
+        Another log writer aquires commit slot \#0 and writes entries to it.
+        Chunk 2's capacity is insufficient to hold the last entry (\textit{C}).
+        The thread places chunk 2 on the correct \textit{full list} for chunk 2's \textit{max txg} and finds a new chunk on the free list for the commit slot (not shown).
+        Eventually \textit{txg sync} triggers garbage collection for the txg that is chunk 2's \textit{max txg} which resets chunk 2's in-PMEM and in-DRAM sequence and subsequently places it back onto the free list.
+    }
+    \label{fig:prb_chunk_ownership_cycle__example}
+\end{figure}
+
+\section{PRB PMEM Data Structure}\label{di:prb:pmemdatastructure}
+
+
 \section{Traversal}
 \section{Write Path}
 \subsection{Crash-Consistent Insert}
@@ -2148,33 +2237,6 @@ All chunks that are not owned by a commit slot are tracked in exactly one of the
 \end{description}
 We visualize the ownership transitions in Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} and provide an example in Figure~\ref{fig:prb_chunk_ownership_cycle__example}.
 
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\textwidth]{fig/prb_chunk_ownership_cycle__transitions}
-    \caption{The different owners of a chunk and the events that cause ownership transitions.}
-    \label{fig:prb_chunk_ownership_cycle__transitions}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[height=12cm]{fig/prb_chunk_ownership_cycle__example}
-    \caption{
-        Example for chunk ownership transitions.
-        The PRB is constructed with all eight chunks added as \lstinline{_for_claim}.
-        Claiming (\textit{A}) determines that chunks 0, 1, 3, 4, and 6 need to remain on the \textit{wait replay list} because they contain entries for HDL logs that need replay.
-        Chunks 2, 5, and 7 only contain obsolete entries and move to the \textit{free list}.
-        We do not replay any of the logs.
-        However, a log writer starts writing a new log in \textit{B}.
-        It finds that its commit slot (\#0) has no active chunk.
-        Thus, it and moves the first chunk on the \textit{free list} (i.e., chunk 2) to the commit slot.
-        After writing the entry to chunk 2 the log writer releases the commit slot.
-        Another log writer aquires commit slot \#0 and writes entries to it.
-        Chunk 2's capacity is insufficient to hold the last entry (\textit{C}).
-        The thread places chunk 2 on the correct \textit{full list} for chunk 2's \textit{max txg} and finds a new chunk on the free list for the commit slot (not shown).
-        Eventually \textit{txg sync} triggers garbage collection for the txg that is chunk 2's \textit{max txg} which resets chunk 2's in-PMEM and in-DRAM sequence and subsequently places it back onto the free list.
-    }
-    \label{fig:prb_chunk_ownership_cycle__example}
-\end{figure}
 
 \subsection{Write Path}\label{di:prb:write}
 In this section we present the design and implementation techniques that we employ to persist log entries in PMEM.
