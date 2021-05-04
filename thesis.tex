@@ -1123,7 +1123,7 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
 \chapter{PRB/HDL}
 
 In this section we describe the PRB data structure which implements the bulk of ZIL-PMEM's functionality.
-PRB abstracts shared physical PMEM into virtual logs for each dataset in the pool.
+PRB abstracts shared physical PMEM into virtual logs (HDLs) for each dataset in the pool.
 The \textit{zil\_pmem.c} module, which we present in Chapter~\ref{ch:zilpmem} uses these virtual logs to implement the ZIL-PMEM ZIL kind.
 %A single PRB instance supports multiple logs with independent lifecycles.
 %Each log is represented by a HDL object that provides methods for writing and replaying log entries.
@@ -1137,11 +1137,11 @@ Sections~\ref{di:prb:logstructure}, \ref{di:prb:replayapproach}, \ref{di:prb:dep
 Subsequently, we describe the storage substrate that maps the per-dataset virtual logs to the shared PMEM space.
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use to manage the PMEM space and store log entries.
 In Section~\ref{di:prb:traversal} we describe how these data structures are traversed during log recovery.
-Section~\ref{di:prb:write} then present the low-latency and CPU efficient design of the write path.
+Section~\ref{di:prb:write} then presents the low-latency and CPU efficient design of the write path.
 Finally, Section~\ref{di:prb:api} provides an overview of the PRB API that is consumed by \textit{zil\_pmem.c}.
 
 \section{OpenZFS Background} \label{di:prb:background}
-Remember from section \ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
+Remember from Section~\ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
 After the system call handler has finished the DMU transaction by calling \lstinline{dmu_tx_commit(T_i)}, the logical change $C_i$ made in $T_i$ is not yet persisted to stable storage.
 Instead, the DMU accumulates the changes from many DMU transactions in DRAM as so-called \textit{dirty state}, grouped by the transaction's txg.
 Eventually, the \textit{txg sync} background thread syncs out a new version of the zpool state that contains the accumulated changes of the txg:
@@ -1796,7 +1796,7 @@ Example:
     }
 \end{lstlisting}
 
-\section{PRB: Write Path}
+\section{PRB: Write Path}\label{di:prb:write}
 A thread that writes to a HDL needs to perform the following tasks.
 \begin{itemize}[noitemsep]
     \item Find a target chunk using the \textit{commit slot} mechanism. (Section~\ref{di:prb:write:chunksel})
