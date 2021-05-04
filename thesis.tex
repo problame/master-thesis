@@ -672,7 +672,7 @@ ZIL-PMEM must coexist with ZIL-LWB due to limited availability of PMEM and limit
 ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB for both ZPL and ZVOL.
 
 \csgoal{Simple Administration \& Pooled Storage}
-Pooling of storage resources and simple administration are central to ZFS.~\cite{bonwickZettabyteFileSystem2003}
+Pooling of storage resources and simple administration are central to ZFS~\cite{bonwickZettabyteFileSystem2003}.
 ZFS should automatically detect that a SLOG device is PMEM and, if so, use ZIL-PMEM for all of the pool’s datasets.
 No further administrative action should be required to fully benefit from ZIL-PMEM.
 
@@ -687,7 +687,7 @@ Specifically:
 \end{itemize}
 
 \csgoal{Data Integrity}
-Data integrity is a core feature of ZFS.~\cite{bonwickZettabyteFileSystem2003}
+Data integrity is a core feature of ZFS~\cite{bonwickZettabyteFileSystem2003}.
 ZIL-PMEM must detect corrupted log entries using an error-detecting code.
 Detected corruption must be handled \textit{correctly} as outline in the previous paragraph.
 It must also be handled gracefully with the following behavior as the baseline:
@@ -744,11 +744,11 @@ Instead, ZIL-PMEM would need to invoke OpenZFS native encryption and decryption 
 
 \csgoal{Protection Against Scribbles}
 Scribbles are bugs in the system that accidentally overwrite PMEM, e.g., due to incorrect address calculation or out-of-bounds access in the kernel.
-PMEM-specific filesystems such as PMFS and NOVA-Fortis have already introduced mechanisms to protect againt scribbles.~\cite{dulloorSystemSoftwarePersistent2014,xuNOVAFortisFaulttolerantNonvolatile2017}
-We believe that our design can be trivially extended with similar mechanisms.
+PMEM-specific filesystems such as PMFS and NOVA-Fortis have already introduced mechanisms to protect againt scribbles~\cite{dulloorSystemSoftwarePersistent2014,xuNOVAFortisFaulttolerantNonvolatile2017}.
+We believe that these mechanism can be applied to our design as well.
 
 \subsection{Limitations}
-The following features were deliberately left out of our design.
+The following features are deliberately not addressed by our design.
 More experimentation and experience with ZIL-PMEM will benecessary to determine which features are useful in practice, how they can be realized, and how they interact with the existing requirements.
 
 \csgoal{No NUMA Awareness}
@@ -765,13 +765,13 @@ Such pools continue to use ZIL-LWB.
 \csgoal{No Software Striping}
 Our design only supports a single PMEM SLOG device.
 Users may wish to use multiple PMEM DIMMs to increase log write bandwidth.
-With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup.~\cite{yangEmpiricalGuideBehavior2020}
+With Intel Optane DC Persistent Memory, multiple PMEM DIMMs can be interleaved in hardware with near-linear speedup~\cite{yangEmpiricalGuideBehavior2020}.
 Whereas software striping would be the natural approach to ZFS, it will be non-trivial to achieve the same speedup as hardware-based interleaving.
 
 \csgoal{No Support For \lstinline{WR_INDIRECT}}
-ZIL-LWB logs large write records' data directly to the main pool devices.
+ZIL-LWB writes the data portion of large write log records directly to the main pool devices.
 The ZIL record then only contains metadata such as \lstinline{mtime} and a block pointer to the location in the main pool.
-This technique avoids double-writes which is particularly advantageous if the pool does not have a SLOG which is a case that ZIL-PMEM does not address (see above).
+This technique avoids double-writes which is particularly advantageous if the pool does not have a SLOG, which in turn is a use case that ZIL-PMEM does not address (see above).
 Further, if a SLOG is available, \lstinline{WR_INDIRECT} log record write latency is likely to be dominated by the main pool's IO latency if it consists of regular block devices.
 If the main pool's IO latency were acceptable, a fast NVMe-based ZIL-LWB SLOG or no SLOG at all would likely be sufficient for the setup in question.
 
@@ -782,7 +782,7 @@ First, PMEM capacities are significantly higher than DRAM.
 For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is \SI{128}{GiB}.~\cite{optanepricing_missing}
 Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{move to background?}
 For ZIL-LWB, small SLOG devices of \SI{16} to \SI{32}{GiB} are sufficient in practice.\todo{ref ix systems truenas M}
-Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM before we need to worry about hardware capacity.
+Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
 
 \section{Overview}
@@ -794,7 +794,7 @@ The ZIL kind is a pool-scoped variable that determines the pool's strategy for p
 A zpool's ZIL kind is determined by the following rule:
 if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is ZIL-PMEM. Oterwise, it is ZIL-LWB.
 ZIL-LWB is the current ZIL's persistence implementation.
-It uses the SPA's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
+It uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
 ZIL-PMEM disables metaslab allocation for its PMEM SLOG device and uses the PMEM space directy.
 
 The PMEM space is partitioned into fixed-size segments.
@@ -803,7 +803,7 @@ Chunks are organized in a pool-wide in-DRAM data structure called \textit{PRB}.
 PRB implements a high-performance, scalable, crash-consistent, data-corruption-checking and garbage-collected write-ahead log.
 It stores log entries in the PMEM chunk's segments as a contiguous append-only sequence.
 Full chunks are stashed away and become reusable for logging when the youngest entry's transaction group has synced to the main pool.
-After a system crash, a new instance of PRB is instantiated with the same chunks (segments) that the pre-crash PRB instance used.
+After a system crash, a new instance of PRB is instantiated with the same chunks that the pre-crash PRB instance used.
 The new instance scans each chunk for log entries that need to be replayed.
 This process is called \textit{claiming}.
 The entries' physical location in PMEM is irrelevant for replay.
