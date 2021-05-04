@@ -189,13 +189,16 @@ This corresponds to a speedup of 6.8x (or 4x, respectively) over ZIL-LWB.\todo{r
 Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
 The remainder of this thesis is structured as follows:
-in Chapter 2\todo{automatic chapter numbers} we
-review prior work in the field of persistent memory related to filesystems and
-provide background knowledge on the integration of PMEM in the Linux kernel as well as
-a detailed introduction to the components of ZFS that are relevant for this thesis.
-Chapter 3 contains our performance analysis of ZIL-LWB with a PMEM SLOG, making the case for a PMEM-specific ZIL implementation.
-The design and implementation of ZIL-PMEM is then presented in Chapter 4, followed by its evalation in Chapter 5.
-We conclude with a summary of our findings in Chapter 6.
+in Chapter~\ref{ch:litreviewandbackground} we
+ review prior work in the field of persistent memory related to filesystems and
+ provide background knowledge on the integration of PMEM in the Linux kernel as well as
+ a detailed introduction to the components of ZFS that are relevant for this thesis.
+Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB performance with a PMEM SLOG, motivating a new PMEM-specific ZIL implementation.
+Our solution, ZIL-PMEM, is then presented Chapters \ref{ch:designoverview}, \ref{ch:zilkinds}, \ref{ch:spavdev}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
+Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the overall design.
+Our main contribution, the \textit{PRB/HDL} the data structure, is presented in Chapter~\ref{ch:spavdev}.
+The other three\todo{check} chapters present changes that we made to ZFS's architecture to enable alternative ZIL implementations, represent PMEM SLOGs in ZFS, and integrate PRB/HDL as a new ZIL implementation.
+We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a summary of our work in Chapter~\ref{ch:summary}.
 
 %In the following sections, we present
 %the user experience of configuring a pool with ZIL-PMEM,
@@ -207,7 +210,7 @@ We conclude with a summary of our findings in Chapter 6.
 %its claiming & replay algorithm and
 %its integration into the existing OpenZFS software architecture.
 
-\chapter{Literature Review \& Background}
+\chapter{Literature Review \& Background}\label{ch:litreviewandbackground}
 In this chapter we present prior work in the field of persistent memory and its application in various storage systems developed in research and industry.
 The last two sections on PMEM in Linux and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB in Chapter~\ref{ch:lwb_analysis} and the design of ZIL-PMEM in Chapter~\ref{ch:di}.
 
@@ -652,13 +655,11 @@ zil_commit(object_id)
 \chapter{Why ZIL-LWB Is Slow On PMEM}\label{ch:lwb_analysis}
 \blindtext\todo{blindtext}
 
-\chapter{Design \& Implementation}
-In this chapter we present the design and implementation of ZIL-PMEM in OpenZFS.
-We start with an outline of the project goals and limitations, followed by a high-level overview of the design.
-Each of the subsequent sections then presents one orthogonal concept in more detail, including implementation aspects where appropriate.
+\chapter{Design Overview}\label{ch:designoverview}
+In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design as well as its integration into ZFS.
 Readers should be familiar with the technical background on PMEM in Linux and OpenZFS given in Section~\todo{ref}.
 
-\section{Project Scope}
+\section{Project Goals \& Scope}
 
 \newcommand{\csgoal}[1]{\textbf{#1}}
 
@@ -784,10 +785,7 @@ Second, the maximum amount of log entry space required from any ZIL implementati
 For ZIL-LWB, small SLOG devices of \SI{16} to \SI{32}{GiB} are sufficient in practice.\todo{ref ix systems truenas M}
 Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
-\section{Overview}
-This section summarizes the ZIL-PMEM design at a high level.
-The subsequent sections then provide more detail on each abstractions' design and implementation.
-
+\section{Design Overview}
 We introduce the concept of \textit{ZIL kinds} to ZFS.
 The ZIL kind is a pool-scoped variable that determines the pool's strategy for persisting ZIL entries.
 A zpool's ZIL kind is determined by the following rule:
@@ -823,12 +821,20 @@ It is a thin wrapper around HDL's methods for writting and replaying log entries
 \lstinline{zilog_pmem_t} is implemented in the \textit{zil\_pmem.c} code module.
 This module also contains the code that sets up PRB/HDL on top of the PMEM SLOG vdev, and the code that synchronizes the lifecylces of HDLs their corresponding datasets.
 
+The subsequent chapters describe each isolatable aspect of the design\todo{help, language} in more detail.
+In Chapter~\ref{ch:zilkinds}, we describe how we refactor ZFS and the ZIL in particular to support different persistence strategies through \textit{ZIL kinds}.
+This work is not specific to PMEM but required for coexistence of ZIL-PMEM with ZIL-LWB.
+We introduce PMEM to ZFS in Chapter~\ref{ch:spavdev} where we describe our changes to the VDEV layer to support PMEM SLOG devices.
+Our main contribution --- PRB/HDL --- is then presented in Chapter~\ref{ch:prbhdl}.
+Chapter~\ref{ch:zilpmem} is the the cornerstone\todo{ok?} where we describe how we combine the work presented in the previous three chapters into the ZIL-PMEM ZIL kind.
+We evaluate 
+
 \begin{figure}[H]
     \includegraphics[height=20cm,angle=270,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
     \caption{Overview of the system architecture as described in this section.}
 \end{figure}~\todo{actual figure}
 
-\section{ZIL kinds}
+\chapter{ZIL kinds}\label{ch:zilkinds}
 Coexistence with the existing ZIL and preservation of ZFS's crash consistency guarantees are two hard requirements for ZIL-PMEM (see Section~\ref{sec:requirements}).
 Our solution to both of these problems is to re-architect ZFS to support different persistence strategies for the ZIL while sharing code and data structures that ultimately define crash consistency semantics.
 In order to make the integration of ZIL-PMEM seamless to the end user (goal: simple administration), the persistence strategy is the same for all datasets in a pool.
@@ -1084,7 +1090,7 @@ The state of each \lstinline{zilog_KIND_t} is truly private do the ZIL kind's im
 Neither ZIL-LWB nor ZIL-PMEM access the ITX-related state in the embedded \lstinline{zilog_t} directly, but only\todo{"sondern"?} through the \lstinline{zilog_t} method that computes the commit list.
 If requirements change in the future, the design alternatives presented in the previous section should be considered.
 
-\section{PMEM-aware SPA \& VDEV layer}
+\chapter{PMEM-aware SPA \& VDEV layer}\label{ch:spavdev}
 In this section we describe how we add explicit support for PMEM to ZFS.
 Our primary goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
 
@@ -1112,8 +1118,7 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
     }
 \end{figure}
 
-\clearpage
-\chapter{PRB/HDL}
+\chapter{PRB/HDL}\label{ch:prbhdl}
 
 In this section we describe the PRB data structure which implements the bulk of ZIL-PMEM's functionality.
 PRB abstracts shared physical PMEM into virtual logs (HDLs) for each dataset in the pool.
@@ -2422,7 +2427,7 @@ Synchronization is handled internally.
 \chapter{ZIL-PMEM}\label{ch:zilpmem}
 In this section we describe how we use PRB/HDL to implement ZIL-PMEM as a new ZIL kind.
 
-\chapter{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
+\section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
 In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
 
 
@@ -2458,7 +2463,7 @@ We evaluate the performance of ZIL-PMEM with a variety I/O benchmarks.
 \subsubsection{Application Benchmarks}
 \subsection{Replay Performance}
 
-\chapter{Related Work}
+\chapter{Summary}\label{ch:summary}
 
 \backmatter
 
