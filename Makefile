@@ -5,7 +5,13 @@ thesis.pdf:
 
 release: thesis.pdf
 	mkdir -p releases
-	cp --no-clobber thesis.pdf releases/thesis-"$$(date '+%F')"-"$$(git describe --always --dirty)".pdf
+	if git describe --always --dirty | grep dirty ; then echo must not be dirty; exit 1; fi
+	releasename="$$(date '+%F')"-"$$(git describe --always --dirty)"; \
+		releasefile="releases/thesis-"$$releasename".pdf"; \
+		cp --no-clobber thesis.pdf $$releasefile  && \
+		git add $$releasefile && \
+		git commit -m "release $$releasename"
+
 
 clean:
 	latexmk -C
