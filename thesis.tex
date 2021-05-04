@@ -97,7 +97,7 @@
 \author{Christian Schwarz}
 \thesistype{ma}
 \primaryreviewer{Prof.\ Dr.\ Frank Bellosa}
-\advisor{Lukas Werling, M.\ Sc.}{}
+\advisor{Lukas Werling, M.Sc.}{}
 \thesisbegindate{TODO}
 \thesisenddate{TODO}
 \maketitle
@@ -122,7 +122,7 @@ Synchronization of the dirty in-DRAM data to persistent storage is thus deferred
 However, many applications have more specific durability requirements.
 For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted to non-volatile storage before clearing the transaction.
 Otherwise, a system crash and recovery after clearing could result in the pre-purchase balance being restored, enabling double-spending by the account holder.
-These \textbf{synchronous I/O} semantics must be requested through APIs auch as \lstinline{fsync()} which "assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk."~\cite{posix_fsync_opengroup}.
+These \textbf{synchronous I/O} semantics must be requested through APIs auch as \lstinline{fsync()} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{posix_fsync_opengroup}.
 
 The \textbf{Zettabyte File System (ZFS)} is a combined volume manager and filesystem.
 It pools many block devices into a single storage pool (\textit{zpool}) which can hold thousands of sparsely allocated filesystems.
@@ -362,12 +362,12 @@ ZFS with and without ZIL-PMEM compares to Strata in the following ways:
 \end{itemize}
 
 \citerelwork{Ziggurat}{zhengZigguratTieredFile2019}
-“Ziggurat exploits the benefits of NVMM through intelligent data placement during file writes and data migration.
+``Ziggurat exploits the benefits of NVMM through intelligent data placement during file writes and data migration.
 Ziggurat includes two placement predictors that analyze the file write sequences and predict whether the incoming writes are both large and stable, and whether updates to the file are likely to be synchronous.
 Ziggurat then steers the incoming writes to the most suitable tier based on the prediction: writes to synchronously-updated files go to the NVMM tier to minimize the synchronization overhead.
-Small, random writes also go to the NVMM tier to fully avoid random writes to disk. The remaining large sequential writes to asynchronously-updated files go to disk”.
+Small, random writes also go to the NVMM tier to fully avoid random writes to disk. The remaining large sequential writes to asynchronously-updated files go to disk".
 The authors compare Ziggurat to Strata as follows:
-“Strata is a multi-tiered user-space file system that exploits NVMM as the high-performance tier, and SSD/HDD as the lower tiers.
+``Strata is a multi-tiered user-space file system that exploits NVMM as the high-performance tier, and SSD/HDD as the lower tiers.
 It uses the byte-addressability of NVMM to coalesce logs and migrate them to lower tiers to minimize write amplification.
 File data can only be allocated in NVMM in Strata, and they can be migrated only from a faster tier to a slower one.
 The profiling granularity of Strata is a page, which increases the bookkeeping overhead and wastes the locality information of file accesses".
@@ -433,7 +433,7 @@ The approach is inspired by per-inode journaling as proposed by \citeauthor{park
 
 \textbf{Disk-oriented database management systems} often use write-ahead logs (WALs) to allow a transaction to commit before the modified pages are written back to stable storage.
 However, appending to a shared WAL file has historically been a latency and scalability bottleneck which lead to amortization techniques such as \textit{commit groups} (aka \textit{group commit}) and \textit{pre-committed transactions} that batch the WAL entries of multiple committing transactions into a single physical WAL record.%
-\footnote{According to \cite{dewittImplementationTechniquesMain1984} "the notion of gronp commits appears to be past of the unwritten database folklore. The System-R implementors claim to have implemented it."}
+\footnote{According to \cite{dewittImplementationTechniquesMain1984} ``the notion of gronp commits appears to be past of the unwritten database folklore. The System-R implementors claim to have implemented it."}
 With persistent memory, the latency bottleneck no longer lies in the raw I/O but rather the coordination overhead between multiple CPU cores and sockets, prompting new distributed logging designs that avoid a central point of contention.%
 ~\cite{fangHighPerformanceDatabase2011,pelleyStorageManagementNVRAM2013,johnsonAetherScalableApproach2010}
 ZIL-LWB\todo{ensure this term has been established by now} employs \textit{group commit} as well although the terminology is different.
@@ -540,7 +540,7 @@ The ZIL's structure and its interaction with txg sync\todo{ref sections} is subs
 The system is thus not applicable to ZIL-PMEM.
 
 \citerelwork{ndctl-inject-error}{NdctlinjecterrorManPage} is a subcommand of the \lstinline{ndctl} administrative tool that
-"can be used to ask the platform to simulate media errors in the NVDIMM address space to aid debugging and development of features related to error handling."
+``can be used to ask the platform to simulate media errors in the NVDIMM address space to aid debugging and development of features related to error handling."
 The kernel driver forwards injection requests to the NVDIMM firmware via ACPI.~\cite{NdctlPATCHV2}
 The errors then surface as \textit{machine check exceptions} (MCE), which is the same mechanism used to indicate detected but uncorrectable ECC errors for DRAM and PMEM.
 The functionality is useful for testing correct error in the filesystem when \textit{reading} PMEM.
@@ -691,7 +691,7 @@ Data integrity is a core feature of ZFS.~\cite{bonwickZettabyteFileSystem2003}
 ZIL-PMEM must detect corrupted log entries using an error-detecting code.
 Detected corruption must be handled \textit{correctly} as outline in the previous paragraph.
 It must also be handled gracefully with the following behavior as the baseline:
-"Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
+``Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
 Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$".
 
 \csgoal{Low Latency}
@@ -752,7 +752,7 @@ The following features were deliberately left out of our design.
 More experimentation and experience with ZIL-PMEM will benecessary to determine which features are useful in practice, how they can be realized, and how they interact with the existing requirements.
 
 \csgoal{No NUMA Awareness}
-\citeauthor{yangEmpiricalGuideBehavior2020} recommend to "avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yangEmpiricalGuideBehavior2020}.
+\citeauthor{yangEmpiricalGuideBehavior2020} recommend to ``avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yangEmpiricalGuideBehavior2020}.
 Given the latency contribution of ZIL-PMEM to overall syscall latency (ref~\ref{ch:eval}\todo{precise ref}), variations of this magnitude would be significant.
 
 \csgoal{No Data Redundancy}
@@ -1438,7 +1438,7 @@ We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
         each row represents the counter table that is stored in the entry headers of one generation.
         The table at the upper right shows the algorithm's table's content over time.
         Instead of counters, we show the entries that would cause the specific counter to be incremented.
-        We visualize row-reuse by separating new row content with a "$|$" in each cell of the reused row.
+        We visualize row-reuse by separating new row content with a ``'$|$" in each cell of the reused row.
     }
     \label{fig:prb_counters_table__example}
 \end{figure}
@@ -1763,10 +1763,11 @@ Procedure:
         body_ptr := e + sizeof(eh);
 
         if body_ptr + eh.body_len > ch_base + ch_len {
-            return Err("entry out of chunk boundary:"
-                    "a) writer implementation error "
-                    "b) undetected header corruption "
-                );
+            return Err("""
+              entry out of chunk boundary:
+                a) writer implementation error
+                b) undetected header corruption
+            """);
         }
         e += sizeof(eh) + body_len;
         e = roundup_to_next_256byte_multiple(e);
