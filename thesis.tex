@@ -1137,7 +1137,8 @@ Sections~\ref{di:prb:logstructure}, \ref{di:prb:replayapproach}, \ref{di:prb:dep
 Subsequently, we describe the storage substrate that maps the per-dataset virtual logs to the shared PMEM space.
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use to manage the PMEM space and store log entries.
 In Section~\ref{di:prb:traversal} we describe how these data structures are traversed during log recovery.
-Finally, in Section~\ref{di:prb:write}, we present the low-latency and CPU efficient design of the write path.
+Section~\ref{di:prb:write} then present the low-latency and CPU efficient design of the write path.
+Finally, Section~\ref{di:prb:api} provides an overview of the PRB API that is consumed by \textit{zil\_pmem.c}.
 
 \section{OpenZFS Background} \label{di:prb:background}
 Remember from section \ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
@@ -1211,7 +1212,8 @@ We derive the following abstract view of \textbf{what} needs to be stored \textb
     \item The log records themselves.
     \item The transaction group of the DMU transaction that the log record encodes.
     \item Structural information that defines replay order and/or logical dependencies between log entries that replay must respect.
-    \item As pointed out in the previous section, the \textit{precrash-txg} to discern replayable from obsolete log records, and some form of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
+    \item The \textit{precrash-txg} to discern replayable from obsolete log records (see previous section).
+    \item Some representation of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
 \end{itemize}
 We put the following requirements on\todo{towards?} the \textbf{storage substrate} that stores the log entries:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
@@ -1366,8 +1368,8 @@ In fact, since txgs never skip a number, we only store the value of $txg_{open}$
 \end{align*}
 \todo{compact encoding is just an idea, not in impl yet}
 
-We use the same implementation to compute/re-compute counters on the write/recovery paths.
-This works\todo{language} because the write path must use monotonically increasing generation numbers, ad the entries in the replay sequence are sorted in that order.
+We use the same algorithm to compute the counters on both write and recovery path.
+This works\todo{language, help} because the write path must use monotonically increasing generation numbers, ad the entries in the replay sequence are sorted in that order.
 The counters are stored in a table called \textit{live table}.
 If has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
 When an entry $E$ is written or visisted, it modifies the counter in the row with index $I_T := T \mod 4$ where $T := E.txg$.
@@ -1484,10 +1486,10 @@ From the perspective of HDLs that are in state \textit{logging}, this first tran
 If the system crashes before that txg is synced, a subsequent import attempt restarts from the same state as the previous one.
 HDLs that are already in state \textit{replaying} make no modifications during claiming --- they only build up DRAM state, i.e., the set of entries held back for replay.
 
-Replay is more complicated by two aspects:
+Replay is complicated by two additional aspects:
 \begin{itemize}[noitemsep]
     \item Replay of an individual log entry is not idempotent.
-    \item Log replay is spread across several transaction groups and hence not atomic.
+    \item Replay is spread across several transaction groups and hence not atomic.
         (See this chapter's Section~\ref{di:prb:background} on OpenZFS background.)
 \end{itemize}
 Our solution is to externalize all state of the replay algorithm, including the counters used for dependency tracking, to a structure called \textit{replay state}.
@@ -1508,7 +1510,7 @@ The crash-safe replay procedure performs the following steps:
         \item If the HDL is in state \textit{logging}, claiming transitions the ZIL header to \textit{replaying} and initializes the \textit{replay state} checkpoint in the ZIL header.
         \item If the HDL is already in state \textit{replaying}, the ZIL header is not modified.
     \end{itemize}
-    \item Replay recovers \textit{replay state} $C$ from the checkpoint stored in the ZIL header.
+    \item Replay recovers its \textit{replay state} from the checkpoint $C$ in the ZIL header.
     \item \label{ccReplay:construct_sequence} Replay constructs a replay sequence $S$ from the held back entries.
     \item While replaying $S$, the following happens for each entry $E_s \in S$:
         \begin{enumerate}[noitemsep,beginpenalty=100000,midpenalty=100000]
@@ -1670,7 +1672,8 @@ Its contents are as follows:\todo{language}
     \item[Body Checksum] Fletcher checksum of the body data.\todo{parametrize checksum algorithm, store in HDL?}
     \item[Header Checksum] Fletcher checksum of the header to ensure data integrity of the metdata.
     If the header checksum is corrupted then none of the other header fields can be trusted.
-    \item[Zero Padding] All unused bytes in the header are zero-padded. The padding is part of the header checksum.
+    \item[Zero Padding] The unused bytes in the header have the defined value of zero.
+    Their value is part of the header checksum.
 \end{description}
 
 Chunks must be sufficiently large to hold at least one entry because there is no mechanism to split an entry across multiple chunks.
@@ -1703,16 +1706,17 @@ As a reminder, the data layout within the chunk is as follows:
 
 In the absence of data corruption in PMEM, chunk traversal visits each valid entry in the sequence and stops at its end.
 For the case where PMEM is corrupted, we distinguish different cases:
-\begin{description}[leftmargin=1.5cm,labelindent=1cm]
-    \item[Machine check exception (MCE)] If the PMEM hardware detects uncorrectable data corruption, it raises an MCE.
-        We use the Linux kernel's \lstinline{memcpy_mcsafe} function that converts such exceptions into error values.
+\begin{description}
+    \item[Machine check exception (MCE)] If the PMEM hardware detects uncorrecta\-ble data corruption, it raises an MCE.
+        The Linux kernel provides the an API (\lstinline{memcpy_mcsafe})\todo{not the current api, but it's shorter...} which provides a memcpy-compatible interface but converts MCEs into error return values.
+        We always use this API do buffer PMEM contents in DRAM before accessing them.
         The error handling for MCE errors is the same as for invalid checksums in entry header and body, which we describe below.
-    \item[Header checksum detects corrupted header]
+    \item[Header: Detected Data Corruption]
         If the header checksum validation fails, the header was either corrupted by bitflitps or similar phenomena or never completely written.
         The latter case is critical for crash consistency on the write path as we will elaborate on in Section~\ref{di:prb:write:crashconsistency}.
         Regardless of the cause, an invalid header's values cannot be trusted, and thus the traversal stops.
-    \item[Header checksum does not detect corrupted header]
-        If the header checksum does not detect data corruption in the header, the behavior is implementation-defined.
+    \item[Header: Undetected Data Corruption]
+        If the header checksum does not detect data corruption in the header, the behavior is implementation defined.
         However, it is guaranteed that memory accesses are constrained to the entry's chunk's bounds.
     \item[Data corruption in the body]
         The traversal algorithm does not read the body but instead returns a closure that can be invoked for this purpose.
@@ -1746,7 +1750,7 @@ Procedure:
     while (e < ch_base + ch_len) {
         entry_header_t eh;
 
-        // read header with a function that handles machine-check exceptions
+        // read header with a function that handles MCEs
         memcpy_mcsafe(&eh, e, sizeof(eh))?;
 
         validate_header_checksum(eh)?;
@@ -1782,7 +1786,7 @@ Procedure:
 
 Example:
 
-    for (entry_header, read_body) in iter_chunk(ch_base, ch_len) {
+    for (entry_header, read_body) in iter_chunk(...) {
         if entry_header.txg <= precrash_txg {
             continue;
         }
@@ -1802,7 +1806,7 @@ A thread that writes to a HDL needs to perform the following tasks.
 \end{itemize}
 Our goal is a design with low write latency, good multicore-scalability, and CPU efficiency.
 We identify the following factors as particularly relevant:
-\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+\begin{description}[noitemsep]
     \item[Checksumming] Checksumming adds latency but does not concern multicore scalability since no coordination is required between writers.
         The implementation should use ZFS's optimized implementations of the Fletcher checksum.
     \item[Dependency Tracking Counters] We must update the dependency-tracking counters on every entry write operation.
@@ -1810,14 +1814,14 @@ We identify the following factors as particularly relevant:
         Parallel writes to the same HDL do not happen in ZIL-PMEM proper but are relevant for our ZVOL-specific ITXG bypass (Section~\ref{sec:itxgbypass}).
         \todo{linux percpu counter precise?}
     \item[Commit Slot Aquisition \& Chunk Replacement]
-        Commit slots and the chunk lists are PRB-wide resources that are shared by all HDLs.
+        The PRB's commit slots and chunk lists are shared among all HDLs.
         All threads that write to any HDL of the PRB compete for these resources, making it a multi-core scalability challenge.
     \item[Optane Characteristics] We develop and evaluate ZIL-PMEM for/on Intel Optane DC Persistent Memory.
         The performance characteristics of Optane DIMMs are significantly different from regular DRAM.
         \citeauthor{yangEmpiricalGuideBehavior2020} have established that the Optane PMEM hardware is organized in units of 256 bytes.
         For example, the access granularity and kind of store and cache flush instruction have significant impact on the achievable write bandwidth.
         For size of log entries written by ZIL-PMEM, the use of  AVX-512 non-temporal store instructions is recommend for highest possible performance.~\cite{yangEmpiricalGuideBehavior2020}.
-    \item[PMEM Bandwidth Limits \& Multicore Scalability] The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
+    \item[PMEM Bandwidth Limits \& Multicore Scalability] It is inherent to the programming model for persistent memory that wait time for PMEM I/O is spent on CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
         This is problematic from a CPU utilization perspective.
         For example, if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
         \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
@@ -1990,11 +1994,12 @@ This is true because the space occupied by $E_{n+1}$ contains an invalid follow 
 Stores made in Phase 1 for $E_n$ are guaranteed to be persistent before any store for $E_{n+1}$ happens due to the \lstinline{cacheflush+sfence} at the end of Phase 1.
 Note that we do not need to address the case where the chunk is full because we cannot append $E_{n+1}$ to a full chunk.
 
-The first \lstinline{sfence} (phase 1) is required for correctness if we trust the body checksum to detect partial writes instead.
-If we omitted the \lstinline{sfence} in phase 1, it would be possible that the valid entry header written in phase 2 reaches PMEM completely but the body written in phase 1 does not.
-In that case, after a crash, the traversal algorithm would observe a valid header with a body space with undefined content.
-When the replayer loads the body using \lstinline{zilpmem_prb_replay_read_replay_node}, we would rely fully on failing body checksum validation to detect the partially written body.
-If the checksum is too weak to detect the partial write, the replayer's interpretation of the undefined body contents determines subsequent behavior.
+The first \lstinline{sfence} in phase 1 is required for correctness iff we do not trust the body checksum to detect partial writes.
+If we omitted the \lstinline{sfence} in phase 1, it would be possible that the entry header written in phase 2 reaches PMEM completely but the body written in phase 1 does not.
+In that case, after a crash, the traversal algorithm would observe a valid header but a body space with undefined content.
+We would rely fully on the body checksum to detect the partially written body.
+If the checksum is too weak, the replayer's interpretation of the undefined body contents determines subsequent behavior.
+Corruption of the dataset is a likely consequence.
 
 The \lstinline{sfence} (phase 2) is required for correctness  because we must conservatively assume that the log writer's subsequent store instructions (in program order) depend on the entry having reached stable storage.
 
@@ -2059,7 +2064,7 @@ void prb_chunk_initialize_pmem(chunk_t *c);
 void prb_add_chunk(prb_t *prb, chunk_t *chunk);
 \end{lstlisting}
 
-The PRB lifecycle starts during zpool import when we allocate it using the \lstinline{prb_alloc} function.
+The zpool import procedure allocates the PRB using the \lstinline{prb_alloc} function.
 The returned \lstinline{prb_t} is owned by the caller which is responsible for freeeing it using \lstinline{prb_free} during pool export.
 
 The PRB consumer allocates the chunk objects using \lstinline{chunk_alloc}.
@@ -2067,13 +2072,15 @@ It adds the chunk to the PRB using \lstinline{prb_add_chunk}.
 The PRB assumes ownership of the chunks that are added to it.
 When the PRB is constructed for the first time, the PRB consumer must call \lstinline{prb_chunk_initialize_pmem} to reset the PMEM sequence to an empty state.
 
-When freeing the PRB using \lstinline{prb_free}, the \lstinline{free_chunks} argument determines whether the PRB should \lstinline{chunk_free} the chunks or whether the ownership moves back to the caller.
+The \lstinline{free_chunks} argument to \lstinline{prb_free} determines whether the PRB should free the chunks objects that were added to it, or whether the ownership moves back to the caller.
+Note that freeing the chunk object (\lstinline{chunk_free}) does not alter the chunk's PMEM state.
 
 \subsubsection{HDL Setup}\label{di:prb:api:hdl}
 \begin{lstlisting}
 void zil_header_pmem_init(zil_header_pmem_t *zh);
 hdl_t* prb_setup_hdl(prb_t *prb, const zil_header_pmem_t *hdr);
-void prb_teardown_hdl(hdl_t *hdl, bool abandon_claim, zil_header_pmem_t *upd);
+void prb_teardown_hdl(hdl_t *hdl,
+    bool abandon_claim, zil_header_pmem_t *upd);
 \end{lstlisting}
 
 HDL recover their DRAM state from the ZIL header (\lstinline{zil_header_pmem_t}).
@@ -2107,7 +2114,7 @@ Claiming can fail, e.g., if the procedure detects a missing entry for the HDL (c
 The API consumer defines the error handling policy.
 It can either abort pool import or choose to abandon the log.
 To abaondon the log, the API consumer must first tear down the HDL using \lstinline{prb_teardown_hdl,  abandon_claim=true, ...)} to release claims made during \lstinline{prb_claim}.
-Then, the API consumer can reset the header using \lstinline{zil_header_pmem_init} and re-setup the HDL using \lstinline{prb_setup_hdl}.
+Then, the API consumer resets the header using \lstinline{zil_header_pmem_init} and re-instantiates the HDL using \lstinline{prb_setup_hdl}.
 \todo{need third option to retry with an override flag that discards the unreplayable part of the log}
 
 After all HDLs have been claimed the pool import procedure starts \textit{txg sync} which writes out the header updates made by claiming in the \lstinline{pool_first_txg}.
@@ -2154,7 +2161,7 @@ If the HDL is in state \textit{replaying}, the function invokes the provided rep
 The callback must perform the following steps for crash-consistent replay for each replayed entry $E$.
 \begin{enumerate}[noitemsep]
     \item Start a DMU transaction $tx$.
-    \item Load the entry $E$ into a DRAM buffer using \lstinline{prb_replay_read_replay_node(rn, ...)}.
+    \item Load the entry $E$ into a DRAM buffer using \lstinline{prb_replay_read_replay_node}.
     \item Apply the change encoded in $E$ to the dataset.
     \item Update the ZIL header to the value of \lstinline{*upd}.
     \item \lstinline{dmu_tx_commit(tx)} the DMU transaction.
@@ -2175,7 +2182,7 @@ Abandonding the log is done using \lstinline{prb_destroy_log} (next section).
 \subsection{Writing Entries}
 
 \begin{lstlisting}
-bool prb_create_log_if_not_exists(hdl_t *hdl, zil_header_pmem_t *upd);
+bool prb_create_log(hdl_t *hdl, zil_header_pmem_t *upd);
 void prb_destroy_log(hdl_t *hdl, zil_header_pmem_t *upd);
 
 int prb_write_entry(hdl_t *hdl,
@@ -2183,13 +2190,14 @@ int prb_write_entry(hdl_t *hdl,
     size_t body_len, const void *body_dram);
 \end{lstlisting}
 
-After successful replay, the HDL is always in state \textit{nozil}.
-We use the \lstinline{prb_create_log_if_not_exists} to start a new log idempotently.
+After successful replay, the HDL is always in the unwriteable state \textit{nozil}.
+The log writer must use \lstinline{prb_create_log} to create a new log idempotently.
 If the HDL is in state \textit{nozil}, the function alloctes a log GUID and transitions the HDL to state \textit{logging}.
-The return value indicates whether a header update is actually necessary.
-If the header update is necessary, the caller must ensure that the transaction group that makes the changes has synced to disk before starting to write log entries.
+Otherwise, the HDL must already be in state \textit{logging} and the call is a no-op.
+If a new log was created, the caller must ensure that the transaction group that persists the ZIL header update has synced to disk before starting to write log entries.
+The caller distinguishes the caes based on the function's return value.
 
-We use the \lstinline{prb_write_entry} function to write log records to the HDL.
+Log writers use the \lstinline{prb_write_entry} function to write log records to the HDL.
 The log record is treated as an opaque blob.
 PRB does not provide facilities to version different version of the encoding.\todo{fix in upstream release?}
 In addition to the body (\lstinline{body_dram}, \lstinline{body_len}), the log writer must provide two pieces of metadata:
