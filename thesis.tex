@@ -784,7 +784,6 @@ Second, the maximum amount of log entry space required from any ZIL implementati
 For ZIL-LWB, small SLOG devices of \SI{16} to \SI{32}{GiB} are sufficient in practice.\todo{ref ix systems truenas M}
 Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
-
 \section{Overview}
 This section summarizes the ZIL-PMEM design at a high level.
 The subsequent sections then provide more detail on each abstractions' design and implementation.
@@ -797,41 +796,35 @@ ZIL-LWB is the current ZIL's persistence implementation.
 It uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
 ZIL-PMEM disables metaslab allocation for its PMEM SLOG device and uses the PMEM space directy.
 
-The PMEM space is partitioned into fixed-size segments.
-Each segment has a corresponding in-DRAM data structure called \textit{chunk} that tracks the segment's kernel-virtual base address and length.
-Chunks are organized in a pool-wide in-DRAM data structure called \textit{PRB}.
-PRB implements a high-performance, scalable, crash-consistent, data-corruption-checking and garbage-collected write-ahead log.
-It stores log entries in the PMEM chunk's segments as a contiguous append-only sequence.
-Full chunks are stashed away and become reusable for logging when the youngest entry's transaction group has synced to the main pool.
-After a system crash, a new instance of PRB is instantiated with the same chunks that the pre-crash PRB instance used.
-The new instance scans each chunk for log entries that need to be replayed.
-This process is called \textit{claiming}.
-The entries' physical location in PMEM is irrelevant for replay.
-Instead, each entry stores sufficient metadata to determine whether an entry needs to be replayed, to detect missing entries, and to find a deterministic a replay order.
-Once claiming is complete, the new PRB instance is ready for replay and logging by datasets.
-It only uses those chunks for logging that do not have a replay claim.
+On top of PMEM we develop a data structure called PRB.
+PRB consumes fixed-size contiguous segments of PMEM (\textit{chunks}) and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
+The write path is scalable to many concurrent writers and features a mechanism to avoid excessive on-CPU waiting for PMEM I/O.
+Log entries stored in PRB are automatically garbage-collected when they become obsolete because their transaction group has been synced.
 
-PRB is a pool-wide data structure but the ZIL is written and replayed on a per-dataset basis.
-For this purpose, PRB defines a data structure called HDL that holds the per-dataset PRB state, such as the log's GUID, dependency-tracking state and replay position.
-All interaction that is scoped to a dataset happens through the HDL, not PRB.
-Whereas PRB/HDL implements PMEM persistence, it is the HDL user's responsibility to persist HDL state in the main pool.
+PRB provides a pool-wide storage substrate for log entries but does not define any structure.
+This is the role of the \textit{HDL} abstraction which implements a mostly sequential log structure on top of PRB.
+Each dataset in the zpool has a separate HDL to which it writes log entries.
+The HDL adds metadata to the entry that attributes the entries to the HDL and encodes the log's structure.
+After a system crash, the HDLs scan PRB for entries need to be replayed and \textit{claim} them to block them from garbage collection.
+For replay, HDL provides a ZIL-compatible API that applies the changes that are encoded in the log entries in sequential, deterministic order.
+Loss of entries, e.g., due to data corruption, is handled as gracefully as possible under the constraints of the logical dependencies encoded in the log structure.
 
-The keystone to the ZIL-PMEM architecture is the per-dataset in-DRAM struct \lstinline{zilog_t}.
-Before the introduction of ZIL kinds, \lstinline{zilog_t} implemented all ZIL-related functionality.
+We use PRB/HDL to persist the ZIL log records for pools with the ZIL-PMEM ZIL kind.
+For this purpose\todo{language}, we refactor the existing \textit{zil.c} code module.
+Before the introduction of ZIL kinds, the struct \lstinline{zilog_t} implemented all ZIL-related functionality.
 With ZIL kinds, \lstinline{zilog_t} acts as an abstract base class that encapsulates shared ZIL functionality.
-This includes the definitions of the ZIL log record format and the data structures that track which log entries need to be persisted when sync semantics are requested by a syscall.
+This includes the definitions of the ZIL log record format and the \textit{itxg} data structure that tracks which log entries need to be persisted when synchronous semantics are requested by a syscall.
 % % for a whole dataset (\lstinline{sync()}), a single file (\lstinline{fsync()}) or an individual syscall (e.g. \lstinline{write()} on an \lstinline{O_SYNC} file descriptors).
 The code that is responsible for persisting log entries resides in ZIL-kind-specific subclasses.
 The pool's ZIL kind determines which subclass is instantiated at runtime.
-The subclass for ZIL-LWB is \lstinline{zilog_lwb_t} which contains the original LWB code.
+The subclass for ZIL-LWB is \lstinline{zilog_lwb_t} which contains the original LWB code that we move from \textit{zil.c} into the new \textit{zil\_lwb.c} module.
 The subclass for ZIL-PMEM is \lstinline{zilog_pmem_t}.
-It is a thin wrapper around HDL's logging and replay methods.
-\lstinline{zilog_pmem_t} persists HDL state in the dataset's ZIL header.
-The \lstinline{zil_pmem} module --- which defines \lstinline{zilog_pmem_t} --- is the component that integrates PRB/HDL into ZFS:
-it allocates the chunks, constructs the PRB and creates and destroys HDLs in synchrony with their datasets.
+It is a thin wrapper around HDL's methods for writting and replaying log entries.
+\lstinline{zilog_pmem_t} is implemented in the \textit{zil\_pmem.c} code module.
+This module also contains the code that sets up PRB/HDL on top of the PMEM SLOG vdev, and the code that synchronizes the lifecylces of HDLs their corresponding datasets.
 
-\begin{figure}[h]
-    \includegraphics[height=20cm,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
+\begin{figure}[H]
+    \includegraphics[height=20cm,angle=270,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
     \caption{Overview of the system architecture as described in this section.}
 \end{figure}~\todo{actual figure}
 
