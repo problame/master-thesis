@@ -585,7 +585,7 @@ However, the existing ZIL-PMEM unit tests already test many scenarios for data c
 \subsection{The ZIL API}\label{openzfs:the_zil_api}
 The \textit{zil.c} code module implements all ZIL functionality.
 The ZIL is a per-dataset log and thus all ZIL state is kept in per-dataset structures.
-On disk, this state is kept in the \lstinline{zil_header_t} structure, which is part of the \lstinline{objset_phys_t} structure.
+On disk, this state is kept in the \lstinline{zil_header_t} structure, which is part of the \lstinline{objset_phys_t} structure, which in turn is owned by the \lstinline{dsl_dataset_phys_t} structure.
 \lstinline{zil_header_t} contains the pointer to the first LWB in the dataset's ZIL chain.
 It also contains fields that track claiming and replay progress.
 In DRAM, the per-dataset state is kept in the \lstinline{zilog_t} structure.
@@ -620,10 +620,10 @@ The \textit{async tree} is only used for ITXs that are scoped to a particular fi
 For example, an ITX that logs the creation of a file is added to the \textit{sync list} whereas a write within that file is added to the \textit{async tree}.
 
 \lstinline{zil_commit} uses the \lstinline{itxg}s to build a linear \textit{commit list} of ITXs that it can subsequently persist to stable storage.
-The pseudo-code in Figure~\ref{lst:zil_commit} illustrates the construction of the commit list by \lstinline{zil_commit}.
+The following pseudo-code illustrates the construction of the commit list by \lstinline{zil_commit}.
 Figure~\ref{fig:zil_per_itxg_state_example} provides an example for a single transaction group.
-\begin{figure}[h]
-    \begin{lstlisting}
+
+\begin{lstlisting}
 zil_commit(object_id)
     commit_list := []
     for each unsynced transaction group 'txg':
@@ -639,11 +639,8 @@ zil_commit(object_id)
         wait until the open txg has synced
     return
 \end{lstlisting}
-    \caption{Pseudo-code that illustrates the work done by \lstinline{zil_commit()}.}
-    \label{lst:zil_commit}
-\end{figure}
 
-\begin{figure}[h]
+\begin{figure}[H]
     \includegraphics[height=0.5\textheight]{fig/zil_single_itxg_example}
     \caption{
         An example of how an itxg is filled with ITXs and how \lstinline{zil_commit} drains it into a commit list.
@@ -651,6 +648,7 @@ zil_commit(object_id)
     }
     \label{fig:zil_per_itxg_state_example}
 \end{figure}
+
 
 
 \chapter{Why ZIL-LWB Is Slow On PMEM}\label{ch:lwb_analysis}
@@ -2517,7 +2515,46 @@ Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{langua
 \end{figure}
 
 \section{ZILOG\_PMEM\_T}\label{sec:zilpmem:zilog}
-The role of \lstinline{zilog_pmem_t} is to adapt between the ZIL domain and the domain.
+The \lstinline{zilog_pmem_t} structure and its methods in the \lstinline{zilpmem_vtable} implement log writing, claiming, and replay for the ZIL-PMEM ZIL kind.
+Its role is that of an adaptor between the ZIL kind independent \textit{itxg} structure and the HDL that is associated with the dataset via the \textit{HDL map}.
+
+\begin{description}
+    % \item[ZIL lifecycle assertions]
+    \item{Error Handling During Pool Import \& Claiming}
+        The vtable was extracted from the original ZIL(-LWB) and inherits its error handling model:
+        ZIL-LWB checks the ZIL chain twice during pool import.
+        The first pass (\lstinline{zil_check_log_chain}) checks for log corruption to fail the pool import early if the log is corrupt.
+        The second pass (\lstinline{zil_claim}) does ZIL-LWB's version of claiming and records the maximum claimed log record in the ZIL header.
+        It discards traversal errors because it assumes that no online log corruption happend since the first pass.
+        (Note that \lstinline{zil_claim} only has a return value due to software-technical reasons. It must always return zero.)
+
+        ZIL-LWB's approach opens a window for time-of-check vs time-of-use bugs which we discovered and reported during development.\todo{ref}
+        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through a return value, and is designed to correctly handle online log corruption during claiming and replay (see Section~\ref{di:prb:ccrecovery}).
+        Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.
+        Until that shortcoming of our implementation is addressed, we trigger a kernel panic if \lstinline{prb_claim} returns an error.
+
+    \item[ZIL Header Updates]
+        Remember from Section~\ref{di:prb:api:hdl} on the PRB/HDL API that the responsibility of \textit{persisting} the ZIL-PMEM header is split:
+        HDL APIs that update the ZIL header return the updated version through an \textit{out}-parameter and the API consumer is responsible for persisting the update to the main pool.
+
+        Remember also the \lstinline{zil_sync} API from Section~\ref{zilsync}.
+        \textit{Txg sync} invokes this method on every dataset's \lstinline{zilog_t} in the \textit{syncing} txg.
+        The role of \lstinline{zil_sync} is to modify the dirty copy of the ZIL header that is stored in \textit{objset_phys_t::os_zil_header}.
+        Unlike most components at this software layer of ZFS, the ZIL implementation is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
+
+        For ZIL-PMEM, header updates are simple because HDL always provides a full, updated version of the ZIL header as a \textit{value}.
+        We queue the updates using the common ZFS idiom of a 4-ary array that is indexed by \lstinline{[txg&3]}.
+        Each cell contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
+        A header update \lstinline{(txg_u, header_u)} overwrites the cell at index \lstinline{txg_u&3}.
+        Updates must only be made from the \textit{open} or \textit{quiescing} txgs.
+        \lstinline{zil_sync} then reads cell \lstinline{C := updates[syncing_txg&3]}.
+        If \lstinline{C.txg == syncing_txg}, it updates the ZIL header to \lstinline{C.header}.
+        Otherwise, it does not modify the ZIL header.
+
+    \item[WR\_NEED\_COPY Handling] 
+
+    \item[Replay Adaptation] 
+\end{description}
 
 \section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
 In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
