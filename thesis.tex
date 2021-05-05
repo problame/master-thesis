@@ -2481,29 +2481,40 @@ Due to time constraints, we use a simplistic partitioning scheme that does not n
 \end{itemize}
 
 \section{Dataset \& HDL Lifecycle Synchronization}\label{sec:zilpmem:hdllifecycle}
+Whereas \lstinline{prb_t} and \lstinline{spa_t}'s allocation lifecycles line up nicely\todo{language}, the same is not true for datasets and HDLs:
+HDLs must be set up during pool import to support claiming which builds up DRAM-only state that cannot be recovered later.
+Specifically, this state are the holds on chunks that contain entries that the HDL will need to replay when the dataset is mounted.
+HDL objects live until either their dataset is unmounted or the zpool is exported.
+In contrast, the per-dataset runtime state is allocated on demand (\lstinline{dsl_dataset_t}, its \lstinline{objset_t} and the objset's \lstinline{zilog_t}).
+Demand allocation means that a consumer of the DRAM structure \textit{holds} it by ID.
+If the consumer is the first holder, the \textit{holding} procedure allocates the runtime object and recovers the state from the corresponding persistent structure (\lstinline{dsl_dataset_phys_t}, \lstinline{objset_phys_t} and, partially, \lstinline{zil_header_t}).
+It then increments a reference counter and returns the pointer to the consumer.
+Conversely, if there was already another holder, the allocation and recovery step are skipped.
+Once a consumer is finished with a dataset, it \textit{releases} its hold on the DRAM structure.
+The last consumer that releases the structure frees the DRAM allocation.
 
-% The basic problem with the lifecycles is that the chunk allocation state
-% for a given PMEM vdev is excluisvely kept in DRAM. It has the same
-% lifetime as a vdev. Then there's also state per objset (which chunks
-% the objset has claimed) that needs to be kept in DRAM until we export
-% the pool or do replay or destroy the (physical) objset.
+The mismatch of HDL and dataset object lifetimes is relevant to ZIL-PMEM because the methods of \lstinline{zilog_pmem_t} that implement ZIL-PMEM need access to their dataset's HDL for claiming, replay, and writing log entries.
+Our solution is to add a search tree to \lstinline{spa_t} which we call \textit{HDL map}.
+It maps from the dataset's object set ID to its HDL.
+We add the necessary callbacks to synchronize the \textit{HDL map} with the dataset layer.
+%git show ':/make it work (high-level description of what we do in commit msg)'
+\begin{itemize}[noitemsep]
+    \item During pool import, after setting up the PRB but before claiming, we iterate over the head datasets in the pool, set up the HDLs for each of them, and add them to the \textit{HDL map}.
+    \item When a dataset is created (\lstinline{dmu_objset_create_impl_dnstats}), we set up its HDL and add it to \textit{HDL map}.
+    \item When a dataset is destroyed (\lstinline{zil_destroy_sync}), we tear down the HDL and remove it from the \textit{HDL map}.
+\end{itemize}
 
-% The per-PMEM-vdev state kept in-DRAM has lifetime MIN(spa_t in-DRAM, vdev healthy).
-% That's struct zilpmem_prb_t and the wrapping spa_prb_t.
+Whenever the ZIL-PMEM implementation needs access to th dataset's HDL, it looks up the HDL in the search tree and aquires a reference to it.
+We use reference counting to assert that there are no dangling references when the HDL is destroyed in \lstinline{zil_destroy_sync}.
+We protect the \textit{HDL map} against concurrent modifications using ZFS's \textit{read mostly lock} which is a reader-writer-lock that is optimized for read locks.
+Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{language} of objects, their lifetimes, and reference relationships.
 
-% The per-objset state (chunks held during claiming) needs to live
-% MIN(spa_t in-DRAM, objset existence). It cannot be stored in the
-% objset_t because objset_t are frequently allocated and freed in
-% dmu_objset_{hold,rele}, particularly during pool import.
-
-% We solve this by storing the per-objset state in the spa_prb_handle_t's
-% which live in spa_zilpmem. spa_prb_handle_t's wrap
-% zilpmem_prb_handle_t's.
-% spa_prb_handle_t's are alloced during claiming or when a dataset is
-% created.
-% spa_prb_handle_t's are freed when a dataset is destroyed or when the
-% spa is unloaded. During spa unload we ensure that the claimed chunks
-% are not overwritten.
+\begin{figure}[H]
+    \centering
+    \missingfigure[figheight=7cm]{}
+    \caption{The different allocation lifecycles of HDLs and datasets, and how we bridge them for ZIL-PMEM.}
+    \label{fig:zilpmem:datasethdlsync}
+\end{figure}
 
 \section{ZILOG\_PMEM\_T}\label{sec:zilpmem:zilog}
 The role of \lstinline{zilog_pmem_t} is to adapt between the ZIL domain and the domain.
