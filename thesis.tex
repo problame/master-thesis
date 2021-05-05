@@ -2412,6 +2412,11 @@ Synchronization is handled internally.
 
 \chapter{ZIL-PMEM}\label{ch:zilpmem}
 In this chapter we describe how we integrate PRB/HDL into ZFS in the form of the new \textit{ZIL-PMEM} ZIL kind\todo{check ZIL kind vs ZIL Kind capitalization}.
+In Section~\ref{sec:pmemspavdev} we describe how we make the allocatable space of a PMEM SLOG available for direct access by ZIL-PMEM.
+Subsequently, we describe in Section~\ref{sec:zilpmem:prbconstruction} how we use this space to construct the zpool's PRB instance on top of it.
+Section~\ref{sec:zilpmem:hdllifecycle} presents how we synchronize the lifecycles of head datasets and their corresponding HDLs.
+With this preparatory work out of the way, Section~\ref{sec:zilpmem:zilog} then presents the \lstinline{zilog_pmem_t} object with implements the ZIL-PMEM ZIL kind.
+The last Section~\ref{sec:itxgbypass} describes an optimization for ZVOLs that bypasses the shared ITX layer to leverage HDL's parallel logging capability.
 
 \section{PMEM-aware SPA \& VDEV layer}\label{sec:pmemspavdev}
 Our goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
@@ -2443,6 +2448,8 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
     }
 \end{figure}
 
+\section{}
+The role of \lstinline{zilog_pmem_t} is to adapt between the ZIL domain and the domain.
 
 \section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
 In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
