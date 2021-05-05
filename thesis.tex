@@ -2422,14 +2422,14 @@ The last Section~\ref{sec:itxgbypass} describes an optimization for ZVOLs that b
 Prior to the work presented in this section, ZFS had no concept of persistent memory.
 Fortunately, the requirements of ZIL-PMEM are very limited:
 \begin{itemize}[noitemsep]
-    \item PMEM SLOG vdevs must be recognized as such when they are added to the pool.
+    \item \texttt{/dev/pmem} SLOGs must be recognized as PMEM SLOG vdevs when they are added to the pool.
     \item The ability to access the PMEM SLOG vdev's allocatable space via the PMEM programming model is vital for its use by PRB/HDL.
         If the ability is lost, the PMEM SLOG vdev must be considered faulty and pool import must be refused.
     \item The allocatable space of the PMEM SLOG vdev must be reserved for use by ZIL-PMEM.
 \end{itemize}
 Our approach consists of two steps.
-In a first step, we make the vdev layer generally aware of persistent memory devices.
-In the second step, we present how ZIL-PMEM reserves the allocatable space on PMEM SLOGs.
+The first step makes the VDEV layer generally aware of persistent memory devices.
+The second step then presents how ZIL-PMEM reserves the allocatable space on PMEM SLOGs.
 
 \textbf{PMEM Aware VDEV Layer}
 We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
@@ -2453,39 +2453,63 @@ The allocatable space on the device is thus never read or written through ZIO an
 Note that reads and writes to VDEV labels which store parts of the zpool config are located outside of the allocatable space.
 Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
 
-\begin{figure}[h]
-    \includegraphics[width=\textwidth]{fig/pmem_aware_vdev_layer_before_after}
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=6cm]{fig/pmem_aware_vdev_layer_before_after}
     \caption{
         Comparison of the zpool layout before and after the addition of the \lstinline{is_dax} vdev attribute and the \lstinline{exempt} allocation class for PMEM SLOGs.
     }
 \end{figure}
 
-\section{}
+\section{PRB Construction}\label{sec:zilpmem:prbconstruction}
+The PRB DRAM object's (\lstinline{prb_t}) lifetime is a contiguous sub-span of the lifetime of the in-DRAM object that represents an imported zpool (\lstinline{spa_t}).
+The pool import procedure first instantiates the VDEV' DRAM representation and registers them with the metaslab alloctor.
+After the vdevs structures have been allocated, we add search for PMEM SLOG vdevs.
+If the pool contains exactly one PMEM SLOG vdev in the \textit{exempt} class, the pool's ZIL kind is ZIL-PMEM and we allocate the PRB structure.
+The pointer to the \lstinline{prb_t} is stored in \lstinline{spa_t}.
+When the pool is exported, the \lstinline{spa_unload} procedure frees the \lstinline{prb_t}.
+If the single PMEM SLOG vdev in the \textit{exempt} class cannot be found, the pool's ZIL kind is ZIL-LWB and we neither allocate nor free the PRB.
+
+Immediately after allocating the PRB object, we allocate the chunk objects and add them to the PRB.
+If the pool is being created, we reset the chunks' to a known PMEM state (\lstinline{prb_chunk_initialize_pmem}) before adding them to PRB.\todo{impl is a little different, doesn't matter}
+Due to time constraints, we use a simplistic partitioning scheme that does not need to persist any metadata:
+\begin{itemize}[noitemsep]
+    \item Chunks have a hard-coded chunk size of \SI{128}{MiB}.
+    \item We partition the allocatable space as a contiguous array of PMEM segments of that size, starting at offset zero.
+    \item Assuming \lstinline{A}~bytes of space, this yields \lstinline{nchunks := A >> 27} chunks and leaves \lstinline{nchunks * (1<<27)} bytes of wasted space.
+    \item We do not store \lstinline{nchunks} anywhere. Instead, we prohibit resizing of PMEM SLOG vdev which allows us to deterministically re-compute the value.
+\end{itemize}
+
+\section{Dataset \& HDL Lifecycle Synchronization}\label{sec:zilpmem:hdllifecycle}
+
+% The basic problem with the lifecycles is that the chunk allocation state
+% for a given PMEM vdev is excluisvely kept in DRAM. It has the same
+% lifetime as a vdev. Then there's also state per objset (which chunks
+% the objset has claimed) that needs to be kept in DRAM until we export
+% the pool or do replay or destroy the (physical) objset.
+
+% The per-PMEM-vdev state kept in-DRAM has lifetime MIN(spa_t in-DRAM, vdev healthy).
+% That's struct zilpmem_prb_t and the wrapping spa_prb_t.
+
+% The per-objset state (chunks held during claiming) needs to live
+% MIN(spa_t in-DRAM, objset existence). It cannot be stored in the
+% objset_t because objset_t are frequently allocated and freed in
+% dmu_objset_{hold,rele}, particularly during pool import.
+
+% We solve this by storing the per-objset state in the spa_prb_handle_t's
+% which live in spa_zilpmem. spa_prb_handle_t's wrap
+% zilpmem_prb_handle_t's.
+% spa_prb_handle_t's are alloced during claiming or when a dataset is
+% created.
+% spa_prb_handle_t's are freed when a dataset is destroyed or when the
+% spa is unloaded. During spa unload we ensure that the claimed chunks
+% are not overwritten.
+
+\section{ZILOG\_PMEM\_T}\label{sec:zilpmem:zilog}
 The role of \lstinline{zilog_pmem_t} is to adapt between the ZIL domain and the domain.
 
 \section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
 In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
-
-
-
-\begin{lstlisting}
-    typedef struct zilpmem_replay_state_phys {
-        uint64_t claim_txg;
-        eh_dep_t resume_state_active;
-        eh_dep_t resume_state_last;
-    } zilpmem_replay_state_phys_t;
-    
-    typedef struct eh_dep {
-        uint64_t eh_last_gen;
-        prb_deptrack_count_pair_t eh_last_gen_counts[TXG_CONCURRENT_STATES];
-    } eh_dep_t;
-    
-    typedef struct prb_deptrack_txg_seq_pair {
-        uint64_t dtp_txg;	/* 0 <=> invalid pair */
-        uint64_t dtp_count;	/* 0 <=> invalid pair */
-    } prb_deptrack_count_pair_t;
-    \end{lstlisting}
-    
 
 \chapter{Evaluation}\label{ch:eval}
 \section{Correctness}
