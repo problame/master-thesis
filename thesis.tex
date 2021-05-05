@@ -2419,8 +2419,19 @@ With this preparatory work out of the way, Section~\ref{sec:zilpmem:zilog} then 
 The last Section~\ref{sec:itxgbypass} describes an optimization for ZVOLs that bypasses the shared ITX layer to leverage HDL's parallel logging capability.
 
 \section{PMEM-aware SPA \& VDEV layer}\label{sec:pmemspavdev}
-Our goal is to disable the SPA's metaslab allocation on PMEM SLOG devices so that ZIL-PMEM can use the allocatable space as PRB chunks.
+Prior to the work presented in this section, ZFS had no concept of persistent memory.
+Fortunately, the requirements of ZIL-PMEM are very limited:
+\begin{itemize}[noitemsep]
+    \item PMEM SLOG vdevs must be recognized as such when they are added to the pool.
+    \item The ability to access the PMEM SLOG vdev's allocatable space via the PMEM programming model is vital for its use by PRB/HDL.
+        If the ability is lost, the PMEM SLOG vdev must be considered faulty and pool import must be refused.
+    \item The allocatable space of the PMEM SLOG vdev must be reserved for use by ZIL-PMEM.
+\end{itemize}
+Our approach consists of two steps.
+In a first step, we make the vdev layer generally aware of persistent memory devices.
+In the second step, we present how ZIL-PMEM reserves the allocatable space on PMEM SLOGs.
 
+\textbf{PMEM Aware VDEV Layer}
 We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
 The attribute indicates whether the VDEV supports direct access through the DAX APIs.
 DAX capability is determined by the \lstinline{zpool} command when creating or adding devices to a pool, using \lstinline{libblkid}.
@@ -2433,12 +2444,13 @@ It merely records the fact that a VDEV is required to be directly accissble via 
 This ensures that future versions of ZFS can leverage DAX capability of main pool VDEVs without needing to change the on-disk format.
 Consequently, \lstinline{is_dax} becomes an independent \textit{zpool feature}.
 
-For ZIL-PMEM, we need to disable metaslab allocation on the PMEM SLOG to make the allocatable space available for PRB/HDL.
+\textbf{Space Reservation For ZIL-PMEM}
+For ZIL-PMEM, we disable metaslab allocation on the PMEM SLOG to make the allocatable space available for PRB/HDL.
 For this purpose, we introduce a new allocation class called \lstinline{exempt}.
 When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
 This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used for block allocation.
 The allocatable space on the device is thus never read or written through ZIO and available for use by ZIL-PMEM.
-Note that reads and writes to VDEV labels\todo{need to explain this? short analogy: partition header} are located outside of the allocatable space.
+Note that reads and writes to VDEV labels which store parts of the zpool config are located outside of the allocatable space.
 Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
 
 \begin{figure}[h]
