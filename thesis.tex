@@ -649,7 +649,15 @@ zil_commit(object_id)
     \label{fig:zil_per_itxg_state_example}
 \end{figure}
 
+\subsubsection{zil\_sync}\label{zilsync}
+Maybe we can avoid this? It's only relevant in ZIL-PMEM.
 
+\subsection{Replay}
+
+
+\subsection{Log Record Types}
+% \label{wrneedcopy}
+% WR\_INDIRECT 
 
 \chapter{Why ZIL-LWB Is Slow On PMEM}\label{ch:lwb_analysis}
 \blindtext\todo{blindtext}
@@ -2517,9 +2525,17 @@ Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{langua
 \section{ZILOG\_PMEM\_T}\label{sec:zilpmem:zilog}
 The \lstinline{zilog_pmem_t} structure and its methods in the \lstinline{zilpmem_vtable} implement log writing, claiming, and replay for the ZIL-PMEM ZIL kind.
 Its role is that of an adaptor between the ZIL kind independent \textit{itxg} structure and the HDL that is associated with the dataset via the \textit{HDL map}.
+Apart from the exceptions listed below, the methods in the vtable are thin wrappers around HDL's interfaces.
+The general pattern for a ZIL-PMEM method is as follows:
+\begin{enumerate}
+    \item Aquire a reference to the dataset's HDL from \textit{HDL map}.
+    \item Invoke the HDL method.
+    \item Release the HDL reference.
+\end{enumerate}
+To avoid reference counting overhead for HDLs on the write path, we hold a HDL reference once when the ZIL is opened for writing and store it in the \lstinline{zilog_pmem_t} until the ZIL is destroyed because the dataset is unmounted.
 
+The following cases required additional adapter code:
 \begin{description}
-    % \item[ZIL lifecycle assertions]
     \item{Error Handling During Pool Import \& Claiming}
         The vtable was extracted from the original ZIL(-LWB) and inherits its error handling model:
         ZIL-LWB checks the ZIL chain twice during pool import.
@@ -2539,7 +2555,7 @@ Its role is that of an adaptor between the ZIL kind independent \textit{itxg} st
 
         Remember also the \lstinline{zil_sync} API from Section~\ref{zilsync}.
         \textit{Txg sync} invokes this method on every dataset's \lstinline{zilog_t} in the \textit{syncing} txg.
-        The role of \lstinline{zil_sync} is to modify the dirty copy of the ZIL header that is stored in \textit{objset_phys_t::os_zil_header}.
+        The role of \lstinline{zil_sync} is to modify the dirty copy of the ZIL header that is stored in \lstinline{objset_phys_t::os_zil_header}.
         Unlike most components at this software layer of ZFS, the ZIL implementation is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
 
         For ZIL-PMEM, header updates are simple because HDL always provides a full, updated version of the ZIL header as a \textit{value}.
@@ -2551,9 +2567,18 @@ Its role is that of an adaptor between the ZIL kind independent \textit{itxg} st
         If \lstinline{C.txg == syncing_txg}, it updates the ZIL header to \lstinline{C.header}.
         Otherwise, it does not modify the ZIL header.
 
-    \item[WR\_NEED\_COPY Handling] 
+    \item[WR\_NEED\_COPY Chunking]
+        Remember from Section~\ref{wrneedcopy} that the ZIL queues up ITXs for \textit{all} changes to a dataset in DRAM.
+        To avoid unnecessary memory usage and performance overhead, ITXs that log write operations are not always prepared as a ready-to-write copy of the log entry.
+        If a write is not likely to \lstinline{zil_commit}ted or exceeds a certain size, the \lstinline{zfs_log_write} function creates a \lstinline{WR_NEED_COPY} ITX.
+        Such ITXs only contain the object number of the DMU object and the range that was modified.
+        The creation of the log record is deferred until \lstinline{zil_commit} which splits up the range into segments that fit a \lstinline{WR_COPY} log entry.
+        The effect is that the single \lstinline{WR_NEED_COPY} ITX is written as a series of \lstinline{WR_COPIED} records.
 
-    \item[Replay Adaptation] 
+        For ZIL-PMEM, we implement a re-usable abstraction that turns a single \lstinline{WR_NEED_COPY} record into an iterator over \lstinline{WR_COPY} entries.
+        For each entry yielded by the iterator, \lstinline{zil_commit} writes \lstinline{prb_write_entry}.
+        Whereas the repeated chunk aquisition and dependency tracking incurs a small overhead, this approach increases fairness among HDLs in the case of committer slot contention.
+
 \end{description}
 
 \section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
