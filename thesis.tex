@@ -1168,10 +1168,10 @@ For example, we could lose power so that txg 42 is the last-synced txg whereas 4
 Since the replay callbacks for the individual log records are not idempotent, the ZIL must ensure that, after the crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
 For example, the second replay attempt could apply the remaining set of changes in transaction group 83, but it may also be possible that they are spread over several txgs, e.g., 83 and 84.
 The consequence for any ZIL implementation is that it needs to persist the following data, e.g., in the ZIL header:
-\begin{itemize}[noitemsep]
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Precrash-txg] The \textit{precrash-txg} for open logs at the first time during pool import so that it can filter log entries by that criterion, and
     \item[Replay progress] Information that tracks which log entries have already been replayed so that replay can be resumed correctly after a crash.
-\end{itemize}
+\end{description}
 
 \begin{figure}[H]
     \centering
