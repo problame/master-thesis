@@ -196,9 +196,8 @@ in Chapter~\ref{ch:litreviewandbackground} we
 Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB performance with a PMEM SLOG, motivating a new PMEM-specific ZIL implementation.
 Our solution, ZIL-PMEM, is then presented Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the overall design.
-Chapter~\ref{ch:zilkinds} describes how we re-architected ZFS to support multiple ZIL implementations (\textit{ZIL Kinds}).
 Our main contribution, the \textit{PRB/HDL} the data structure, is then presented in Chapter~\ref{ch:prbhdl}.
-Chapter~\ref{ch:zilpmem} then presents how we integrate integrate PRB/HDL as the new \textit{ZIL-PMEM} ZIL kind.
+Chapter~\ref{ch:zilpmem} then presents how we integrate integrate PRB/HDL into ZFS.
 We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a summary of our work in Chapter~\ref{ch:summary}.
 
 %In the following sections, we present
@@ -828,11 +827,9 @@ It is a thin wrapper around HDL's methods for writting and replaying log entries
 \lstinline{zilog_pmem_t} is implemented in the \textit{zil\_pmem.c} code module.
 This module also contains the code that sets up PRB/HDL on top of the PMEM SLOG vdev, and the code that synchronizes the lifecylces of HDLs their corresponding datasets.
 
-The subsequent chapters describe each isolatable aspect of the design\todo{help, language} in more detail.
-In Chapter~\ref{ch:zilkinds}, we describe how we refactor ZFS and the ZIL in particular to support different persistence strategies through \textit{ZIL kinds}.
-This work is not specific to PMEM but required for coexistence of ZIL-PMEM with ZIL-LWB.
-Our main contribution --- PRB/HDL --- is then presented in Chapter~\ref{ch:prbhdl}.
-Chapter~\ref{ch:zilpmem} is the the cornerstone\todo{ok?} where we describe how we integrate combine the work presented in the previous two\todo{check} chapters into the new \textit{ZIL-PMEM} ZIL kind.
+The next two\todo{check} chapters describe our design in detail.
+Chapter~\ref{ch:prbhdl} describes our main contribution --- the PRB/HDL data structure.
+The integration of PRB/HDL into ZFS is then presented in Chapter~\ref{ch:zilpmem}.
 
 \begin{figure}[H]
     \includegraphics[height=20cm,angle=270,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
