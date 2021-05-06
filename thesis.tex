@@ -181,7 +181,7 @@ Given
     \item our findings on\todo{right prep?} the ZIL's and ZIO pipeline's significant latency overhead, as well as the fact that
     \item grouping log records into log-write \textit{blocks} is unnecessary with byte-addressable PMEM,
 \end{itemize}
-we believe that the current ZIL design is fundamentally unfit to reap the performance available with PMEM.
+we come to the conclusion that the current ZIL design is fundamentally unfit to reap the performance advantages of PMEM.
 We present \textbf{ZIL-PMEM}, a new implementation of the ZIL that bypasses the ZIO pipeline completely and persists log entries directly to PMEM.
 It coexists with the existing ZIL which we refer to as \textit{ZIL-LWB} in the remainder of this document.
 ZIL-PMEM achieves 140k random 4k sync write IOPS with a single thread~($\sim$~\SI{7.1}{us}) and scales up to 400k IOPS at 8 threads before it becomes CPU-bound.
@@ -658,8 +658,43 @@ Maybe we can avoid this? It's only relevant in ZIL-PMEM.
 % \label{wrneedcopy}
 % WR\_INDIRECT 
 
-\chapter{Why ZIL-LWB Is Slow On PMEM}\label{ch:lwb_analysis}
-\blindtext\todo{blindtext}
+\chapter{ZIL-LWB on PMEM}\label{ch:lwb_analysis}
+The motivation for this thesis is the significant latency overhead of the current ZIL implementation (ZIL-LWB) compared to the raw PMEM hardware.
+In this chapter, we describe the benchmarking setup (Section~\ref{ch:lwb_analysis:setup}) to measure ZIL-LWB's overhead and present the resulting data in Section~\ref{ch:lwb_analysis:results}.
+We proceed with a breakdown of the latency overhead by the ZFS components that involved in the ZIL write path.
+Our findings (Section~\ref{ch:lwb_analysis:breakdown}) show that up to XX\% of the overall latency for a single 4k synchronous random write operation are ZIL-LWB-specific overhead, including up to YY\% ZIO pipeline overhead.
+We conclude that ZIL-LWBs data structure and the ZIO pipeline are unfit to take advantage of PMEM-level performance, motivating the development of ZIL-PMEM.
+
+\section{Benchmark Setup}\label{ch:lwb_analysis:setup}
+Our benchmarking system has the following hardware configuration:
+\begin{description}
+    \item[CPU] 2 x Intel(R) Xeon(R) Silver 4215 CPU \@ 2.50GHz
+    \item[Mainboard] Supermicro X11DPi-N(T)/X11DPi-NT, BIOS 3.1a 10/16/2019
+    \item[DRAM] 16 x Micron 8GiB DDR4 2933MT/s (18ASF2G72PDZ-2G9E1), evenly distributed across sockets.
+    \item[NVMe] 3 x Micron PRO 960GB NVMe, 512 byte namespace format (MTFDHBA960TDF)
+    \item[PMEM] 4 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), two per socket.
+\end{description}
+We use the following software stack:
+\begin{description}
+    \item[Kernel] Linux 5.9, Debian buster (5.9.0-0.bpo.5-amd64)
+    \item[Userland] Debian GNU/Linux (buster)
+    \item[fio] fio-3.23-28-g7064
+\end{description}
+We use the following configuration:
+\begin{itemize}
+    \item SMT is enabled.
+    \item The entire second CPU socket is disabled in software using the \lstinline{isolcpus=8,9,10,11,12,13,14,15,24,25,26,27,28,29,30,31} kernel command line parameter.
+    \item We configure all Optane DIMMs in \textit{AppDirectNotInterleaved} mode.
+\end{itemize}
+
+\section{Results}\label{ch:lwb_analysis:results}
+
+\section{Analysis}\label{ch:lwb_analysis:breakdown}
+
+\subsection{OpenZFS Background: ZIL-LWB}
+
+\section{Conclusion}
+
 
 \chapter{Design Overview}\label{ch:designoverview}
 In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design as well as its integration into ZFS.
