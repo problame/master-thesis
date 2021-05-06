@@ -2418,10 +2418,10 @@ Synchronization is handled internally.
 
 \chapter{ZIL-PMEM}\label{ch:zilpmem}
 In this chapter we describe how we integrate PRB/HDL into ZFS in the form of the new \textit{ZIL-PMEM} ZIL kind\todo{check ZIL kind vs ZIL Kind capitalization}.
-In Section~\ref{sec:pmemspavdev} we describe how we make the allocatable space of a PMEM SLOG available for direct access by ZIL-PMEM.
+Section~\ref{sec:pmemspavdev} presents how we make ZFS aware of PMEM VDEVs and how we reserve the allocatable space of a PMEM SLOG vdev for direct access by ZIL-PMEM.
 Subsequently, we describe in Section~\ref{sec:zilpmem:prbconstruction} how we use this space to construct the zpool's PRB instance on top of it.
 Section~\ref{sec:zilpmem:hdllifecycle} presents how we synchronize the lifecycles of head datasets and their corresponding HDLs.
-With this preparatory work out of the way, Section~\ref{sec:zilpmem:zilog} then presents the \lstinline{zilog_pmem_t} object with implements the ZIL-PMEM ZIL kind.
+With this preparatory work out of the way, we explain how \lstinline{zilog_pmem_t}, which implements the ZIL-PMEM ZIL kind, adapt between the ZIL domain and PRB/HDL (Section~\ref{sec:zilpmem:zilog}).
 The last Section~\ref{sec:itxgbypass} describes an optimization for ZVOLs that bypasses the shared ITX layer to leverage HDL's parallel logging capability.
 
 \section{PMEM-aware SPA \& VDEV layer}\label{sec:pmemspavdev}
@@ -2429,24 +2429,25 @@ Prior to the work presented in this section, ZFS had no concept of persistent me
 Fortunately, the requirements of ZIL-PMEM are very limited:
 \begin{itemize}[noitemsep]
     \item \texttt{/dev/pmem} SLOGs must be recognized as PMEM SLOG vdevs when they are added to the pool.
-    \item The ability to access the PMEM SLOG vdev's allocatable space via the PMEM programming model is vital for its use by PRB/HDL.
-        If the ability is lost, the PMEM SLOG vdev must be considered faulty and pool import must be refused.
-    \item The allocatable space of the PMEM SLOG vdev must be reserved for use by ZIL-PMEM.
+    \item The PMEM SLOG's allocatable space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, \dots).
+        If direct access is not possible, the PMEM SLOG vdev must be considered faulty and pool import must be refused.
+        We assume that direct access cannot be lost if it is established.\todo{future work: memory hotplug}
+    \item The allocatable space of the PMEM SLOG vdev must be reserved for exclusive use by ZIL-PMEM. The metaslab allocator must not use it for allocations.
 \end{itemize}
 Our approach consists of two steps.
 The first step makes the VDEV layer generally aware of persistent memory devices.
-The second step then presents how ZIL-PMEM reserves the allocatable space on PMEM SLOGs.
+The second step reserves the PMEM SLOG for ZIL-PMEM.
 
 \textbf{PMEM Aware VDEV Layer}
 We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
-The attribute indicates whether the VDEV supports direct access through the DAX APIs.
+The attribute indicates whether the VDEV supports direct access through the Liunx Kernel's DAX APIs.
 DAX capability is determined by the \lstinline{zpool} command when creating or adding devices to a pool, using \lstinline{libblkid}.
 When opening a vdev marked \lstinline{is_dax}, the kernel module ensures that all of the block device's sectors are mappable as one contiguous range of kernel virtual address space.
 Failure to establish this mapping fails the onlining process, leaving the vdev in state \lstinline{VDEV_STATE_CANT_OPEN}.
 By default, this state prevents the pool from being imported.
-If the VDEV is added as a log device, the import process allows the user to specify an override flag, causing the log to be dropped.
+If the VDEV is added as a log device, the import process allows the user to specify an override flag, causing the logs to be dropped.\todo{remove that sentence? only confusing}
 Note that the \lstinline{is_dax} feature applies to all VDEVs and is independent of ZIL-PMEM.
-It merely records the fact that a VDEV is required to be directly accissble via the DAX APIs.
+It merely records the fact that a VDEV is required to be directly accessible via the DAX APIs.
 This ensures that future versions of ZFS can leverage DAX capability of main pool VDEVs without needing to change the on-disk format.
 Consequently, \lstinline{is_dax} becomes an independent \textit{zpool feature}.
 
@@ -2455,9 +2456,9 @@ For ZIL-PMEM, we disable metaslab allocation on the PMEM SLOG to make the alloca
 For this purpose, we introduce a new allocation class called \lstinline{exempt}.
 When adding a log device to the pool that is \lstinline{is_dax}, the \lstinline{zpool} command assigns it to the \lstinline{exempt} class instead of the \lstinline{log} class.
 This alone is sufficient to prevent allocation from PMEM SLOGs because the \lstinline{exempt} allocation class by convention is never used for block allocation.
-The allocatable space on the device is thus never read or written through ZIO and available for use by ZIL-PMEM.
-Note that reads and writes to VDEV labels which store parts of the zpool config are located outside of the allocatable space.
-Updates to VDEV labels continue to be made using block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
+The allocatable space on the device is thus never read or written through ZIO and is available for exclusive use by ZIL-PMEM.
+Note that the VDEV labels which attribute the VDEV to the zpool and store parts of the zpool config, are located outside of the allocatable space.
+Readers and updaters of VDEV labels continue to use block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
 
 \begin{figure}[H]
     \centering
@@ -2469,21 +2470,21 @@ Updates to VDEV labels continue to be made using block device IO (\lstinline{zio
 
 \section{PRB Construction}\label{sec:zilpmem:prbconstruction}
 The PRB DRAM object's (\lstinline{prb_t}) lifetime is a contiguous sub-span of the lifetime of the in-DRAM object that represents an imported zpool (\lstinline{spa_t}).
-The pool import procedure first instantiates the VDEV' DRAM representation and registers them with the metaslab alloctor.
-After the vdevs structures have been allocated, we add search for PMEM SLOG vdevs.
-If the pool contains exactly one PMEM SLOG vdev in the \textit{exempt} class, the pool's ZIL kind is ZIL-PMEM and we allocate the PRB structure.
+The pool import procedure first instantiates each VDEV's DRAM representations (\lstinline{vdev_t}).
+After this step, we iterate over the vdevs in the \lstinline{exempt} allocation class.
+If it contains contains exactly one SLOG vdev that \lstinline{is_dax}, the pool's ZIL kind is ZIL-PMEM and we allocate the PRB structure.
 The pointer to the \lstinline{prb_t} is stored in \lstinline{spa_t}.
 When the pool is exported, the \lstinline{spa_unload} procedure frees the \lstinline{prb_t}.
-If the single PMEM SLOG vdev in the \textit{exempt} class cannot be found, the pool's ZIL kind is ZIL-LWB and we neither allocate nor free the PRB.
+In any other case, the pool's ZIL kind is ZIL-LWB and we neither allocate nor free the PRB.
 
-Immediately after allocating the PRB object, we allocate the chunk objects and add them to the PRB.
-If the pool is being created, we reset the chunks' to a known PMEM state (\lstinline{prb_chunk_initialize_pmem}) before adding them to PRB.\todo{impl is a little different, doesn't matter}
-Due to time constraints, we use a simplistic partitioning scheme that does not need to persist any metadata:
+Immediately after allocating the PRB object, we set up the chunk objects and add them to the PRB.
+If the pool is being created\todo{correct tense?}, we reset the chunks to a known PMEM state (\lstinline{prb_chunk_initialize_pmem}) before adding them to PRB.\todo{impl is a little different, doesn't matter}
+Due to time constraints, our implementation uses a simplistic partitioning scheme that does not need to persist any metadata:
 \begin{itemize}[noitemsep]
     \item Chunks have a hard-coded chunk size of \SI{128}{MiB}.
-    \item We partition the allocatable space as a contiguous array of PMEM segments of that size, starting at offset zero.
-    \item Assuming \lstinline{A}~bytes of space, this yields \lstinline{nchunks := A >> 27} chunks and leaves \lstinline{nchunks * (1<<27)} bytes of wasted space.
-    \item We do not store \lstinline{nchunks} anywhere. Instead, we prohibit resizing of PMEM SLOG vdev which allows us to deterministically re-compute the value.
+    \item We partition the allocatable space as a contiguous array of PMEM segments of \SI{128}{MiB}, starting at offset zero.
+    \item Assuming $A$~bytes of space, this yields \lstinline{nchunks := A>>27} chunks and less than \SI{128}{MiB} of wasted space at the end of the allocated space.
+    \item We do not store \lstinline{nchunks} anywhere. Instead, we prohibit online resizing of the PMEM SLOG vdev which allows us to deterministically re-compute the value.
 \end{itemize}
 
 \section{Dataset \& HDL Lifecycle Synchronization}\label{sec:zilpmem:hdllifecycle}
@@ -2491,15 +2492,14 @@ Whereas \lstinline{prb_t} and \lstinline{spa_t}'s allocation lifecycles line up 
 HDLs must be set up during pool import to support claiming which builds up DRAM-only state that cannot be recovered later.
 Specifically, this state are the holds on chunks that contain entries that the HDL will need to replay when the dataset is mounted.
 HDL objects live until either their dataset is unmounted or the zpool is exported.
-In contrast, the per-dataset runtime state is allocated on demand (\lstinline{dsl_dataset_t}, its \lstinline{objset_t} and the objset's \lstinline{zilog_t}).
-Demand allocation means that a consumer of the DRAM structure \textit{holds} it by ID.
-If the consumer is the first holder, the \textit{holding} procedure allocates the runtime object and recovers the state from the corresponding persistent structure (\lstinline{dsl_dataset_phys_t}, \lstinline{objset_phys_t} and, partially, \lstinline{zil_header_t}).
-It then increments a reference counter and returns the pointer to the consumer.
-Conversely, if there was already another holder, the allocation and recovery step are skipped.
+In contrast, the per-dataset runtime state (\lstinline{dsl_dataset_t}, its \lstinline{objset_t} and the objset's \lstinline{zilog_t}) is allocated \textit{on demand} when its consumer \textit{holds} it by its ID.\todo{don't mention MOS here, we'd need to explain it}
+If the consumer is the first holder, the \textit{hold} procedure performs the allocation and recovers state from the corresponding persistent structure (\lstinline{dsl_dataset_phys_t}, \lstinline{objset_phys_t} and, partially, \lstinline{zil_header_t}).
+It then increments a reference counter and returns the pointer to the runtime object to the consumer.
+Conversely, if there was already another holder, the allocation and recovery steps are skipped.
 Once a consumer is finished with a dataset, it \textit{releases} its hold on the DRAM structure.
 The last consumer that releases the structure frees the DRAM allocation.
 
-The mismatch of HDL and dataset object lifetimes is relevant to ZIL-PMEM because the methods of \lstinline{zilog_pmem_t} that implement ZIL-PMEM need access to their dataset's HDL for claiming, replay, and writing log entries.
+The mismatch of HDL and dataset object lifetimes is relevant to ZIL-PMEM because \lstinline{zilog_pmem_t} needs access the corresponding HDL for claiming, replay, and writing log entries.
 Our solution is to add a search tree to \lstinline{spa_t} which we call \textit{HDL map}.
 It maps from the dataset's object set ID to its HDL.
 We add the necessary callbacks to synchronize the \textit{HDL map} with the dataset layer.
@@ -2510,7 +2510,7 @@ We add the necessary callbacks to synchronize the \textit{HDL map} with the data
     \item When a dataset is destroyed (\lstinline{zil_destroy_sync}), we tear down the HDL and remove it from the \textit{HDL map}.
 \end{itemize}
 
-Whenever the ZIL-PMEM implementation needs access to th dataset's HDL, it looks up the HDL in the search tree and aquires a reference to it.
+Whenever the ZIL-PMEM implementation needs access to th dataset's HDL, it looks up the HDL in the \textit{HDL map} and aquires a reference to it.
 We use reference counting to assert that there are no dangling references when the HDL is destroyed in \lstinline{zil_destroy_sync}.
 We protect the \textit{HDL map} against concurrent modifications using ZFS's \textit{read mostly lock} which is a reader-writer-lock that is optimized for read locks.
 Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{language} of objects, their lifetimes, and reference relationships.
@@ -2524,28 +2524,28 @@ Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{langua
 
 \section{ZILOG\_PMEM\_T}\label{sec:zilpmem:zilog}
 The \lstinline{zilog_pmem_t} structure and its methods in the \lstinline{zilpmem_vtable} implement log writing, claiming, and replay for the ZIL-PMEM ZIL kind.
-Its role is that of an adaptor between the ZIL kind independent \textit{itxg} structure and the HDL that is associated with the dataset via the \textit{HDL map}.
+Its role is that of an adaptor between the shared \textit{itxg} structure that is shared among all ZIL kinds and the HDL that is associated with the dataset via the \textit{HDL map}.
 Apart from the exceptions listed below, the methods in the vtable are thin wrappers around HDL's interfaces.
 The general pattern for a ZIL-PMEM method is as follows:
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
     \item Aquire a reference to the dataset's HDL from \textit{HDL map}.
     \item Invoke the HDL method.
     \item Release the HDL reference.
 \end{enumerate}
-To avoid reference counting overhead for HDLs on the write path, we hold a HDL reference once when the ZIL is opened for writing and store it in the \lstinline{zilog_pmem_t} until the ZIL is destroyed because the dataset is unmounted.
+To avoid reference counting overhead for HDLs on the write path, we aquire a HDL reference once when the ZIL is opened for writing and hold it in the \lstinline{zilog_pmem_t} until the dataset is unmounted.
 
-The following cases required additional adapter code:
+The following cases required additional code to adapt betweent he two domains:
 \begin{description}
-    \item{Error Handling During Pool Import \& Claiming}
-        The vtable was extracted from the original ZIL(-LWB) and inherits its error handling model:
-        ZIL-LWB checks the ZIL chain twice during pool import.
-        The first pass (\lstinline{zil_check_log_chain}) checks for log corruption to fail the pool import early if the log is corrupt.
+    \item[Error Handling During Pool Import \& Claiming]
+        The ZIL vtable was extracted from the original ZIL(-LWB) and inherits its model for integrity checking and claiming of the ZIL during pool import.
+        In that phase, ZIL-LWB checks the ZIL chain twice:
+        the first pass (\lstinline{zil_check_log_chain}) checks for log corruption to fail the pool import early if the log is corrupt.
         The second pass (\lstinline{zil_claim}) does ZIL-LWB's version of claiming and records the maximum claimed log record in the ZIL header.
         It discards traversal errors because it assumes that no online log corruption happend since the first pass.
-        (Note that \lstinline{zil_claim} only has a return value due to software-technical reasons. It must always return zero.)
-
+        (Note that \lstinline{zil_claim} does have a return value, but only due to software-technical reasons. It must always return zero.)
         ZIL-LWB's approach opens a window for time-of-check vs time-of-use bugs which we discovered and reported during development.\todo{ref}
-        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through a return value, and is designed to correctly handle online log corruption during claiming and replay (see Section~\ref{di:prb:ccrecovery}).
+        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption during claiming and replay (see Section~\ref{di:prb:ccrecovery}).
+
         Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.
         Until that shortcoming of our implementation is addressed, we trigger a kernel panic if \lstinline{prb_claim} returns an error.
 
@@ -2556,10 +2556,9 @@ The following cases required additional adapter code:
         Remember also the \lstinline{zil_sync} API from Section~\ref{zilsync}.
         \textit{Txg sync} invokes this method on every dataset's \lstinline{zilog_t} in the \textit{syncing} txg.
         The role of \lstinline{zil_sync} is to modify the dirty copy of the ZIL header that is stored in \lstinline{objset_phys_t::os_zil_header}.
-        Unlike most components at this software layer of ZFS, the ZIL implementation is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
+        Unlike most components at this software layer of ZFS, the ZIL implementation itself is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
 
-        For ZIL-PMEM, header updates are simple because HDL always provides a full, updated version of the ZIL header as a \textit{value}.
-        We queue the updates using the common ZFS idiom of a 4-ary array that is indexed by \lstinline{[txg&3]}.
+        ZIL-PMEM queues the updated header values returned by the HDL APIs in a 4-ary array that is indexed by \lstinline{[txg&3]}.
         Each cell contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
         A header update \lstinline{(txg_u, header_u)} overwrites the cell at index \lstinline{txg_u&3}.
         Updates must only be made from the \textit{open} or \textit{quiescing} txgs.
@@ -2568,16 +2567,16 @@ The following cases required additional adapter code:
         Otherwise, it does not modify the ZIL header.
 
     \item[WR\_NEED\_COPY Chunking]
-        Remember from Section~\ref{wrneedcopy} that the ZIL queues up ITXs for \textit{all} changes to a dataset in DRAM.
-        To avoid unnecessary memory usage and performance overhead, ITXs that log write operations are not always prepared as a ready-to-write copy of the log entry.
-        If a write is not likely to \lstinline{zil_commit}ted or exceeds a certain size, the \lstinline{zfs_log_write} function creates a \lstinline{WR_NEED_COPY} ITX.
+        Remember from Section~\ref{openzfs:the_zil_api} that the ZIL allocates ITXs for \textit{all} changes to a dataset in DRAM.
+        The ITXs are queued in the \textit{itxg} structure from where they are either \lstinline{zil_commit}ted or freed when the txg syncs.
+        To avoid unnecessary memory usage and performance overhead, ITXs that log \textit{write} operations do not always contain a copy of the written data.
+        Instead, the \lstinline{zfs_log_write} function\todo{ref it, we introduce it in the alternative approach for ZIL kinds section} creates a \lstinline{WR_NEED_COPY} ITX.
         Such ITXs only contain the object number of the DMU object and the range that was modified.
-        The creation of the log record is deferred until \lstinline{zil_commit} which splits up the range into segments that fit a \lstinline{WR_COPY} log entry.
-        The effect is that the single \lstinline{WR_NEED_COPY} ITX is written as a series of \lstinline{WR_COPIED} records.
+        The creation of the log record is deferred until \lstinline{zil_commit} which reads the range from the DMU object and split it up into many \textit{write} log records.
 
-        For ZIL-PMEM, we implement a re-usable abstraction that turns a single \lstinline{WR_NEED_COPY} record into an iterator over \lstinline{WR_COPY} entries.
-        For each entry yielded by the iterator, \lstinline{zil_commit} writes \lstinline{prb_write_entry}.
-        Whereas the repeated chunk aquisition and dependency tracking incurs a small overhead, this approach increases fairness among HDLs in the case of committer slot contention.
+        For ZIL-PMEM, we implement an isolated structure that turns a single \lstinline{WR_NEED_COPY} record into an iterator over \textit{write} log entries.
+        \lstinline{zil_commit} writes each entry yielded by the iterator to the HDL using \lstinline{prb_write_entry}.
+        Whereas the repeated chunk aquisition and dependency tracking during each HDL write incurs a small overhead, it also increases fairness among HDLs if the commit slots are contended.
 
 \end{description}
 
