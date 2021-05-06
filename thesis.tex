@@ -71,7 +71,7 @@
   belowskip=0pt,
   showstringspaces=false,
   language=C,
-  basicstyle=\footnotesize\ttfamily,
+  basicstyle=\linespread{0.8}\footnotesize\ttfamily,
   frame=single,
   xleftmargin=\parindent,
   alsodigit={:},
@@ -1058,7 +1058,7 @@ Therefore, we prefix the callback functions with \lstinline{zillwb_} and move th
 The original call sites are unreachable with ZIL-PMEM which allows us to ignore them for the remainder of this thesis.
 We recommend that future work replace these statically dispatched callbacks with dynamic callbacks through function pointers to enforce decoupling.
 
-\subsection{Considered Alternatives}
+\subsection{Considered Alternatives}\label{sec:zil_kinds:alternatives}
 The general concept of ZIL kinds and the vtable-based implementation add complexity to the ZIL code.
 In this section we discuss the alternatives that we considered for supporting multilpe ZIL implementations at runtime.
 
@@ -1103,7 +1103,7 @@ We found this layer of the ZFS software stack to be too restrictive for ZIL-PMEM
 \end{enumerate}
 
 \subsection{Summary}
-We believe that our design for ZIL kinds introduces ZIL kind specific behavior at a layer that allows for sufficient flexibility in the implementation without adding unnecessary abstractions and maintenance burden.
+We believe that our design for ZIL kinds introduces ZIL kind specific behavior at a layer that allows for shared crash consistency semantics \textit{and} flexibility in the storage model while minimizing code duplication and thus (hopefully) maintenance cost.
 The interface defined by the vtable is a clean abstraction although some design questions (see \ref{sec:zil_kinds:change} and \ref{sec:zil_kinds:suspend_resume}) as well as some LWB-specific APIs (see \ref{sec:zil_kinds:traversal} and \ref{sec:zil_kinds:callbacks}) remain.
 The state of each \lstinline{zilog_KIND_t} is truly private do the ZIL kind's implementation.
 Neither ZIL-LWB nor ZIL-PMEM access the ITX-related state in the embedded \lstinline{zilog_t} directly, but only through the \lstinline{zilog_t} method that computes the commit list.
@@ -2170,7 +2170,7 @@ Abandonding the log is done using \lstinline{prb_destroy_log} (next section).
 %The invocation order corresponds to the order in which the entries were written.
 %Entries that were written in parallel (\lstinline{needs_new_gen == false}) are replayed in a deterministic order to allow for resumability.
 
-\subsection{Writing Entries}
+\subsection{Writing Entries}\label{di:prb:api:write}
 
 \begin{lstlisting}
 bool prb_create_log(hdl_t *hdl, zil_header_pmem_t *upd);
@@ -2566,6 +2566,24 @@ The following cases required additional code to adapt betweent he two domains:
         If \lstinline{C.txg == syncing_txg}, it updates the ZIL header to \lstinline{C.header}.
         Otherwise, it does not modify the ZIL header.
 
+    \item[\lstinline{zil_commit}]
+        We implement \lstinline{zil_commit} as follows:
+        \begin{enumerate}[noitemsep]
+            \item Aquire a \lstinline{zilog_pmem_t}-wide mutex.
+            \item Get the \textit{commit list} from the \textit{itxg} data structure.
+            \item Invoke the HDL's \lstinline{prb_write_entry} method for each log entry in the commit list, starting a new generation for every entry.
+            \item Release the mutex.
+        \end{enumerate}
+        The mutex ensures that committers are serialized.
+        This is critical for the correctness of \textit{sync} or \textit{fsync} which are cummulative.
+        Assume two threads $A, B$ that issue the \textit{sync} system call.
+        Assume $A$ starts a \textit{sync} system call and drains all ITXs from the \textit{itxg} into its commit list.
+        If $A$ is now preempted by $B$ which also starts a \textit{sync} system call, $B$'s commit list will be empty.
+        $B$ would return to userspace, giving the caller the impression that all dirty data has been synced, although they still need to be written to the HDL by $A$.
+
+        Starting a new generation for every entry ensures that the commit list's entries will be replayed in commit list order.
+        Note that the \lstinline{zilog_pmem_t}-wide mutex already serializes the start of the new generations as required by the HDL API, see Section~\ref{di:prb:api:write}.
+
     \item[WR\_NEED\_COPY Chunking]
         Remember from Section~\ref{openzfs:the_zil_api} that the ZIL allocates ITXs for \textit{all} changes to a dataset in DRAM.
         The ITXs are queued in the \textit{itxg} structure from where they are either \lstinline{zil_commit}ted or freed when the txg syncs.
@@ -2581,7 +2599,102 @@ The following cases required additional code to adapt betweent he two domains:
 \end{description}
 
 \section{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
-In this section we describe a performance optimization for ZIL-PMEM that allows for parallel log writes to a single ZVOL.
+ZIL kinds are forced into the \textit{commit list} model defined by the shared \textit{itxg} structure which leads to an inherently sequential representation of the ZIL contents:
+ZIL-LWB is a long chain of log entries grouped in LWBs, and ZIL-PMEM starts a new generation for every entry on the commit list to encode it properly.
+We believe that this architecture is the best compromise for consistent behavior, performance, code duplication, and maintainablility (see Section~\ref{sec:zil_kinds:alternatives}).
+Our evaluation in the next chapter shows that ZIL-PMEM yields significant latency benefits and can saturate PMEM bandwidth when performing synchronous I/O from multiple threads to \textit{separate} datasets.
+However, the benchmarks show that multi-thread scalability within a \textit{single} dataset is limited.
+To demonstrate that PRB/HDL is not the bottleneck, we develop an \textit{itxg bypass} mode for ZIL-PMEM which we present in this section.
+
+\subsection{OpenZFS Background: ZVOLs}
+The mode only works for ZVOLs, which are sparsely allocated virtual block devices backed by the zpool.
+Other block device consumers, e.g., virtual machines or other file systems, can treat the ZVOL as any other block device.
+ZVOLs are implemented as a dataset with a single DMU object that contains virtual block device's data.
+When a block device driver accesses the ZVOL block device (\textit{read, write, discard}), ZFS maps the block device operations to DMU operations on the object.
+The modifications are logged to the ZIL as ITXs.
+If the block device operation has synchronous semantics, ZFS calls \lstinline{zil_commit} before acknowledging completion of the block device operation.
+
+\begin{lstlisting}[style=figurepseudocode]
+Input:
+    op      block device operation
+    zv      zvol
+Steps:
+
+    if op.pre_flush:
+        zil_commit(zv.dmu_object_id)
+
+    match op {
+        Read(...) => {
+            dmu_read(zv.dmu_object, op.buf, ...)
+        },
+        Write(...) => {
+            tx := dmu_transaction()
+            dmu_write(tx, zv.dmu_object_id, ...)
+            itx := zil_itx_create(...)
+            zil_itx_assign(itx)
+            dmu_tx_commit(tx)
+        },
+        Discard(...) => {
+            // analogous
+        }
+    }
+
+    if op.post_flush:
+        zil_commit(zv.dmu_object_id)
+
+    op.done() // acknowledge completion
+
+\end{lstlisting}
+
+The Linux kernel's model for block device I/O is asynchronous.
+The assumption is that the block device IO is submitted (\lstinline{submit_bio}), processed asynchronously by the storage device, and eventually marked as completed (\lstinline{BIO_END_BIO}).
+By default, ZVOL uses a thread pool (\textit{taskq}s) to execute the procedure outlined above.
+The \lstinline{zvol_request_sync=1} tunable changes this behavior to synchronous mode where the procedure outlined above is executed in synchronously in \lstinline{submit_bio}.
+
+\subsection{ITXG Bypass}
+
+In \textit{itxg bypass} mode, we do not queue ITXs \textit{itxg} using \lstinline{zil_itx_assign} but write their log entries directly to the HDL.
+The role of \lstinline{zil_commit} is thus reduced to starting a new generation to encode potential logical dependencies between entries before and after \lstinline{zil_commmit} in the log.
+Remember from Section~\ref{di:prb:write:hdlscoped} that the thread that writes the first entry of a new generation must have exclusive access to the HDL.
+We use a reader-writer-lock to achieve this behavior, as illustrated by the following pseudo-code.
+Note that our implementation implements the bypass mode within \lstinline{zil_commit} and \lstinline{zil_itx_assign}.
+
+\begin{lstlisting}[style=figurepseudocode]
+Input:
+    op      block device operation
+    zv      zvol
+      rwl        reader-writer-lock
+      start_gen
+Steps:
+    if op.pre_flush || op.post_flush:
+        zv.rwl.write_lock()
+        zv.start_gen = true
+    else:
+        zv.rwl.read_lock()
+        if zv.start_gen:
+            zv.rwl.upgrade()
+
+    match op {
+        Read(...) => { ... }
+        Write(...) => {
+            tx := dmu_transaction()
+            dmu_write(tx, zv.dmu_object_id, ...)
+            itx := zil_itx_create(...)
+            prb_write_entry(...(itx), needs_new_gen=zv.start_gen)
+            assert zv.start_gen => zv.rwl.holding_write_lock
+            if zv.start_gen:
+                zv.start_gen = false
+            dmu_tx_commit(tx)
+        },
+        Discard(...) => { /* analogous */ }
+    }
+
+    if op.post_flush:
+        assert zv.rwl.holding_write_lock
+        zv.start_gen = true
+
+    op.done() // acknowledge completion
+\end{lstlisting}
 
 \chapter{Evaluation}\label{ch:eval}
 \section{Correctness}
