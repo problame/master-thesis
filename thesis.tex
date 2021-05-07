@@ -905,13 +905,13 @@ Note that there are three unsynced txgs at any given time, one for each of the t
 This improves DMU transaction latency because it decouples new DMU transactions from the \textit{txg sync} thread:
 new DMU transactions can always operate on the open txg while txg sync only operates on the syncing txg.
 
-The purpose of the ZIL is to bridge the gap between the time at which a DMU transaction $T_i$ is finished (\lstinline{dmu_tx_commit}) and the time at which the changes made by $T_i$ actually reach the main pool through \textit{txg sync}.
+The ZIL bridges the gap between the time at which a DMU transaction $T_i$ is finished (\lstinline{dmu_tx_commit}) and the time at which the changes made by $T_i$ actually reach the main pool through \textit{txg sync}.
 For that purpose, the system call handler encodes the change $C_i$ that was made in $T_i$ as a \textit{log record}, wraps it in an \textit{ITX} and \textit{assigns} it to the ZIL.
+The ZIL stores assigned ITXs in DRAM in the \textit{itxg} data structure.
 If the system call has synchronous semantics, the system call handler invokes \lstinline{zil_commit} before returning to userspace.
-\lstinline{zil_commit} uses the \lstinline{itxg} data structure to determine the sequence of log records that needs to be written out to persistent storage.
-This sequence is called the \textit{commit list}.
-At this point, the ZIL-kind specific implementation takes over: it is responsible for concatenating the current \lstinline{zil_commit} call's commit list to previously written commit lists.
-The logical structure of the log, regardless of ZIL kind, is thus a sequential chain of log records that is extended by \lstinline{zil_commit}.
+\lstinline{zil_commit} uses \lstinline{itxg} to determine the \textit{commit list} which contains the sequence of ITXs that needs to be concatenated to some form of persistent log structure.
+In upstream ZFS, the ZIL(-LWB) implements this persistent log structure by stuffing ITXs into LWBs and linking the LWBs into a chain on disk.
+With the introduction of ZIL kinds, \lstinline{zil_commit} only builds the commit list and leaves the persistence to the ZIL kind implementation.
 
 After a system crash, the zpool is in the state of the last synced transaction group which we call \textit{precrash-txg}.
 Our dataset $D$ is lacking exactly those changes $C_i$ whose transactions $T_i$ were made in transaction groups younger than precrash-txg (their $T_{i_{txg}} > precrash\text{-}txg$).
@@ -946,7 +946,7 @@ The consequence for any ZIL implementation is that it needs to persist the follo
     \label{fig:zil_writepath_and_replay_sequence_logical_level}
 \end{figure}
 
-\section{Analysis}\label{di:prb:analysis}
+\section{Requirements}\label{di:prb:analysis}
 
 We identify the following requirements for the persistence layer of any ZIL kind:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
@@ -967,11 +967,11 @@ We derive the following abstract view of \textbf{what} needs to be stored \textb
     \item The \textit{precrash-txg} to discern replayable from obsolete log records (see previous section).
     \item Some representation of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
 \end{itemize}
-We put the following requirements on\todo{towards?} the \textbf{storage substrate} that stores the log entries:
+We put the following requirements on the \textbf{storage substrate} that stores the log entries:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
-    \item On the write path, the overhead that it adds to the raw PMEM latency should be minimal.
+    \item On the write path, the overhead added to the raw log entry write time should be minimal.
     \item It must scale well on a multicore system since many datasets write their log entries in parallel.
-        This scalability requirement includes efficient use of CPU time in case the PMEM write badwidth is exceeded.
+        This scalability requirement includes efficient use of CPU time in case the PMEM write bandwidth is exceeded.
     \item The storage substrate is responsible for garbage-collecting log entries after they are obsolete, either by txg sync during normal operation or because they have been replayed.
     \item It must provide a facility to retrieve non-obsolete log entries of a dataset for replay.
     \item It must detect data corruption using checksums. (Repair and redundancy are out of scope for this thesis, see Section~\ref{sec:requirements}.)
@@ -979,14 +979,14 @@ We put the following requirements on\todo{towards?} the \textbf{storage substrat
 
 \section{Approach}\label{di:prb:approach}
 We introduce the pool-wide \textit{PRB} object which abstracts the PMEM SLOG vdev's space as a persistent, unordered set of log entries.
-A log entry entry encodes a logical change to a particular dataset that was applied in a single DMU transaction.
+A log entry encodes a logical change to a particular dataset that was applied in a single DMU transaction.
 PRB provides facilities for adding log entries to the set and for iterating over its contents.
 It automatically garbage-collects entries after they become obsolete because their transaction group has synced.
 
 Log entries are created by the thread that performs the DMU transaction.
 However, the thread does not write them directly to PRB but to the \textit{HDL} object of the modified dataset.
-HDL builds on top of PRB a virtual log that puts individual entries into a mostly sequential structure.
-After a system crash, the HDL provides a replay facility that recovers the replayable entries of a dataset, orders them according to their logical dependencies, and handles missing entries.
+A HDL is a virtual log built on top of PRB that organizes individual entries for a single dataset in a mostly sequential structure.
+After a system crash, the HDL provides a replay facility that recovers the replayable entries, orders them according to their logical dependencies, and handles missing entries.
 
 At any time, there exists one HDL for each head dataset in the pool.
 They are set up early during pool import and torn down late during export.
@@ -1055,12 +1055,12 @@ The projection of entries onto the vertical axis shows the sets in which entries
 
 \section{HDL Replay: Basic Approach}\label{di:prb:replayapproach}
 Replay must apply the changes that were successfully logged to the HDL but whose DMU transaction did not sync before the system crashed.
-To accomplish this, it scans the PRB for entries that belong to the HDL and determines a \textit{replay sequence} $S$.
+To accomplish this task, it scans the PRB for entries that belong to the HDL and determines a \textit{replay sequence} $S$.
 \begin{align*}
     & \text{Entry}~E_i \in S \\
-    \Leftrightarrow & E_i.logid = HDL.logid \wedge E_i.txg > precrash\_txg
+    \Leftrightarrow & E_i.log\_guid = HDL.log\_guid \wedge E_i.txg > precrash\_txg
 \end{align*}
-The \textit{replay order} on $S$ defines in which order the changes encoded in the entries need to be applied.
+$S$ is sorted in \textit{replay order}, which is the order the changes encoded in the entries need to be applied.
 Given two entries $E_a$, $E_b \in S$ for the same HDL, the replay order is a total order defined by
 \begin{align*}
     & E_a <_{replay} E_b \\
@@ -1076,6 +1076,10 @@ For our example in Figure~\ref{fig:prb_hdl_log_structure_example}, this results 
     \label{fig:prb_hdl_log_structure_example__replay}
 \end{figure}
 
+We use a total order so that we can precisely encode replay progress by storing the last-replayed $(E.gen, E.gsid)$.
+This is necessary for crash consistency because log entry replay is not idempotent.
+We revisit this topic in Section~\ref{di:prb:ccrecovery}.
+
 Note that the definition of the replay order does not account for overflows of $gen$ or $gsid$ --- entries written after the overflow would be incorrectly ordered as smaller than entries written before the overflow.
 Overflows could be handled in software, e.g., by temporarily destroying the log of the dataset and creating a new one with a fresh log GUID.
 However, our implementation has no such provisions because even with the (absurdly) conservative of \SI{1}{ns} write time per log entry, the first overflow event would only occur in \SI{584}{years} if $gen$ starts at~$1$.
@@ -1089,7 +1093,7 @@ However, our implementation has no such provisions because even with the (absurd
     % \end{description}
 Replay is complicated by the fact the entries that were stored in the PRB can be lost.
 For example, bitflips in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
-If such a missing entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
+If an entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
 However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
 
 We detect missing entries through a set of counters that we store in the metadata of each entry.
@@ -1098,14 +1102,16 @@ For an entry $E$, the counter $E.C_{ctxg_i}$
     E.C_{ctxg_i} := \#\{ D : D.gen < E.gen \wedge D.txg = ctxg\_i\}
 \end{gather*}
 stores the number of entries that were written to the log since its inception, for a DMU transction with txg $ctxg\_i$, until generation $E.gen$.
-During replay, we first construct the replay sequence (Example in the previous section, Figure~\ref{fig:prb_hdl_log_structure_example__replay}).
+During replay, we first construct the replay sequence (example in the previous section, Figure~\ref{fig:prb_hdl_log_structure_example__replay}).
 Then, we re-compute and compare the counters for each entry in the replay sequence.
+If an entry $E_m$ has been lost, the counters of any dependent entry $E_d$ (their $E_d.gen > E_m.gen$) will not match, causing replay to stop with $E_d$ as a \textit{witness}.
+Missing entries in the last generation (the ``tail'' of the log) cannot be detected with this scheme.
 
 The per-txg scoping of the counters is critical to accomodate garbage collection.
 Suppose we only used a single sequence counter for all log entries of a HDL.
 After a txg $t_{synced}$ has been synced, PRB garbage-collects all entries $\mathcal{S}_{gc}$ that are obsolete:
 \begin{align*}
-    \mathcal{S}_{gc} := { E : E.txg \le t_{synced}}
+    \mathcal{S}_{gc} := \{ E : E.txg \le t_{synced}\}
 \end{align*}
 These entries no longer show up when the claiming or replay procedures scan the PRB for entries with the HDL's log GUID.
 If we used a single sequence counter to check for missing entries, we would be unable to discern garbage-collected entries from missing entries.
@@ -1120,11 +1126,11 @@ In fact, since txgs never skip a number, we only store the value of $txg_{open}$
 \end{align*}
 \todo{compact encoding is just an idea, not in impl yet}
 
-We use the same algorithm to compute the counters on both write and recovery path.
-This works\todo{language, help} because the write path must use monotonically increasing generation numbers, ad the entries in the replay sequence are sorted in that order.
+We use the same algorithm to compute the counters on both the write and recovery path.
+This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
 The counters are stored in a table called \textit{live table}.
-If has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
-When an entry $E$ is written or visisted, it modifies the counter in the row with index $I_T := T \mod 4$ where $T := E.txg$.
+It has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
+When an entry $E$ is written or visited, it modifies the counter in the row with index $I_T := T \mod 4$ where $T := E.txg$.
 We distinguish the following conditions:
 \begin{itemize}[noitemsep]
 \item If $R_{I_T}.txg = T$, we simply increment $R_{I_T}.ctr$ and are done.
@@ -1132,8 +1138,8 @@ We distinguish the following conditions:
 In that case, we can discard the state in the row and reuse it for $T$ by setting $R_{I_T} \leftarrow (T, 1)$.
 \item Conversely, if $T < R_{I_T}$, we can infer that the entry we are writing is for an already synced txg and hence obsolete.
 In that case, we do not change the \textit{live table} and turn the entry write operation into a no-op.
-Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&3]}).
 \end{itemize}
+Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&3]}).
 
 To detect the start of a new generation and support crash-consistent replay, we maintain a separate variable $E_{last} := (gen, gsid)$.
 When an entry $E$ is written or visisted, we compare it to $E_{last}$ using the following rules:
@@ -1145,7 +1151,7 @@ We consider the log corrupted if such an entry $E$ is found.
 \end{description}
 Regardless of whether a new generation was started or not, we always update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph after evaluation the rules above.
 
-Since the counters $E.C_{txg_i}$ only count up to but not including $E.gen$, they same for all entries in generation $E.gen$.
+The counters $E.C_{txg_i}$ have the same value for all entries in generation $E.gen$  because, by defintion, they only count entries written up to but not including $E.gen$.
 Hence we compute them from the \textit{last table} once and cache the results until the next generation is started:
 \begin{enumerate}[noitemsep]
     \item Determine row index $i_{max} := \max_{i \in \{0,1,2,3\}} R_i.txg$ where $R_i \in \text{last table}$.
@@ -1159,38 +1165,37 @@ Hence we compute them from the \textit{last table} once and cache the results un
 Figure~\ref{fig:prb_counters_table__computation} contains a graphical illustration of the algorithm described above.
 Figure~\ref{fig:prb_counters_table__encoding} shows how we encode the counters in the entry header.
 We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
-\todo{figures need to be adjusted to new formulation of algorithm}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{fig/prb_counters_table__computation}
+    \includegraphics[height=10cm]{fig/prb_counters_table__computation}
     \caption{
-        Visualization of the \textit{live} and \textit{last table} structures, and a graphical illustration of the algorithm that is used to determine the counters that are stored in the entries of a generation.
-        Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
+        Visualization of the \textit{live} and \textit{last table} structures, and a declarative definition of how the \textit{last table} is computed.
+        %Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
     }
     \label{fig:prb_counters_table__computation}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics{fig/prb_counters_table__encoding}
+    \includegraphics[height=4cm]{fig/prb_counters_table__encoding}
     \caption{Space-efficient encoding of the counters.}
     \label{fig:prb_counters_table__encoding}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{fig/prb_counters_table__example}
+    \includegraphics[height=16cm]{fig/prb_counters_table__example}
     \caption{
         Example for the computation of the counters that are stored in the entry.
         The following entries are written to the log:
         A,B,C,D in generation 1; E,F in generation 2; G in generation 3; H in generation 4; J in generation 5.
-        Note that their txgs differ some times but stay in the corridor of at most three a corridor of three txgs.
+        Note that their txgs differ sometimes but stay in a corridor of at most three txgs.
         The table at the bottom shows the counter values in the entry headers:
         each row represents the counter table that is stored in the entry headers of one generation.
         The table at the upper right shows the algorithm's table's content over time.
         Instead of counters, we show the entries that would cause the specific counter to be incremented.
-        We visualize row-reuse by separating new row content with a ``'$|$" in each cell of the reused row.
+        We visualize row-reuse by separating new row content with a ``\lstinline{|}" symbol in each cell of the reused row.
     }
     \label{fig:prb_counters_table__example}
 \end{figure}
@@ -1215,7 +1220,7 @@ A forged entry would have to fulfill the following requirements to affect counte
 
 Apart from random data corruption, we have considered the following scenarios and concluded that they are out of scope for ZIL-PMEM:
 \begin{itemize}[noitemsep]
-\item Implementation errors on the write path that produce 
+\item Implementation errors on the write path.
 \item Firmware bugs, e.g., in the Optane DIMM's wear-leveling layers, that could make old entries re-appear.
 \item Deliberate injection of log entries by a malicious party with write access to PMEM.
     This needs to be part of the threat model if ZIL-PMEM is extended to support OpenZFS Native Encryption.
@@ -1223,7 +1228,6 @@ Apart from random data corruption, we have considered the following scenarios an
 \item Accidental reuse of \textit{log GUIDs}.
     If two HDLs use the same log GUID to write their entries, the HDLs will each claim their and the other HDL's entries.
     This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers and check for collisions with other HDLs.
-    \todo{the impl currently doesn't check for collisions, need to mention that?}
 \end{itemize}
 
 \section{HDL: Replay Crash-Consistency}\label{di:prb:ccrecovery}
@@ -1251,15 +1255,29 @@ If the system crashes, we recover \textit{replay state} from the checkpoint in t
 
 The following variables are stored in \textit{replay state}:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[$(gen_{last}, gsid_{last}$] $(E.gen, E.gsid)$ of the last entry $E$ that was replayed.
     \item[Live Table] The \textit{live table} at the time the entry was replayed, i.e., $R_i$ with $i~\in~{0,1,2,3}$.
     \item[Last Table] The \textit{last table} at the time the entry was replayed.
-    \item[$E_{last}$] The last entry that was replayed.
+    \item[$E_{seal}$] An artificial entry header that is used to detect lost entries at the end of the log structure.
 \end{description}
 The crash-safe replay procedure performs the following steps:
 \begin{enumerate}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item \label{ccReplay:claimscan} Claiming reads the log GUID from the ZIL header, then scans the PRB and holds back the log's entries from garbage collection.
     \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
-        \item If the HDL is in state \textit{logging}, claiming transitions the ZIL header to \textit{replaying} and initializes the \textit{replay state} checkpoint in the ZIL header.
+        \item \label{ccReplay:transitionToReplaying} If the HDL is in state \textit{logging}, claiming transitions the ZIL header to \textit{replaying} and initializes the \textit{replay state} checkpoint in the ZIL header.
+            \begin{itemize}
+                \item $(gen_{last}, gsid_{last})$ is $(0, 0)$.
+                \item \textit{live table} and \textit{last table} are zeroed out.
+                \item $E_{seal}$ is determined as follows.
+                \begin{enumerate}
+                    \item Construct a temporary replay sequence $S_{tmp} = \{E_s : s \in 1, \dots, n\}$.
+                    \item In DRAM, append an artificial entry $E_{n+1}$ to $S_{tmp}$.
+                        $E_{n+1}.gen = E_{n}.gen + 1$, $E_{n+1}.gsid = 1$, and $E_{n+1}.txg = E_{n}.txg$.
+                    \item Iterate over $S_{tmp}$ and compute the counter tables.
+                        Validate the tables for $E_{1,\dots,n}$.
+                        When arriving at $E_{n+1}$, assign the expected table to $E_{seal}$.
+                \end{enumerate}
+            \end{itemize}
         \item If the HDL is already in state \textit{replaying}, the ZIL header is not modified.
     \end{itemize}
     \item Replay recovers its \textit{replay state} from the checkpoint $C$ in the ZIL header.
@@ -1272,7 +1290,7 @@ The crash-safe replay procedure performs the following steps:
             \item Perform dependency tracking as described in the previous section.
             \item Create a checkpoint $C_{E_s}$.
             \item In one DMU transaction, replay $E_s$ and store $C_{E_s}$ in the ZIL header.
-            \item If replay fails or the DMu transaction fails, abort the transaction and roll back the in-DRAM version of \textit{replay state} to $C_b$.
+            \item If replay fails or the DMU transaction fails, abort the transaction and roll back the in-DRAM version of \textit{replay state} to $C_b$.
     \end{enumerate}
 \end{enumerate}
 
@@ -1281,14 +1299,26 @@ This allows handling of offline data corruption in PRB.
 Assume that we lose an entry $E_m$ while the system is offline.
 If $E_m.txg \le precrash\_txg$, the loss of the entry is unnoticed because $E_m$ is by definition not part of the replay sequence.
 If $E_m$ is skipped by step~\ref{ccReplay:skipreplayed}, the loss of the entry might be worth reporting but does not affect replay because it has already been replayed.
-Otherwise, dependency tracking will eventually detect that $E_m$ is missing.\todo{unless it's at the end of the chain, but we don't need to mention that here...}
+Otherwise, dependency tracking will eventually detect that $E_m$ is missing if, and only if, any other entry depends on it.
+$E_{seal}$ is an artificial dependency to ensure that lost entries in the last generation are be detected.
+\todo{this is not yet implemented}
 
 We handle online data corruption as follows.
 Claiming and replay only operate on DRAM-buffered copies of the entry metadata called \textit{replay node}.
 When replaying an entry, the replay callback is forced to use a special function that attempts to read the entry from PRB and buffers it in DRAM.
 Before allowing access to the entry, it ensures that the entry metadata still matches the data in the \textit{replay node}.
-If either the read from PRB fails (e.g. due to checksum errors) or if the metadata does not match, we know that the entry has been corrupted since the PRB scan.
-\todo{have a section on DRAM usage? better have it be one big section where we discuss this...}
+If either the read from PRB fails (e.g., due to checksum errors) or if the metadata does not match, we know that the entry has been corrupted since the PRB scan.
+
+Note that the last generation $E_{seal}.gen - 1$ of the log structure is not protected against re-appearing log entries.
+Assume that during initial claiming, entries $(42,1)$ and $(42,3)$ in generation $42$ are observed as the last entries of the replay sequence.
+Then $(E_{seal}.gen, E_{seal.gsid)}$ is $(43,1)$ and the counter table of $E_{seal}$ only accounts for these two entries, and all previous generation's entries.
+Now assume that another entry $(42,2)$ had been written but was temporarily invisible during initial claiming, e.g., due to temporary data corruption.
+If for some reason $(42,2)$ becomes visible again, and we start replaying, then $(42,2)$ will be replayed even though it was not visible during claiming.
+And if $(42,2)$ were to replace $(42,1)$ or $(42,3)$, we would not even notice the counter mismatch when arriving at $E_{seal}$.
+This behavior seems desirable in the sense that replay recovers as much committed data as possible.
+However, in combination with WR\_INDIRECT ZIL log records, it can lead to pool corruption.
+ZIL-PMEM does not currently support WR\_INDIRECT records due to this problem as well as another WR\_INDIRECT-related issue that affects ZIL-LWB.\todo{link github issue on leaking allocated blocks}
+Our proposed solution in the OpenZFS issue tracker could be used by ZIL-PMEM to properly detect changes to the last generation after claiming, and to support WR\_INDIRECT if desired.
 
 \section{PRB: DRAM Data Structure}\label{di:prb:dramdatastructure}
 The central requirements for PRB are
@@ -1306,7 +1336,7 @@ When a thread writes an entry to the conceptual \textit{set of entries} that is 
 Once a chunk is full, PRB lets it sit unmodified until all entries in it are obsolete.
 Garbage collection then removes all entries in those obsolete-only chunks and makes them available for reuse by writers.
 The PRB scanning done by claiming is implemented as an iteration over the entries in all chunks of the PRB.
-If a chunk contains at least one candidate entry for replay, the claming HDL the chunk back from the write path and/or garbage collection.
+If a chunk contains at least one candidate entry for replay, the claming HDL holds the chunk back from the write path and/or garbage collection.
 Note that this design fully decouples storage location (chunk) from log structure (encoded in entry metadata, see previous sections).
 
 Each chunk is represented by a DRAM object that holds the following values:
@@ -1485,7 +1515,7 @@ For the case where PMEM is corrupted, we distinguish different cases:
 \end{description}
 
 The following listing provides the pseudo code for chunk traversal.
-\begin{lstlisting}
+\begin{lstlisting}[style=figurepseudocode]
 Algorithm: iter_chunk() - Iterate over the entries in a chunk.
 
 Inputs:
@@ -1548,6 +1578,11 @@ Example:
         ...
     }
 \end{lstlisting}
+
+\section{PRB: Garbage Collection}
+\todo{briefly remind the reader of how gc works, refer to lists ection above}
+\todo{explain how chunks are emptied by invalidating the header, zero log guid}
+\todo{explain the system behavior of what happens if the chunk is full}
 
 \section{PRB: Write Path}\label{di:prb:write}
 A thread that writes to a HDL needs to perform the following tasks.
