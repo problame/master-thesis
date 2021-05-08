@@ -1335,7 +1335,7 @@ PRB's role is to mediate access between HDLs and chunks.
 When a thread writes an entry to the conceptual \textit{set of entries} that is the PRB, it actually inserts the entry into one of the PRB's chunks.
 Once a chunk is full, PRB lets it sit unmodified until all entries in it are obsolete.
 Garbage collection then removes all entries in those obsolete-only chunks and makes them available for reuse by writers.
-The PRB scanning done by claiming is implemented as an iteration over the entries in all chunks of the PRB.
+The PRB scanning done by claiming and replay is implemented as an iteration over the entries in all chunks of the PRB.
 If a chunk contains at least one candidate entry for replay, the claming HDL holds the chunk back from the write path and/or garbage collection.
 Note that this design fully decouples storage location (chunk) from log structure (encoded in entry metadata, see previous sections).
 
@@ -1350,34 +1350,34 @@ Each chunk is represented by a DRAM object that holds the following values:
         We dicsuss the PMEM layout of the chunk in more detail in Section~\ref{todo}.
 \end{description}
 
-Chunks can only be modified by one thread at a time.
-To support parallel writes, PRB maintains a roster of \textit{commit slots}, each of which has an associated \textit{open chunk}.
-When a thread writes an entry through a HDL, the thread first \textit{aquires} a commit slot to gain temporary exclusive access to its \textit{open chunk}.
-Then, it writes the entry to the open chunk and immediately releases the slot so that other threads can aquire it.
-Chunks that are not associated with a commit slot are always on exactly one of the following lists:
+We move chunks between the following data structures to keep track of their current role within PRB.
 \begin{description}[noitemsep]
+    \item[Commit Slots]
+    PRB maintains a roster of \textit{commit slots}, each of which has an associated \textit{open chunk}.
+    When a thread writes an entry through a HDL, the thread first \textit{acquires} a commit slot to gain temporary exclusive access to its \textit{open chunk}.
+    Then, it writes the entry to the open chunk and immediately releases the slot so that other threads can aquire it.
     \item[Free List]
-        The \textit{free list} holds empty chunks.
-        Their \textit{claim refcount} and \textit{max txg} is zero and their write position is reset to the chunk's start address.
-        A log writers that need a new chunk for their commit slot puts the commit slot's current open chunk on the \textit{full list} (see below) and gets a new chunk from the \textit{free list}.
+    The \textit{free list} holds empty chunks.
+    Their \textit{claim refcount} and \textit{max txg} is zero and their write position is reset to the chunk's start address.
+    A log writer that needs a new chunk for its commit slot puts the commit slot's current open chunk on the \textit{full list} (see below) and gets a new chunk from the \textit{free list}.
     \item[Full Lists]
-        The \textit{full lists} contains chunks that wait for garbage collection.
-        PRB maintains one full list for each unsynced txg $T_i$. The \textit{full list} for $T_i$ contains exactly those (full) chunks whose \textit{max txg} is $T_i$.
-        After $T_i$ has been synced, the chunks on the corresponding \textit{full list} are emptied and moved to the \textit{free list}.
-        Note that it is sufficient to maintain three full lists at any given time --- one for each of the three unsynced transaction groups \textit{open}, \textit{quiescing}, and \textit{syncing}.
-        The three lists can be represented as an array of three lists that is indexed by $T_i \mod 3$.
-        Our implementation follows the common ZFS idiom of using four lists that are indexed by \lstinline{T_i&3} where \lstinline{&} is the \textit{bitwise and} operation.
+    The \textit{full lists} contains chunks that wait for garbage collection.
+    PRB maintains one full list for each unsynced txg $T_i$. The \textit{full list} for $T_i$ contains exactly those (full) chunks whose \textit{max txg} is $T_i$.
+    After $T_i$ has been synced, the chunks on the corresponding \textit{full list} are emptied and moved to the \textit{free list}.
+    Note that it is sufficient to maintain three full lists at any given time --- one for each of the three unsynced transaction groups \textit{open}, \textit{quiescing}, and \textit{syncing}.
+    The three lists can be represented as an array of three lists that is indexed by $T_i \mod 3$.
+    Our implementation follows the common ZFS idiom of using four lists that are indexed by \lstinline{T_i&3} where \lstinline{&} is the \textit{bitwise and} operation.
     \item[Wait Replay List]
-        During the claiming phase, all of the PRB's chunks are on the \textit{wait replay list}.
-        The HDL's scan the chunks on this list during claiming.
-        If a chunk contains at least one entry that needs to be held back for replay, the HDL increments the chunk's \textit{claim refcount}.
-        Once claiming is done and \textit{txg sync} triggers the first garbage collection cycle, any chunk on this list that has a zero refcount is emptied and moved to the \textit{free list}.
-        The list is also scanned for zero refcounts during all future garbage collection cycles to garbage-collect chunks that are no longer held by HDLs because they finished replay.
-        Note that it is critical for replay crash consistency to defer garbage collection until \textit{after} the last txg of replay of the last HDL that held the chunk has synced.
-        If we garbage-collected entries before the last holding HDL's ZIL header's has transitioned to state \textit{nozil} on disk and crashed inbetween, the garbage-collected entries might be missing when resuming replay.
+    During the claiming phase, all of the PRB's chunks are on the \textit{wait replay list}.
+    The HDL's scan the chunks on this list during claiming.
+    If a chunk contains at least one entry that needs to be held back for replay, the HDL increments the chunk's \textit{claim refcount}.
+    Once claiming is done and \textit{txg sync} triggers the first garbage collection cycle, any chunk on this list that has a zero refcount is emptied and moved to the \textit{free list}.
+    The list is also scanned for zero refcounts during all future garbage collection cycles to garbage-collect chunks that are no longer held by HDLs because they finished replay.
+    Note that it is critical for replay crash consistency to defer garbage collection until \textit{after} the last txg of replay of the last HDL that held the chunk has synced.
+    If we garbage-collected entries before the last holding HDL's ZIL header has transitioned to state \textit{nozil} on disk and crashed inbetween, the garbage-collected entries might be missing when resuming replay.
 \end{description}
 
-Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} visualizes the above chunk ownership transitions.
+Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} visualizes transitions of the chunks over their lifetime.
 Figure~\ref{fig:prb_chunk_ownership_cycle__example} provides a corresponding example.
 
 \begin{figure}[H]
@@ -1451,7 +1451,7 @@ Its contents are as follows:\todo{language}
     \end{itemize}
     \item[Body Length] We store the exact body length in bytes.
     The zero padding in the chunk sequence is not considered part of the entry itself.\todo{fix that?}
-    \item[Body Checksum] Fletcher checksum of the body data.\todo{parametrize checksum algorithm, store in HDL?}
+    \item[Body Checksum] Fletcher checksum of the body data.
     \item[Header Checksum] Fletcher checksum of the header to ensure data integrity of the metdata.
     If the header checksum is corrupted then none of the other header fields can be trusted.
     \item[Zero Padding] The unused bytes in the header have the defined value of zero.
@@ -1482,16 +1482,18 @@ As a reminder, the data layout within the chunk is as follows:
     \item The variable-length body starts immediately after the header. Its length is stored in the header.
     \item The body is followed by zero padding to the next 256 byte multiple.
     \item The next entry's header starts there.
-    \item An invalid header marks the end of the chain. For example, a zero \textit{log GUID} is defines as invalid.
+    \item An invalid header marks the end of the chain.
+        A header is invalid if its header checksum is invalid, or if the log GUID is invalid.
+        The (128 bit) log GUID is invalid if at least the upper or lower 64 bits are zero.
     \item Entries are never split between chunks.
 \end{itemize}
 
 In the absence of data corruption in PMEM, chunk traversal visits each valid entry in the sequence and stops at its end.
-For the case where PMEM is corrupted, we distinguish different cases:
+For the case where PMEM is corrupted, we distinguish the following conditions\todo{word?}:
 \begin{description}
     \item[Machine check exception (MCE)] If the PMEM hardware detects uncorrecta\-ble data corruption, it raises an MCE.
-        The Linux kernel provides the an API (\lstinline{memcpy_mcsafe})\todo{not the current api, but it's shorter...} which provides a memcpy-compatible interface but converts MCEs into error return values.
-        We always use this API do buffer PMEM contents in DRAM before accessing them.
+        The Linux kernel provides the an API (\lstinline{memcpy_mcsafe}) which provides a memcpy-compatible interface but converts MCEs into error return values.
+        We always use this API to buffer PMEM contents in DRAM before accessing them.
         The error handling for MCE errors is the same as for invalid checksums in entry header and body, which we describe below.
     \item[Header: Detected Data Corruption]
         If the header checksum validation fails, the header was either corrupted by bitflitps or similar phenomena or never completely written.
@@ -1525,7 +1527,8 @@ Inputs:
 
 Procedure:
     assert ch_base % 256 == 0
-    assert ch_len >= sizeof(entry_header_t)
+    assert sizeof(entry_header_t) == 256
+    assert ch_len >= 256
     assert ch_len % 256 == 0
 
     e := ch_base
@@ -1535,10 +1538,9 @@ Procedure:
         // read header with a function that handles MCEs
         memcpy_mcsafe(&eh, e, sizeof(eh))?;
 
+        // invalid hdr checksum or id terminate the sequence
         validate_header_checksum(eh)?;
-
-        if eh.log_guid == 0 {
-            // invalid header terminates the sequence
+        if eh.log_guid's upper or lower 64 bits are zero {
             return None;
         }
 
@@ -1564,7 +1566,6 @@ Procedure:
             return Ok(());
         };
         yield Some((eh, read_body))
-
     }
 
 Example:
@@ -1580,12 +1581,36 @@ Example:
 \end{lstlisting}
 
 \section{PRB: Garbage Collection}
-\todo{briefly remind the reader of how gc works, refer to lists ection above}
-\todo{explain how chunks are emptied by invalidating the header, zero log guid}
-\todo{explain the system behavior of what happens if the chunk is full}
+We already covered the essence of garbage collection in Section~\ref{di:prb:dramdatastructure}:
+if the capacity of an acquired commit slot is insufficient, the log writer puts it on the \textit{full list} for the chunks' \textit{max txg} and gets a new chunk from the \textit{free list}.
+After \textit{txg sync} has written out that \textit{max txg}, it triggers garbage collection, which removes all entries in the chunks on the \textit{full list} for \textit{max txg}.
 
-\section{PRB: Write Path}\label{di:prb:write}
-A thread that writes to a HDL needs to perform the following tasks.
+We remove all entries in a chunk in $O(1)$ time by invalidating the log GUID in the first entry header in the chunk (offset zero).
+As indicated by the This is sufficient to prevent chunk traversal in the future.
+The pseudo-code to invalidate a chunk is as follows:
+
+\begin{lstlisting}[style=figurepseudocode]
+Input:
+    ch_base     chunk base address
+    ch_len      chunk length
+Steps:
+    assert ch_len >= 256
+
+    assert type of entry_header_t::log_guid is uint64_t[2]
+
+    log_guid_addr := ch_base + offsetof(entry_header_t, log_guid)
+
+    assert log_guid_addr is 64-bit aligned
+
+    atomic 64-bit store of 0 to log_guid_addr
+    atomic 64-bit store of 0 to log_guid_addr + 8
+
+    flush modified cache lines
+    sfence
+\end{lstlisting}
+
+\section{The Write Path}\label{di:prb:write}
+A thread that writes an entry to a HDL needs to perform the following tasks:
 \begin{itemize}[noitemsep]
     \item Find a target chunk using the \textit{commit slot} mechanism. (Section~\ref{di:prb:write:chunksel})
     \item Determine the HDL-scoped metadata, i.e., log GUID, txg, gen, gsid, and counters.
@@ -1600,7 +1625,6 @@ We identify the following factors as particularly relevant:
     \item[Dependency Tracking Counters] We must update the dependency-tracking counters on every entry write operation.
         Since the counters are HDL-scoped, this only presents a scalability concern if a single HDL is written from multiple threads.
         Parallel writes to the same HDL do not happen in ZIL-PMEM proper but are relevant for our ZVOL-specific ITXG bypass (Section~\ref{sec:itxgbypass}).
-        \todo{linux percpu counter precise?}
     \item[Commit Slot Aquisition \& Chunk Replacement]
         The PRB's commit slots and chunk lists are shared among all HDLs.
         All threads that write to any HDL of the PRB compete for these resources, making it a multi-core scalability challenge.
@@ -1609,9 +1633,11 @@ We identify the following factors as particularly relevant:
         \citeauthor{yangEmpiricalGuideBehavior2020} have established that the Optane PMEM hardware is organized in units of 256 bytes.
         For example, the access granularity and kind of store and cache flush instruction have significant impact on the achievable write bandwidth.
         For size of log entries written by ZIL-PMEM, the use of  AVX-512 non-temporal store instructions is recommend for highest possible performance.~\cite{yangEmpiricalGuideBehavior2020}.
-    \item[PMEM Bandwidth Limits \& Multicore Scalability] It is inherent to the programming model for persistent memory that wait time for PMEM I/O is spent on CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
-        This is problematic from a CPU utilization perspective.
-        For example, if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
+    \item[PMEM Bandwidth Limits \& Multicore Scalability]
+        It is inherent to the programming model for persistent memory that wait time for PMEM I/O is spent on-CPU.
+        For example, instructions that architecturally depend on a preceding store+cacheflush+sfence to PMEM will stall until the flushed cacheline reaches the power-fail protected domain of the CPU~\cite{Scargall2020}.
+        This is problematic from a CPU utilization perspective:
+        if multiple threads attempt to write at higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
         \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
         Write bandwidth decreases to \SI{1}{GB/s} at ten or more concurrently writing CPU cores ~\cite{yangEmpiricalGuideBehavior2020}.
         Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, a kernel file system such as ZFS cannot make assumptions about the system's overall CPU priorities.
@@ -1636,10 +1662,10 @@ Assuming that writers do not exceed this limit, we can derive latency guarantees
 We implement commit slots using a semaphore initialized to \textit{ncommitters} and a bitmask with \lstinline{ncommitters} bits.
 The thread that aquires a commit slot first enters the semaphore and then finds and flips a zero bit in the bitmask.
 The zero bit's index is the commit slot number.
-We use opportunistic spinning\todo{i think that's a common term?} to find and flip the bit.
+We use opportunistic spinning to find and flip the bit.
 The following pseudo-code explains the aquisition and release procedures.
 
-\begin{lstlisting}
+\begin{lstlisting}[style=figurepseudocode]
 Procedure For Commit Slot Aquisition:
   Input:
       sem     semaphore
@@ -1694,18 +1720,20 @@ If the log writer chooses to block and wait during chunk replacement, it must gu
 In practice, this means that the log writer must not hold a DMU transaction open when writing an entry.
 Note that this is the case for ZIL-PMEM proper because \lstinline{zil_commit} is called after the DMU transactions have finished or failed.
 However, for the ITXG bypass for ZVOLs (Section~\ref{sec:itxgbypass}\todo{chapter?}), we write log entries from within the DMU transaction and thus need to use the non-blocking mode.
-\todo{maybe we should change the design to always use non-blocking?}
-
 
 Sharing the slots (and thus chunks) among all threads and HDLs in the PRB is of ambiguous value from perspectives other than bandwidth limitation:
 \begin{description}
-    \item[Blast Radius] Entries are packed into a small number of chunks, even more so if we checked all \textit{open chunk} to implement some form of \textit{best fit} placement of entries.
+    \item[Space Efficiency]
+        Sharing chunks causes entries to be packed into a small number of chunks, even more so if we implemented some form of \textit{best fit} selection scheme for commit slots.
         Packing is beneficial for space efficiency because the \textit{spread} between mininum and maximum txg of the entries in a chunk is small, enabling timely garbage collection.
-        But the concentration of entries in a chunk also increases the blast radius of data corruption due to the chunk's physical data structure which we discuss in Section~\ref{di:prb:pmemdatastructure}.
+        \todo{one sentence on limited slog size, that it's not as relevant for PMEM, but maybe for NVDIMM-N?}
+    \item[Blast Radius]
+        However, the concentration of entries in a chunk also increases the blast radius of data corruption due to the chunk's physical data structure which we discuss in Section~\ref{di:prb:pmemdatastructure}.
         In particular, data corruption within the entry metatadata of one HDL's entry can render another HDL's entry unreachable during PRB scan if they are stored in the same chunk.
-    \item[Cache Efficiency] Our aquisition procedure deterministcally picks the lowest availble commit slot.
-        It is thus very likely that chunks bounce around CPU cores, without taking cache affinity\todo{cache or CPU affinity?} into consideration.
-        Note that, due to the use of non-termporal store instructions when writing to PMEM, this only impacts the chunk DRAM object.
+    \item[Cache Efficiency] Our aquisition procedure deterministcally picks the lowest available commit slot.
+        It is thus very likely that chunks bounce around CPU cores, without taking temporal locality into consideration.
+        Note that, due to the use of non-termporal store instructions when writing log entries to PMEM, this only impacts the chunk DRAM object.
+        We briefly experimented with per-core commit slots during development and found no noticable performance difference to the approach presented above.
 \end{description}
 \todo{this last paragraph doesn't feel right here...}
 
@@ -1803,16 +1831,15 @@ The \lstinline{sfence} (phase 2) is required for correctness  because we must co
 
 The following implementation details of the append operation are relevant for latency and efficient use of CPU time:
 \begin{itemize}[noitemsep]
-    \item For ZIL-PMEM, the use of \lstinline{sfence} in phase 1 came with negligible impact on overall latency during development.\todo{need to prove this? don't have time...}
+    \item For ZIL-PMEM, the use of \lstinline{sfence} in phase 1 came with negligible impact on overall latency during development.
         We assume that this is because the wait time added by the \lstinline{sfence} is neglible compared to the write time for the entry body.
         For example, the entry body and zero padding for a 4k sync write is $sizeof(lr_write_t) + data + padding = 4096 + 192 + 64 = 4352$ bytes large.
-        Assuming \SI{2}{GiB/s} write bandwidth for a single Optane DIMM (\cite{yangEmpiricalGuideBehavior2020}), the write time for the entry body is $\sim$~\SI{2}{us}.
+        Assuming \SI{2}{GiB/s} write bandwidth for a single Optane DIMM \cite{yangEmpiricalGuideBehavior2020}, the write time for the entry body is $\sim$~\SI{2}{us}.
         In contrast, the derived latency for a 256 byte write at that rate is $\sim$~\SI{0.12}{us}.
         If we use this value as an approximation for the cost of the \lstinline{sfence}, its latency contribution is only $\frac{0.12}{0.12 + 2} = 5.6\%$.
-        Note that we have not systematically evaluated the effect.\todo{should we do this? if so, need also evaluate on different pmem configurations}
     \item All writes to PMEM happen in multiples of 256 bytes because 256 bytes is Optane's internal write unit size.
         Writes below this size cause read-modify-write cycles in the hardware and thus cost performance~\cite{yangEmpiricalGuideBehavior2020,zhangChameleonDBKeyvalueStore2021}.
-    \item We use AVX-512 non-temporal store instructions (\lstinline{movnt}) instead of regular stores and cacheflushes.
+    \item We use AVX-512 non-temporal store instructions (\lstinline{movnt}) instead of regular stores and cache flushes.
         Again, this addresses established performance properties of Intel Optane DC Persistent Memory~\cite{yangEmpiricalGuideBehavior2020}.
     \item We also use ZFS's optimized implementation of the Fletcher checksum to compute body and header checksums.
         Whereas the best implementation is chosen by benchmark dynamically at runtime, it is safe to assume that some SIMD ISA extension such as AVX-512 will be used if available.
@@ -1822,7 +1849,6 @@ The following implementation details of the append operation are relevant for la
         We refactor ZFS's FPU state management abstraction so that FPU context is only saved once for both checksum computation and writing to PMEM.
         The time that is spent in this suboptimal state is bounded by the maximum log entry size.
         \todo{we have no evaluation on impact of interrupt masking, future work}
-    \item 
 \end{itemize}
 
 %Note that a fully sequential chain of entries is sufficient for today's ZIL since the commit list assembled by the ITX code\todo{ref} is already sequential.
