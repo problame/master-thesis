@@ -731,13 +731,12 @@ Specifically:
 \csgoal{Data Integrity}
 Data integrity is a core feature of ZFS~\cite{bonwickZettabyteFileSystem2003}.
 ZIL-PMEM must detect corrupted log entries using an error-detecting code.
-Detected corruption must be handled \textit{correctly} as outline in the previous paragraph.
-It must also be handled gracefully with the following behavior as the baseline:
+It must be handled \textit{correctly} (as outlined in the previous paragraph) and \textit{gracefully} with the following behavior as the baseline:
 ``Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
 Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$".
 
 \csgoal{Low Latency}
-The latency overhead of ZIL-PMEM compared to raw PMEM device latency should be minimal for single threaded workloads.
+The latency overhead of ZIL-PMEM compared to raw PMEM device latency should be minimal for single-threaded workloads.
 Multi-threaded workloads are addressed below.
 
 \csgoal{Multi-Core Scalability}
@@ -756,16 +755,16 @@ Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speed
 }
 
 \csgoal{Maximum Performance On Intel Optane DC Persistent Memory}
-Whereas battery-backed NVDIMMs have existed for decades\todo{reference}, Intel Optane DC Persistent Memory is currently the only broadly available flash-based persistent memory product\todo{proof}.
-We develop ZIL-PMEM on this platform and want to determine the maximum performance that can be achieved with it.
+We develop and evaluate ZIL-PMEM exclusively for/on Intel Optane DC Persistent Memory since it is the only broadly available non-volatile main memory product on the market.
+Whereas supercapacitor-backed persistent memory modules (NVDIMM-N) should be usable with ZIL-PMEM, our goal is to design a system that makes optimal use of the Optane hardware.
 
 \csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
-The PMEM programming model dictates that I/O wait time is spent on-CPU --- typically at a memory barrier instruction or because the CPU has exhausted its store or load buffer capacity\todo{review terminology; need proof?}.
-\citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s}.
-Write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
-In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at 15~threads.~\cite[fig.4]{yangEmpiricalGuideBehavior2020}
-In practice, these results imply that on-CPU time is wasted as soon as the system writes to PMEM at higher than maximum device bandwidth.
-Since ZIL-PMEM shares PMEM among all datasets in the pool, we expect that such overload situtations will happen in practice.
+If the maximum write bandwidth to any kind of storage device is exceeded, the I/O stack must somehow apply back-pressure to avoid losing in-flight data.
+With PMEM, the I/O stack is the CPU microarchitecture and the back-pressure manifests as stalled instructions.
+However, from the OS thread scheduler's perspective, threads that stall because they wait for PMEM are indistinguishable from actually busy threads.
+\citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s} and that write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
+% In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at 15~threads.~\cite[fig.4]{yangEmpiricalGuideBehavior2020}
+Since ZIL-PMEM shares PMEM among all datasets in a zpool, we expect that bandwidth exhaustion will happen in practice.
 ZIL-PMEM should thus provide a mechanism to shift excessive PMEM I/O wait time off the CPU.
 
 \csgoal{Testability}
@@ -795,7 +794,7 @@ More experimentation and experience with ZIL-PMEM will benecessary to determine 
 
 \csgoal{No NUMA Awareness}
 \citeauthor{yangEmpiricalGuideBehavior2020} recommend to ``avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yangEmpiricalGuideBehavior2020}.
-Given the latency contribution of ZIL-PMEM to overall syscall latency (ref~\ref{ch:eval}\todo{precise ref}), variations of this magnitude would be significant.
+We do not account for this behavior in the design and do not evaluate ZIL-PMEM in a NUMA configuration.\todo{future work}
 
 \csgoal{No Data Redundancy}
 ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.
@@ -822,7 +821,7 @@ ZIL-PMEM is allowed to trade PMEM space for time and simplicity when presented w
 Our justification is twofold.
 First, PMEM capacities are significantly higher than DRAM.
 For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is \SI{128}{GiB}.~\cite{optanepricing_missing}
-Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{move to background?}
+Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{ref background section? this sentence should remain, though}
 For ZIL-LWB, small SLOG devices of \SI{16} to \SI{32}{GiB} are sufficient in practice.\todo{ref ix systems truenas M}
 Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
@@ -835,20 +834,20 @@ ZIL-LWB is the current ZIL's persistence implementation.
 It uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
 ZIL-PMEM disables metaslab allocation for its PMEM SLOG device and uses the PMEM space directy.
 
-On top of PMEM we develop a data structure called PRB.
-PRB consumes fixed-size contiguous segments of PMEM (\textit{chunks}) and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
-The write path is scalable to many concurrent writers and features a mechanism to avoid excessive on-CPU waiting for PMEM I/O.
+For ZIL-PMEM, we partition the PMEM SLOG's space into fixed-size contiguous segments called \textit{chunks}.
+We develop a data structure called \textit{PRB} that consumes theses chunks and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
+PRB scales to many concurrent writers and features a mechanism to avoid excessive on-CPU waiting for PMEM I/O.
 Log entries stored in PRB are automatically garbage-collected when they become obsolete because their transaction group has been synced.
 
 PRB provides a pool-wide storage substrate for log entries but does not define any structure.
 This is the role of the \textit{HDL} abstraction which implements a mostly sequential log structure on top of PRB.
 Each dataset in the zpool has a separate HDL to which it writes log entries.
 The HDL adds metadata to the entry that attributes the entries to the HDL and encodes the log's structure.
-After a system crash, the HDLs scan PRB for entries need to be replayed and \textit{claim} them to block them from garbage collection.
-For replay, HDL provides a ZIL-compatible API that applies the changes that are encoded in the log entries in sequential, deterministic order.
+After a system crash, the HDLs scan PRB for entries that need to be replayed and \textit{claim} them to hold them back from garbage collection.
+For replay, the HDL API provides a callback-based interface that allows its consumer to apply the changes that are encoded in the log entries in sequential, deterministic order.
 Loss of entries, e.g., due to data corruption, is handled as gracefully as possible under the constraints of the logical dependencies encoded in the log structure.
 
-We use PRB/HDL to persist the ZIL log records for pools with the ZIL-PMEM ZIL kind.
+Pools of the ZIL-PMEM ZIL kind use PRB/HDL to persist ZIL log records.
 For this purpose\todo{language}, we refactor the existing \textit{zil.c} code module.
 Before the introduction of ZIL kinds, the struct \lstinline{zilog_t} implemented all ZIL-related functionality.
 With ZIL kinds, \lstinline{zilog_t} acts as an abstract base class that encapsulates shared ZIL functionality.
@@ -1731,7 +1730,7 @@ Sharing the slots (and thus chunks) among all threads and HDLs in the PRB is of 
         However, the concentration of entries in a chunk also increases the blast radius of data corruption due to the chunk's physical data structure which we discuss in Section~\ref{di:prb:pmemdatastructure}.
         In particular, data corruption within the entry metatadata of one HDL's entry can render another HDL's entry unreachable during PRB scan if they are stored in the same chunk.
     \item[Cache Efficiency] Our aquisition procedure deterministcally picks the lowest available commit slot.
-        It is thus very likely that chunks bounce around CPU cores, without taking temporal locality into consideration.
+        It is thus very likely that chunks bounce around CPU cores, without taking temporal locality into account.
         Note that, due to the use of non-termporal store instructions when writing log entries to PMEM, this only impacts the chunk DRAM object.
         We briefly experimented with per-core commit slots during development and found no noticable performance difference to the approach presented above.
 \end{description}
@@ -2408,7 +2407,7 @@ The ZIL API provides the \lstinline{zil_suspend} and \lstinline{zil_resume} func
 \lstinline{zil_suspend} pauses all ZIL activity and waits until all log entries are obsolete before returning to the caller.
 \lstinline{zil_resume} reverts the state to normal operation.
 Compatibility code for versions of ZFS prior to the \textit{fast snapshots} rely on ZIL suspend \& resume for taking snaphots.
-For newer pool versions, the only consumer \lstinline{spa_reset_logs}: when removing a SLOG from the pool, the ZIL is temporarily suspended to ensure that the SLOG does not contain valid log entries.
+For newer pool versions, the only consumer is \lstinline{spa_reset_logs}: when removing a SLOG from the pool, the ZIL is temporarily suspended to ensure that the SLOG does not contain valid log entries.
 After the SLOG is removed, the ZIL is resumed and the metaslab allocator uses the remaining SLOGs or the main pool devices to allocated LWBs.
 
 With regards to ZIL kinds, only the \lstinline{spa_reset_logs} use case is relevant since ZIL kinds require a more recent pool version than the \textit{fast snapshots} feature.
@@ -2469,7 +2468,7 @@ We recommend that future work replace these statically dispatched callbacks with
 
 \subsection{Reflection \& Alternatives}\label{sec:zil_kinds:alternatives}
 The general concept of ZIL kinds and the vtable-based implementation add complexity to the ZIL code.
-In this section we discuss the alternatives that we considered for supporting multilpe ZIL implementations at runtime.
+In this section we discuss the alternatives that we considered for supporting multiple ZIL implementations at runtime.
 
 \textbf{Alternative \#1}: We considered to move the level at which we dispatch into ZIL kind specific code one API layer upwards.
 THis would make \lstinline{zilog_t} and ITX a private implementation detail of ZIL-LWB.
