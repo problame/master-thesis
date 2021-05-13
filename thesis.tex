@@ -156,35 +156,18 @@ Block device consumers that wish to bypass block device emulation use the kernel
 
 The motivation for this thesis is to accelerate synchronous I/O in ZFS by using PMEM as a ZFS SLOG device.
 A single DIMM of the current\todo{product name} Intel Optane PMEM product line can sustain 530k random 4k write IOPS which corresponds to a write latency of \SI{1.88}{us}.
-However, when configuring the Linux PMEM block device as a SLOG in OpenZFS 2.0, a single thread only achieves 12k random 4k synchronous write IOPS~($\sim$~\SI{83}{us}), scaling up to 100k IOPS at 16 threads (8 cores, 2xSMT) at doubled latency.
+However, when configuring the Linux PMEM block device as a SLOG in ZFS, a single thread only achieves 12k random 4k synchronous write IOPS~($\sim$~\SI{83}{us}), scaling up to 100k IOPS at 16 threads (8 cores, 2xSMT) at doubled latency.
 In contrast, the same workload applied directly to the PMEM block device is able to achieve 500k IOPS with two threads~($\sim$~\SI{4}{us} per thread).
 And Linux 5.9's ext4 on the PMEM block device achieves 100k random 4k write IOPS ($\sim$~\SI{}) with a single thread and scales approximately linearly to up to 466k IOPS at four threads.
 \todo{review numbers in this paragraph}
 
-Our investigation of the latency distribution for the OpenZFS PMEM SLOG configuration shows that the ZIL implementation contributes \SI{48}{us} in the single-threaded case and up to \SI{95}{us} at eight threads.
-More specifically, up to \SI{50}{\%}\todo{run this again without ebpf} of total syscall latency is spent waiting for the \textit{ZIO pipeline}, excluding the time spent in the PMEM block device driver.
+We perform a more detailed analysis to determine ZFS's severe latency overhead in the 4k sync write benchmark.
+We find that the 80\% of the wall clock time for the average write operation is spent in the ZIL code.
+We identify severe overheads caused by both the physical data structure that represents the ZIL as well as the mechanism to persist it.
 
-ZIO is ZFS's abstraction for performing IO to the pool's storage devices.
-The pipeline-oriented design has proven extremely flexible and extensible over ZFS's lifetime.
-Many of ZFS’s distinguishing features are implemented in ZIO, including physical block allocation, transparent data and metadata checksumming, compression, deduplication and encryption as well as redundancy mechanisms such as raidz.
-CPU-intensive processing steps are parallelized to all of the system's CPUs using \textit{taskq}s.
-
-It is our impression that ZIO is biased towards throughput, not latency.
-For example, ZIO's main consumer is \textit{txg sync} which issues the updates to the on-disk merkle tree as a large tree of dependent ZIOs.
-Other consumers such as periodic data integrity checking (\textit{scrubbing}) are also throughput-oriented.
-In contrast, the ZIL is the only component that is latency-oriented.
-ZIO's latency overhead with fast block devices such as NVMe drives is a well known problem among ZFS developers.\todo{ref, gh issue, cite private conversation with brian?}
-
-Given
-\begin{itemize}[noitemsep]
-    \item the abysmal\todo{too harsh?} out-of-the-box performance of the PMEM block device as a SLOG, and
-    \item our findings on\todo{right prep?} the ZIL's and ZIO pipeline's significant latency overhead, as well as the fact that
-    \item grouping log records into log-write \textit{blocks} is unnecessary with byte-addressable PMEM,
-\end{itemize}
-we come to the conclusion that the current ZIL design is fundamentally unfit to reap the performance advantages of PMEM.
-We present \textbf{ZIL-PMEM}, a new implementation of the ZIL that bypasses the ZIO pipeline completely and persists log entries directly to PMEM.
+Based on these observations, we propose \textbf{ZIL-PMEM}, a new ZIL design that exclusively targets PMEM.
 It coexists with the existing ZIL which we refer to as \textit{ZIL-LWB} in the remainder of this document.
-ZIL-PMEM achieves 140k random 4k sync write IOPS with a single thread~($\sim$~\SI{7.1}{us}) and scales up to 400k IOPS at 8 threads before it becomes CPU-bound.
+ZIL-PMEM achieves 140k random 4k sync write IOPS with a single thread~($\sim$~\SI{7.1}{us}) and scales up to 400k IOPS at eight threads before it becomes CPU-bound.
 This corresponds to a speedup of 6.8x (or 4x, respectively) over ZIL-LWB.\todo{review numbers}
 Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
@@ -659,10 +642,10 @@ Maybe we can avoid this? It's only relevant in ZIL-PMEM.
 % WR\_INDIRECT 
 
 \chapter{ZIL-LWB on PMEM}\label{ch:lwb_analysis}
-The motivation for this thesis is the significant latency overhead of the current ZIL implementation (ZIL-LWB) compared to the raw PMEM hardware.
-In this chapter, we describe the benchmarking setup (Section~\ref{ch:lwb_analysis:setup}) to measure ZIL-LWB's overhead and present the resulting data in Section~\ref{ch:lwb_analysis:results}.
-We proceed with a breakdown of the latency overhead by the ZFS components that involved in the ZIL write path.
-Our findings (Section~\ref{ch:lwb_analysis:breakdown}) show that up to XX\% of the overall latency for a single 4k synchronous random write operation are ZIL-LWB-specific overhead, including up to YY\% ZIO pipeline overhead.
+The motivation for this thesis is the significant overhead of the current ZIL implementation (ZIL-LWB) in 4k random synchronous write workloads compared to the raw PMEM hardware.
+In this chapter, we describe this benchmark in detail (Section~\ref{ch:lwb_analysis:setup}) and present the resulting data in Section~\ref{ch:lwb_analysis:results}.
+We proceed with an analysis of the distribution of the wall clock time spent during this benchmark among the involved ZFS components.
+Our findings (Section~\ref{ch:lwb_analysis:breakdown}) show that approximately 80\% of overall latency are spent on ZIL-LWB-specific code, of which in turn approximately 60\% are spent waiting for the ZIO pipeline to persist the LWBs to PMEM.
 We conclude that ZIL-LWBs data structure and the ZIO pipeline are unfit to take advantage of PMEM-level performance, motivating the development of ZIL-PMEM.
 
 \section{Benchmark Setup}\label{ch:lwb_analysis:setup}
@@ -679,22 +662,148 @@ We use the following software stack:
     \item[Kernel] Linux 5.9, Debian buster (5.9.0-0.bpo.5-amd64)
     \item[Userland] Debian GNU/Linux (buster)
     \item[fio] fio-3.23-28-g7064
+    \item[bpftrace] bpftrace v0.12.0
+    \item[bcc] v0.16.0-11-ga74413b0
+    \item[OpenZFS] Our tree of OpenZFS with support for \textit{ZIL kinds} (Section~\ref{ch:zilkinds}), configured to use the ZIL-LWB ZIL kind.
+        Note that we ensured manually that the \textit{ZIL kinds} patch do not impact ZIL-LWB performance.
 \end{description}
-We use the following configuration:
+We use the following system configuration:
 \begin{itemize}
     \item SMT is enabled.
     \item The entire second CPU socket is disabled in software using the \lstinline{isolcpus=8,9,10,11,12,13,14,15,24,25,26,27,28,29,30,31} kernel command line parameter.
     \item We configure all Optane DIMMs in \textit{AppDirectNotInterleaved} mode.
+    \item We create a \SI{40}{GiB}-sized \textit{fsdax} namespace on the region of the first DIMM on the first socket.
+    \item We create a \SI{40}{GiB}-sized \textit{devdax} namespace on the region of the first DIMM on the first socket.
+    \item We partition the 3 NVMe drives into 10 equals-sized partitions each.
+    \item We create a zpool called \texttt{dut} with the 30 partitions as top-level vdevs, and the \texttt{/dev/pmem} device as a SLOG.
+        Note that we used the multitude of NVMe partitions because it improvded overall device utilization in our setup.
+    \item We create 8 datasets in the zpool, named \lstinline{dut/ds$i} and mounted at \lstinline{/dut/ds$i}.
+    \item For all datasets, we configure \lstinline{recordsize=4k} to match the fio workload and set \lstinline{compression=off} to avoid CPU overhead in the ZIO pipeline during \textit{txg sync}.\todo{check defined}
 \end{itemize}
+
+We use \textit{fio} to generate a workload of random 4KiB writes with synchronous semantics (\lstinline{blocksize=4k}, \lstinline{rw=randwrite}).
+Each of the \textit{numjobs} threads performs random synchronous write system calls to a separate file per thread (\lstinline{ioengine=sync}, \lstinline{sync=1}, \lstinline{direct=0}, \lstinline{fsync=0}).
+Each file has a size of \lstinline{size=100MiB} which means that the written data volume grows with rising \textit{numjobs}.
+To avoid scalability-bottlenecks in the \lstinline{itxg} layer\todo{check this is defined}, we place each thread's file onto a separate dataset \lstinline{/dut/ds$jobnum/fio_file} using the \lstinline{filename_format} option.
+We measure for \SI{60}{seconds} (\lstinline{time_based=1}, \lstinline{runtime=60}), with a ramp-up time of \SI{2}{seconds} (\lstinline{ramp_time=2}), and set \lstinline{end_fsync=1}.
+Before we run the benchmark, we prepare the benchmark files with a separate fio invocation with the additional flag \lstinline{--create_only=1}.
+
+We apply the fio workload to the following storage stacks:
+\begin{description}
+    \item[zil-lwb] The zpool with ZIL-LWB ZIL kind as described above.
+    \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all datasets.
+        This turns \lstinline{zil_commit} into a no-op, reducing the time spent in the \lstinline{write} system call to DMU object modification and ITX allocation, all in DRAM.
+    \item[fsdax] The fio configuration above, applied directly to the \texttt{/dev/pmem} block device (\lstinline{direct=1} instead of \lstinline{direct=0}, and \lstinline{filename=/dev/pmem0} instead of \lstinline{filename_format=...}).
+        This configuration demonstrates the performance of the Linux block device emulation around the PMEM hardware. It includes the syscall overhead.
+    \item[devdax] The fio configuration above, with \lstinline{ioengine=dev-dax}, applied directly to the \texttt{/dev/dax} namespace (\lstinline{filename=/dev/dax0.1} instead of \lstinline{filename_format=...}).
+        In this configuration, fio mmaps the PMEM namespace directly and thus bypasses the kernel completely.
+\end{description}
+
+% \begin{description}
+%     \item[ioengine] sync
+%     \item[end_fsync] 1
+%     \item[size] 100MiB
+%     \item[blocksize] 4k
+%     \item[rw] randwrite
+%     \item[time\_based] 1
+%     \item[runtime] 60 seconds
+%     \item[ramp\_time] 2 seconds
+%     \item[sync] 1
+%     \item[direct] 0
+%     \item[fsync] 0
+%     \item[numjobs] We vary this variable from 1 to 8.
+%     \item[group_reporting] 1
+% \end{description}
 
 \section{Results}\label{ch:lwb_analysis:results}
 
+The following graphs show the achieved IOPS and per-thread latency by numjobs.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=14cm]{fig/evaluation/motivating_fio_benchmark__iops_and_latency.png}
+    \caption{IOPS and latency ZIL-LWB compared to ZFS in async mode as well as the raw fsdax and devdax device.}
+\end{figure}
+
+ZIL-LWB only achieves approximately 10k IOPS at one thread and peaks at approximately 100k IOPS at seven threads.
+In contrast, without the ZIL, ZFS starts with 200k IOPS with one thread and achieves over 900k IOPS at seven threads.
+This exceeds the performance of the PMEM hardware (mostly around 500k IOPS) and demonstrates that the ZIL is clearly the bottleneck in the \textit{zil-lwb} configuration.
+A look at the per-IOP average latency emphasizes the vast overhead that ZIL-LWB adds compared to what is possible with the raw PMEM hardware.
+Whereas ZFS in async mode only requires \SI{5}{us} per IOP with \lstinline{numjobs=1}, and raw writes to fsdax require approximately \SI{3}{us}, ZIL-LWB with the same PMEM hardware as SLOG takes more than \SI{60}{us} per write.
+The minimum latency achieved by ZIL-LWB is at \lstinline{numjobs=4} at approximately \SI{50}{us} before it starts increasing to up to approximately \SI{85}{us} at \lstinline{numjobs=8}.
+
+% \begin{figure}[H]
+%     \centering
+%     \includegraphics[height=5cm]{fig/evaluation/motivating_fio_benchmark__latency_zoomed.png}
+%     \caption{Zoomed section of the latency curves of ZFS in async mode, devdax, and fsdax.}
+% \end{figure}
+
 \section{Analysis}\label{ch:lwb_analysis:breakdown}
 
-\subsection{OpenZFS Background: ZIL-LWB}
+By comparing the numbers for \textit{async} and \textit{zil-lwb}, it is safe to assume that regardless of the value for \lstinline{numjobs}, ZIL-LWB adds at least \SI{40}{us} of latency.
+We want to determine where this time is spent.
 
-\section{Conclusion}
+\subsection{OpenZFS Background: How ZIL-LWB Works}
+foo\todo{figure out what we need to explain the breakdown model and rant on zil-lwb below}
 
+\subsubsection{Analysis}
+
+Given the background knowledge on how ZIL-LWB works, we are now ready to analyze its latency.
+We use dynamic instrumentation (eBPF via bpftrace\todo{cite}) to sum up the wall clock time spent in ZFS functions that are executed by the fio threads during a synchronous write.
+We then use the model in Figure~\ref{fig:lwbanalysis:breakdown_model} to compute the time spent in the asynchronous part of the write operation, the ITX layer, and ZIL-LWB specific code.
+We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:breakdown_charts}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=6cm]{fig/zil_lwb_latency_analysis__breakdown}
+    \caption{Our model of the time spent in ZFS by a fio thread that performs a write system call.
+    The different colums represent the different levels of the dynamic call graph
+    The nodes in each column describe all activity that happens at this level of the call graph.
+    Activities with black text color are instrumented using eBPF.
+    Gray text color indicates that the value was computed in post-processing by subtracting the sum of the columns instrumented time from the instrumented time of the parent in the column to the left.
+    For example, to compute \textit{async}, we compute \lstinline{zfs_write - (zil_commit + zfs_log_write)}.
+    The border style of the node visualizes the subsystem to which we attribute the time spent in the activity represented by the node.
+    }
+    \label{fig:lwbanalysis:breakdown_model}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=14cm]{fig/evaluation/zillwb_latency_analysis__relative_and_absolute_latency_breakdown}
+    \caption{The relative and absolute breakdown of latency by activity.
+    The absolute breakdown is normalized by the number of write operations.
+    We compared the latencies in the breakdown with the latencies observed by fio to ensure that our accounting is correct under the given model.
+    }
+    \label{fig:lwbanalysis:breakdown_charts}
+\end{figure}
+
+Our observations are as follows:
+\begin{itemize}
+    \item The instrumentation overhead is 5--\SI{10}{us} per IOP. (We compared the latencies that fio reports for the instrumented and uninstrumented run.)
+    \item The relative distribution of latency remains mostly unchanged for the different values of \lstinline{numjobs}.
+    \item The \textit{async} part of the write path and the ITX layer together only amount to approximately 20\% of overall latency.
+        The remaining 80\% are spent on LWB-specific activities.
+    \item The LWB timeout mechanism, whose purpose is to improve space utilization in the LWBs, amounts to 4\% of overall latency.
+    \item At least 20\% of overall latency are spent on filling LWBs, issuing their corresponding ZIOs, and other LWB-related activities.
+    \item 45--50\% of overall latency is spent waiting for the ZIO pipeline to persist the LWBs.
+        In absolute numbers, the value ranges from 25--\SI{40}{us}.
+        We have separately confirmed that ZIL-LWB uses \SI{12}{KiB} LWBs which is the smallest possible LWB size allowed by the implementation.
+        In our benchmarking setup (per-thread datasts), each LWB only holds a single \SI{4}{KiB} write log record with \SI{192}{B} of additional metadata.
+        This amounts to write amplification of 3x.
+        However, even with this increased data volume per IOP, the results from the previous experiment suggest that with a latency of \SI{3}{us} per 4k write to the raw PMEM hardware, we should expect less than \SI{9}{us} of PMEM write time per LWB.
+        Thus, a major fraction of the 25--\SI{40}{us} that are spent waiting for ZIO is actually pure software overhead.
+\end{itemize}
+
+Our observations lead us to the following conclusions.
+\textbf{First, we have reason to believe that the high overhead of ZIO is unlikely to be reduced} to a degree that allows for exploitation of PMEM-level latency, regardless of whether the hardware is actual PMEM or simply very fast NVMe drives.
+The reason is that there is an inherent conflict of goals for ZIO:
+whereas the ZIL is strictly latency-oriented, all other conumers (\textit{txg sync}, \textit{scrubbing}, \textit{zfs send/recv}) are throughput-oriented.
+The pipeline-oriented, parallelized architecture of ZIO is important for throughput and provides great flexibility%
+\footnote{Many of ZFS’s distinguishing features are implemented in ZIO, including physical block allocation, transparent data and metadata checksumming, compression, deduplication and encryption as well as redundancy mechanisms such as raidz.}%
+, but increases latency through context switches\cite{openzfsZILPerformanceImprovements2020}.
+\textbf{Second, the persistent representation of the ZIL as a chain of LWBs poses a severe and unnecessary overhead on PMEM.}
+For one, the latency amortization provided by LWBs and the timeout mechanism is unnecessary at PMEM-level latencies where it is cheaper to persist the entry directly.
+And for another, since PMEM is byte-addressable, the persistent representation is no longer constrainted by block-sized, opening up the possibility of greater space efficiency.
 
 \chapter{Design Overview}\label{ch:designoverview}
 In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design as well as its integration into ZFS.
