@@ -105,6 +105,8 @@
 \input{kit_style/declaration}
 
 \chapter{Abstract}
+We propose to explore persistent memory (PMEM) as the storage medium for the ZFS Intent Log (ZIL). Specifically, we propose a new type of ZIL called ZIL-PMEM that bypasses existing block-device oriented abstractions to take advantage of the low latency provided by PMEM. ZIL-PMEM will maintain the same consistency guarantees to applications as the current ZIL implementation, maintain data integrity of log contents and correctly handle data corruption.
+
 \blindtext
 
 \mainmatter
@@ -748,7 +750,7 @@ Figure~\ref{fig:lwbanalysis:zoomed_latency} shows the same latency data as Figur
 By comparing the numbers for \textit{async} and \textit{zil-lwb}, it is safe to assume that regardless of the value for \lstinline{numjobs}, ZIL-LWB adds at least \SI{40}{us} of latency.
 We want to determine where this time is spent.
 
-\subsection{OpenZFS Background: How ZIL-LWB Works}
+\subsection{OpenZFS Background: How ZIL-LWB Works}\label{ch:lwb_analysis:openzfs_background_zil_lwb}
 We have introduced the DRAM representation of the ZIL in Section~\ref{openzfs:the_zil_api}:
 Syscalls modify DMU objects in so-called DMU transactions and log the logical change made in a transaction as an ITX to the ZIL.
 The ZIL stores the ITXs in a data structure called \textit{itxg} until either the transaction group of the ITX's DMU transaction is synced to disk or synchronous semantics are requested through \lstinline{zil_commit}.
@@ -887,21 +889,21 @@ This problem is well known in the ZFS community, see \cite{openzfsZILPerformance
 
 \textbf{Second, the persistent representation of the ZIL as a chain of LWBs poses a severe and unnecessary overhead on PMEM.}
 For one, the latency amortization provided by LWBs and the timeout mechanism is unnecessary at PMEM-level latencies where it is cheaper to persist the log records on an individual basis than batching them in LWBs and coordinating with other threads on the matter.
-And for another, since PMEM is byte-addressable, the persistent representation is no longer constrainted by disk block sizes, opening up the possibility of greater space efficiency.
+And for another, since PMEM is byte-addressable, the persistent representation is no longer constrainted by disk block sizes, opening up the possibility of better space efficiency.
 
 \chapter{Design Overview}\label{ch:designoverview}
-In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design as well as its integration into ZFS.
-Readers should be familiar with the technical background on PMEM in Linux and OpenZFS given in Section~\todo{ref}.
+Given the insights described in the previous chapter, we propose an alternative ZIL implementation called \textbf{ZIL-PMEM} that exclusively targets PMEM SLOG devices.
+In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design.
+The subsequent two chapters then introduce the core data structure and our approach to integrating it into ZFS.
 
 \section{Project Goals \& Scope}
 
 \newcommand{\csgoal}[1]{\textbf{#1}}
 
 \subsection{Requirements}\label{sec:requirements}
-The following features are success criteria for the ZIL-PMEM design.
 
 \csgoal{Coexistence}
-ZIL-PMEM must coexist with ZIL-LWB due to limited availability of PMEM and limitations of the ZIL-PMEM design.
+ZIL-PMEM must coexist with ZIL-LWB in code and at runtime due to limited availability of PMEM hardware and the limitations of the ZIL-PMEM design.
 
 \csgoal{Same Guarantees}
 ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB for both ZPL and ZVOL.
@@ -916,25 +918,26 @@ In the absence of PMEM media errors and data corruption, ZIL-PMEM must be able t
 The result must be the same as if ZIL-LWB would have been used in lieu.
 Specifically:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
-    \item Replay must respect the logical dependencies of log entries.
+    \item Replay must respect the logical dependencies between log records.
     \item Logging must be crash-consistent, i.e., the in-PMEM state must always be such that replay is correct.
-    \item Replay must be crash-consistent, i.e., if the system crashes or loses power replay must be able to resume. Resumed replay must continue to respect logical dependencies of log entries.
+    \item Replay must be crash-consistent, i.e., if the system crashes or loses power during replay, it must be possible to resume replay after the crash.
+        Resumed replay must continue to respect logical dependencies of log records.
 \end{itemize}
 
 \csgoal{Data Integrity}
 Data integrity is a core feature of ZFS~\cite{bonwickZettabyteFileSystem2003}.
-ZIL-PMEM must detect corrupted log entries using an error-detecting code.
-It must be handled \textit{correctly} (as outlined in the previous paragraph) and \textit{gracefully} with the following behavior as the baseline:
-``Assume a sequence of log entries $1 \dots N$ where log entry $1$ does not depend on a log entry and each entry $i > 1$ depends on its predecessor $i-1$.
-Data corruption in entry $i \in 1 \dots N$ must not prevent replay of entries $1 \dots i-1$".
+ZIL-PMEM must detect corrupted log records using an error-detecting code.
+Detected corruption must be handled \textit{correctly} (as outlined in the previous paragraph) and \textit{gracefully} with the following behavior as the baseline:
+``Assume a sequence of log records $1 \dots N$ where log record $1$ does not depend on a log record and each record $i > 1$ depends on its predecessor $i-1$.
+Data corruption in record $i \in 1 \dots N$ must not prevent replay of records $1 \dots i-1$".
 
 \csgoal{Low Latency}
-The latency overhead of ZIL-PMEM compared to raw PMEM device latency should be minimal for single-threaded workloads.
+The latency overhead of ZIL-PMEM compared to raw PMEM device latency for the same data volume should be minimal for single-threaded workloads.
 Multi-threaded workloads are addressed below.
 
 \csgoal{Multi-Core Scalability}
 Since PMEM is added as a pool-wide resource used by all of the pool's datasets, ZIL-PMEM should scale well to multiple cores.
-Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speedups for threads that perform synchronous I/O operations on separate CPU cores:
+Barring PMEM throughput limitations, the speedup in throughput (IOPS) achieved by parallelizing synchronous I/O to multiple cores on a ZIL-PMEM system should be as follows:
 {
 \setlength{\parskip}{0pt}
 \begin{description}[topsep=0pt, noitemsep, leftmargin=1cm, labelindent=1cm, widest=1 private dataset per thread]
@@ -942,7 +945,7 @@ Barring PMEM throughput limitations, ZIL-PMEM should achieve the following speed
     \item[1 shared dataset] \mbox{}
           \begin{description}[noitemsep, leftmargin=1cm, labelindent=1cm, widest=ZPL filesystem]
               \item[ZPL filesystem] No speedup.
-              \item[ZVOL] Up to linear speedup, depending on workload.
+              \item[ZVOL] No speedup in standard mode, potentially sub-linear speedup in bypass mode (Section~\ref{sec:itxgbypass}).
           \end{description}
 \end{description}
 }
@@ -953,16 +956,16 @@ Whereas supercapacitor-backed persistent memory modules (NVDIMM-N) should be usa
 
 \csgoal{CPU-Efficient Handling Of PMEM Bandwidth Limits}
 If the maximum write bandwidth to any kind of storage device is exceeded, the I/O stack must somehow apply back-pressure to avoid losing in-flight data.
-With PMEM, the I/O stack is the CPU microarchitecture and the back-pressure manifests as stalled instructions.
-However, from the OS thread scheduler's perspective, threads that stall because they wait for PMEM are indistinguishable from actually busy threads.
+With PMEM, the I/O stack is the CPU microarchitecture and the back-pressure manifests as stalling instructions.
+However, from the OS thread scheduler's perspective, threads whose instructions stall because they wait for PMEM are indistinguishable from actually busy threads.
 \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at \SI{2}{GB/s} and that write bandwidth decreases to \SI{1}{GB/s} at ten or more CPU cores.
 % In contrast, DRAM shows a near-linear increase in bandwidth to \SI{60}{GB/s} at 15~threads.~\cite[fig.4]{yangEmpiricalGuideBehavior2020}
-Since ZIL-PMEM shares PMEM among all datasets in a zpool, we expect that bandwidth exhaustion will happen in practice.
+Since ZIL-PMEM shares PMEM among all datasets in a zpool, we expect bandwidth exhaustion to be a phenomenon that wil happen in practice.
 ZIL-PMEM should thus provide a mechanism to shift excessive PMEM I/O wait time off the CPU.
 
 \csgoal{Testability}
 ZIL-PMEM must be architected for testability.
-The core algorithms presented in this chapter must be covered by unit tests.
+The core algorithms must be covered by unit tests.
 Further, ZIL-PMEM should be integrated into the ztest user-space stress test as well as the SLOG tests of the ZFS Test Suite.
 
 \subsection{Out Of Scope For The Thesis}
@@ -970,7 +973,7 @@ The following features were omitted to constrain the scope of the thesis.
 We believe that our design can accomodate them without major changes.
 
 \csgoal{Support For OpenZFS Native Encryption}
-The ZIL-PMEM design presented in this section does not support OpenZFS native encryption.
+The ZIL-PMEM design presented in this section does not address OpenZFS native encryption.
 Intel Optane DC Persistent Memory supports transparent hardware encryption per DIMM at zero overhead\todo{cite spec}.
 In contrast, OpenZFS native encryption is per dataset and software-based.
 Given these significant differences in data and threat model, ZIL-PMEM cannot rely on Optane hardware encryption.
@@ -990,10 +993,10 @@ More experimentation and experience with ZIL-PMEM will benecessary to determine 
 We do not account for this behavior in the design and do not evaluate ZIL-PMEM in a NUMA configuration.\todo{future work}
 
 \csgoal{No Data Redundancy}
-ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.
+ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.\todo{future work}
 
 \csgoal{Only Works With SLOGs}
-ZIL-PMEM only works with PMEM SLOGs, not for a zpool with PMEM as main pool vdevs.
+Our approach to integrate ZIL-PMEM into ZFS is only applicable to PMEM SLOGs and does not work for a zpool that uses PMEM as main pool vdevs.
 Such pools continue to use ZIL-LWB.
 
 \csgoal{No Software Striping}
@@ -1023,19 +1026,20 @@ We introduce the concept of \textit{ZIL kinds} to ZFS.
 The ZIL kind is a pool-scoped variable that determines the pool's strategy for persisting ZIL entries.
 A zpool's ZIL kind is determined by the following rule:
 if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is ZIL-PMEM. Oterwise, it is ZIL-LWB.
-ZIL-LWB is the current ZIL's persistence implementation.
-It uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
-ZIL-PMEM disables metaslab allocation for its PMEM SLOG device and uses the PMEM space directy.
+As explained in Section~\ref{ch:lwb_analysis:openzfs_background_zil_lwb}, ZIL-LWB uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
+In contrast, ZIL-PMEM disables metaslab allocation for the PMEM SLOG device and uses the PMEM space directly.
 
-For ZIL-PMEM, we partition the PMEM SLOG's space into fixed-size contiguous segments called \textit{chunks}.
+Ee partition the PMEM SLOG's space into fixed-size contiguous segments called \textit{chunks}.
 We develop a data structure called \textit{PRB} that consumes theses chunks and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
+A log entry is the unit of data that can be written to and read from PRB.
+It consists of the the ZIL's log \textit{record} and PRB-specific metadata.
 PRB scales to many concurrent writers and features a mechanism to avoid excessive on-CPU waiting for PMEM I/O.
 Log entries stored in PRB are automatically garbage-collected when they become obsolete because their transaction group has been synced.
 
 PRB provides a pool-wide storage substrate for log entries but does not define any structure.
 This is the role of the \textit{HDL} abstraction which implements a mostly sequential log structure on top of PRB.
 Each dataset in the zpool has a separate HDL to which it writes log entries.
-The HDL adds metadata to the entry that attributes the entries to the HDL and encodes the log's structure.
+The HDL adds metadata to the entry that attributes it to the HDL and encodes the log's structure.
 After a system crash, the HDLs scan PRB for entries that need to be replayed and \textit{claim} them to hold them back from garbage collection.
 For replay, the HDL API provides a callback-based interface that allows its consumer to apply the changes that are encoded in the log entries in sequential, deterministic order.
 Loss of entries, e.g., due to data corruption, is handled as gracefully as possible under the constraints of the logical dependencies encoded in the log structure.
@@ -1065,7 +1069,7 @@ The integration of PRB/HDL into ZFS is then presented in Chapter~\ref{ch:zilpmem
 
 \chapter{The PRB/HDL Data Structure}\label{ch:prbhdl}
 
-In this section we describe the PRB/HDL data structure which implements the bulk of ZIL-PMEM's functionality\todo{language, help}.
+In this chapter we describe the PRB/HDL data structure which implements the bulk of ZIL-PMEM's functionality\todo{language, help}.
 PRB/HDL abstracts the allocatable space of a PMEM SLOG vdev into virtual logs for each dataset in the pool.
 The \textit{zil\_pmem.c} module, which we present in Chapter~\ref{ch:zilpmem} uses these virtual logs to implement the ZIL-PMEM ZIL kind.
 %A single PRB instance supports multiple logs with independent lifecycles.
@@ -1079,10 +1083,11 @@ Afterwards, in Section~\ref{di:prb:approach}, we give a high-level overview of o
 Section~\ref{di:prb:logstructure} presents the virtual log abstraction that is exposed by HDL and Section \ref{di:prb:replayapproach} describes the high-level approach for replay.
 Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash-consistency is addressed by HDL.
 Subsequently, we describe PRB which is the storage substrate that the HDLs use for persistence:
-Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use to manage the PMEM space and store log entries.
-In Section~\ref{di:prb:traversal} we describe how these data structures are traversed during log recovery.
-Section~\ref{di:prb:write} then presents the low-latency and CPU efficient design of the write path.
-Finally, Section~\ref{di:prb:api} provides an overview of the PRB API that is consumed by \textit{zil\_pmem.c}.
+Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use for PMEM space management and log entry storage.
+In Section~\ref{di:prb:traversal} we describe the algorithm that traverses the in-PMEM data structure during log recovery.
+Secton~\ref{di:prb:gc} then explains how garbage collection removes entries from it\todo{help, don't want to repeat 'in-PMEM structure'}.
+The low-latency and CPU efficient design of the write path is then presented in Section~\ref{di:prb:write}.
+Finally, Section~\ref{di:prb:api} provides an overview of the PRB/HDL API that is consumed by \textit{zil\_pmem.c}.
 
 \section{OpenZFS Background} \label{di:prb:background}
 Remember from Section~\ref{openzfs:pool_operation} that whenever a file system call changes a dataset $D$, it does so in a DMU transaction $T_i$ within a transaction group $T_{i_{txg}}$.
@@ -1105,17 +1110,28 @@ If the system call has synchronous semantics, the system call handler invokes \l
 In upstream ZFS, the ZIL(-LWB) implements this persistent log structure by stuffing ITXs into LWBs and linking the LWBs into a chain on disk.
 With the introduction of ZIL kinds, \lstinline{zil_commit} only builds the commit list and leaves the persistence to the ZIL kind implementation.
 
-After a system crash, the zpool is in the state of the last synced transaction group which we call \textit{precrash-txg}.
-Our dataset $D$ is lacking exactly those changes $C_i$ whose transactions $T_i$ were made in transaction groups younger than precrash-txg (their $T_{i_{txg}} > precrash\text{-}txg$).
+After a system crash, the zpool is in the state of the last synced transaction group which we call $precrash\_txg$.
+Our dataset $D$ is lacking exactly those changes $C_i$ whose transactions $T_i$ were made in transaction groups that are younger than $precrash\_txg$, i.e., their $T_{i_{txg}} > precrash\_txg$.
 When $D$ is mounted, these changes $C_i$ need to be applied to $D$ in order to recover data that was reported as committed towards userspace.
 The ZIL API for this task is called \lstinline{zil_replay}.
 Its implementation is specific to each ZIL kind but the API contract is the same:
 the caller provides a callback that the implementation invokes for every log record that represents a missing change $C_i$.
 The callback interprets the log record and performs a DMU transaction that atomically applies the change to the dataset and records replay progress in the ZIL header.
-The invocation order is given by the commit list, but entries for transactions before or in precrash-txg ($T_{i_{txg}} \le precrash\text{-}txg$) must be skipped because the change encoded in them is already part of the dataset state.
+The invocation order is defined by \lstinline{itxg} through the commit list order at write time, but entries for transactions in txgs $T_{i_{txg}} \le precrash\_txg$ must be skipped because the change encoded in them is already part of the dataset state.
 We provide an example for the commit list and the replay sequence for different precrash-txgs in Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level}.
 
-Note that the DMU transactions during replay only re-enact the logical changes but do not imitate the original dataset.
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=6.5cm]{fig/zil_writepath_and_replay_sequence_logical_level}
+    \caption{
+        Example for a commit list with entries from different files and txgs.
+        We show the replay sequences for different precrash-txgs.
+        The replay callback must only be invoked for the entries that log changes in txgs younger than the precrash-txg.
+    }
+    \label{fig:zil_writepath_and_replay_sequence_logical_level}
+\end{figure}
+
+Note that the DMU transactions during replay only re-enact the logical changes to the dataset but do not restore the exact physical state of the dataset that would have been synced in the absence of a crash.
 For example, changes that would have been spread across transaction groups 23, 24, and 25 at write time may land in transaction groups 42 and 43 during replay.
 Further, the system could crash again, during replay.
 For example, we could lose power so that txg 42 is the last-synced txg whereas 43 was still in \textit{syncing} state.
@@ -1127,25 +1143,19 @@ The consequence for any ZIL implementation is that it needs to persist the follo
     \item[Replay progress] Information that tracks which log entries have already been replayed so that replay can be resumed correctly after a crash.
 \end{description}
 
-\begin{figure}[H]
-    \centering
-    \includegraphics[height=7cm]{fig/zil_writepath_and_replay_sequence_logical_level}
-    \caption{
-        Example for a commit list with entries from different files and txgs.
-        We show the replay sequences for different precrash-txgs.
-        The replay callback must only be invoked for the entries that log changes in txgs younger than the precrash-txg.
-    }
-    \label{fig:zil_writepath_and_replay_sequence_logical_level}
-\end{figure}
-
 \section{Requirements}\label{di:prb:analysis}
 
+The \textit{commit list} is the point at which the common ZIL code hands over responsibility to the ZIL kind implementation.
 We identify the following requirements for the persistence layer of any ZIL kind:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
-\item During normal operation, it acts as a write-only sink for log records.
-\item A log record is the encoded representation of the change that was made in a single DMU transaction.
-    The representation is shared between all ZIL kinds.
-    Log entries are always scoped to a single dataset.
+\item During normal operation, it acts as a write-only sink for ITXs whose order is defined by the \lstinline{itxg} data structure in the form of the \textit{commit lists}.
+\item The persistent representation of an ITX is the \textit{log record}.
+    A log record is the encoded representation of the change that was made in a single DMU transaction.
+    Log records are always scoped to a single dataset.
+    Their representation is shared among all ZIL kinds.
+    However, the ZIL kind introduces additional structures to encode the commit list order.
+    For example, ZIL-LWB introduces the log-write Block (LWB) as explained in Section~\ref{ch:lwb_analysis:openzfs_background_zil_lwb}.
+    ZIL-PMEM wraps log records in so-called \textit{log entries} that contain additional metadata.
 \item In the event of a crash, the persistence layer must replay exactly those log records that have been successfully written to the ZIL but whose DMU transaction's txg did not sync before the crash.
     The code that decodes the log records and applies the changes encoded in them is shared among all ZIL kinds.
     It applies each log record's change in separate DMU transactions and gives the persistence layer an opportunity to update the ZIL header in the same transaction.
@@ -1159,7 +1169,7 @@ We derive the following abstract view of \textbf{what} needs to be stored \textb
     \item The \textit{precrash-txg} to discern replayable from obsolete log records (see previous section).
     \item Some representation of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
 \end{itemize}
-We put the following requirements on the \textbf{storage substrate} that stores the log entries:
+For ZIL-PMEM, we put the following requirements on the \textbf{storage substrate} that stores the log entries:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item On the write path, the overhead added to the raw log entry write time should be minimal.
     \item It must scale well on a multicore system since many datasets write their log entries in parallel.
@@ -1772,7 +1782,7 @@ Example:
     }
 \end{lstlisting}
 
-\section{PRB: Garbage Collection}
+\section{PRB: Garbage Collection}\label{di:prb:gc}
 We already covered the essence of garbage collection in Section~\ref{di:prb:dramdatastructure}:
 if the capacity of an acquired commit slot is insufficient, the log writer puts it on the \textit{full list} for the chunks' \textit{max txg} and gets a new chunk from the \textit{free list}.
 After \textit{txg sync} has written out that \textit{max txg}, it triggers garbage collection, which removes all entries in the chunks on the \textit{full list} for \textit{max txg}.
@@ -2309,10 +2319,10 @@ Synchronization is handled internally.
 % % Also remember that $E$ must only be replayed if the changes of its transaction group $E.txg$ have not been applied to the dataset.
 % Steps per node $N$:
 % \begin{enumerate}[noitemsep]
-%     \item \label{replayStep:skiptxg} Skip $N$ if its $N.txg \le precrash\text{-}txg$.
+%     \item \label{replayStep:skiptxg} Skip $N$ if its $N.txg \le precrash\_txg$.
 %     \item \label{replayStep:skipreplayed} Skip $N$ if $(N.gen,N.gsid) \le (gen_{last}, gsid_{last})$.
 %     \item \label{replayStep:validate} Compare the validating \textit{last table}'s counters to the Counters Table stored in $N$.
-%         We only compare counters for $txg > precrash\text{-}txg$.
+%         We only compare counters for $txg > precrash\_txg$.
 %         Proceed iff the counters match. Otherwise, stop the iteration, and return $N$ as a \textit{witness} for log corruption.
 %     \item \label{replayStep:bump1} If $N.gen \neq gen_{last}$, compute a new validating \textit{last table} from the validating \textit{live table}.
 %     \item \label{replayStep:bump2} Increment the validating \textit{live table}'s counter for txg $N.txg$.
@@ -2324,7 +2334,7 @@ Synchronization is handled internally.
 % \end{samepage}
 % Step~\ref{replayStep:skiptxg} filters out entries whose changes had already been synced to the pool before the system crashed.
 % Step~\ref{replayStep:skipreplayed} filters out entries for which the callback has already been invoked.
-% Comparing the counters in step~\ref{replayStep:validate} ensures that no entries in generations $gen < N.gen$ and $txg > precrash\text{-}txg$ have been lost.
+% Comparing the counters in step~\ref{replayStep:validate} ensures that no entries in generations $gen < N.gen$ and $txg > precrash\_txg$ have been lost.
 % These are precisely the entries that $N$ logically depends on (Section~\ref{di:prb:structure}).
 % Steps~\ref{replayStep:bump1} and \ref{replayStep:bump2} then ensure that step \ref{replayStep:validate} will pass for entries in later generations, their $(gen, gsid) > (N.gen, _)$ unless later entries have been lost.
 % And \ref{replayStep:bump3} ensures that $N$ is going to be skipped by step~\ref{replayStep:skipreplayed} in the future and thus will not be double-counted by steps~\ref{replayStep:bump1} and \ref{replayStep:bump2}.
@@ -2395,7 +2405,7 @@ Synchronization is handled internally.
 
 % Claiming is responsible for transitioning the ZIL header from \textit{logging} to \textit{replaying} when the log is first claimed after a crash.
 % It initializes the associated \lstinline{zilpmem_replay_state_phys_t} value which contains the checkpointed iteration state used by replay.
-% The value for $precrash\text{-}txg$ is the pool's first transaction group that will be synced once txg sync starts.
+% The value for $precrash\_txg$ is the pool's first transaction group that will be synced once txg sync starts.
 % $(gen_{last}, gsid_{last})$ is $(0, 0)$.
 % All rows in the \textit{validating counter tables} are invalidated by setting their $txg$ to $0$.
 
