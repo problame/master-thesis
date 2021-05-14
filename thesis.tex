@@ -3008,18 +3008,90 @@ Steps:
 \end{lstlisting}
 
 \chapter{Evaluation}\label{ch:eval}
+In this chapter we evaluate whether ZIL-PMEM meets the project goals established in Section~\ref{sec:requirements}.
+
+\section{Usability \& Architecture}
+
 \section{Correctness}
-We evaluate the correctness of our work through unit and integration tests.
+We use unit tests and integration tests to validate our implementation's behavior.
+
 \subsection{PRB}
+
 \subsection{ZIL-PMEM}
+
 \section{Performance}
-We evaluate the performance of ZIL-PMEM with a variety I/O benchmarks.
-\subsection{Write Performance}
-\subsubsection{4k Random Sync Writes}
-\subsubsection{Application Benchmarks}
-\subsection{Replay Performance}
+We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
+We seek to answer the following questions:
+\begin{itemize}
+    \item What is the speedup that ZIL-PMEM achieves over ZIL-LWB in the 4k synchronous random write workload?
+    \item How does ZFS with ZIL-PMEM perform compared to other Linux filesystems that were adapted to PMEM?
+    \item Is ZIL-PMEM a viable alternative to using Linux filesystems in combination with dm-writecache?
+    \item To what degree do ZVOLs benefit from ZIL-PMEM?
+    \item What is the benefit of the ITXG bypass for ZVOLs?
+    \item Are PRB's \textit{commit slots} effective at improving CPU efficiency if the maximum PMEM write bandwidth is exceeded?
+\end{itemize}
+
+\subsection{Setup \& Methodology}
+
+\subsection{4k Synchronous Random Write Workload}
+The first pillar of our performance evaluation is the \textit{fio} 4k synchronous random write workload that motivated the design of ZIL-PMEM.
+We already described the workload characteristics in detail in Section~\ref{ch:lwb_analysis:setup}.
+We use the same zpool layout as for ZIL-LWB (30 striped NVMe partitions, a single Optane DIMM region's /dev/pmem as SLOG).
+We configure PRB with \textit{ncommitters=3}, which is the most CPU-efficient settings for a single Optane DIMM as we will show in Section~\ref{sec:ncommitters_scalability}.
+
+Figure~\ref{fig:eval:fio4k:metrics} shows the cummulative IOPS and per-IOP average latency measured by fio for one to eight threads.
+With a single thread, ZIL-PMEM achieves 128k IOPS which is a speedup of $8$ over ZIL-LWB (16k IOPS).
+ZIL-PMEM scales almost linearly to 400k IOPS at four threads where the speedup over ZIL-LWB is still $5.5$.
+Performance does not increase further for higher thread counts.
+The constant offset to the \textit{fsdax} curve for thread count 4--7 suggests that we are limited by PMEM write bandwidth.
+(Remember that \textit{fsdax} shows the raw \texttt{/dev/pmem} block device's performance under the same workload.
+The slight decline to 346k IOPS at eight threads correlates with a similar decline in the \textit{async} curve but not the \textit{fsdax} curve, suggesting a CPU bottleneck (8 cores per socket) or scalability bottleneck in ZFS.
+
+\begin{figure}[H]
+    \begin{subfigure}{0.5\textwidth}
+        \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__zilpmem__iops}
+    \end{subfigure}
+    \begin{subfigure}{0.5\textwidth}
+        \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__zilpmem__latency}
+    \end{subfigure}
+    \begin{subfigure}{0.5\textwidth}
+        \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__zilpmem__speedup}
+    \end{subfigure}
+    \begin{subfigure}{0.5\textwidth}
+        \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__zilpmem__latency_zoomed}
+    \end{subfigure}
+    \caption{IOPS and latency measured by \textit{fio} for our 4k synchronous random write workload, by number of threads.}
+    \label{fig:eval:fio4k:metrics}
+\end{figure}
+
+We generalize our eBPF instrumentation from Section~\ref{ch:lwb_analysis:breakdown} to support ZIL-PMEM and compare the resulting breakdown of per-IOP latency in Figure~\ref{fig:eval:fio4k:breakdown}.
+(The new component \lstinline{zil_persistence} component is defined as the overall time spent in \lstinline{zil_commit} minus the time spent compiling the commit list.)
+Whereas it is the dominant factor for latency in ZIL-LWB (80\% of average per-IOP latency, as observed in Section~\ref{ch:lwb_analysis:breakdown}), ZIL-PMEM only spends approximately 25\% on persistence to PMEM.
+The most dominant component is the \textit{async} code path, i.e., modification of DMU objects.
+And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\% contribution to overall latency.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/comparison_zil_overhead_lwb_vs_pmem}
+    \caption{Comparison of relative and absolute latency contribution of functions executed by fio threads when they perform synchronous writes.}
+    \label{fig:eval:fio4k:breakdown}
+\end{figure}
+
+\subsection{Application Benchmarks}
+\subsection{ITXG Bypass}
+\subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
+
+\section{Discussion}
 
 \chapter{Summary}\label{ch:summary}
+
+\section{Future Work}
+
+\begin{description}
+    \item[Evaluation Of Replay Performance]
+    \item[Evaluation of Chunk Size] 
+
+\end{description}
 
 \backmatter
 
