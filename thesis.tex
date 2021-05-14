@@ -568,7 +568,7 @@ However, the existing ZIL-PMEM unit tests already test many scenarios for data c
 The \textit{zil.c} code module implements all ZIL functionality.
 The ZIL is a per-dataset log and thus all ZIL state is kept in per-dataset structures.
 On disk, this state is kept in the \lstinline{zil_header_t} structure, which is part of the \lstinline{objset_phys_t} structure, which in turn is owned by the \lstinline{dsl_dataset_phys_t} structure.
-\lstinline{zil_header_t} contains the pointer to the first LWB in the dataset's ZIL chain.
+\lstinline{zil_header_t} contains the pointer to the first LWB in the dataset's ZIL chain.\todo{reframe this section as dram representation}
 It also contains fields that track claiming and replay progress.
 In DRAM, the per-dataset state is kept in the \lstinline{zilog_t} structure.
 All ZIL APIs are effectively scoped to the \lstinline{zilog_t}. %either by explicitly taking a pointer to the dataset's \lstinline{zilog_t} as an argument or implicitly by being scoped to a particular dataset
@@ -645,12 +645,12 @@ Maybe we can avoid this? It's only relevant in ZIL-PMEM.
 The motivation for this thesis is the significant overhead of the current ZIL implementation (ZIL-LWB) in 4k random synchronous write workloads compared to the raw PMEM hardware.
 In this chapter, we describe this benchmark in detail (Section~\ref{ch:lwb_analysis:setup}) and present the resulting data in Section~\ref{ch:lwb_analysis:results}.
 We proceed with an analysis of the distribution of the wall clock time spent during this benchmark among the involved ZFS components.
-Our findings (Section~\ref{ch:lwb_analysis:breakdown}) show that approximately 80\% of overall latency are spent on ZIL-LWB-specific code, of which in turn approximately 60\% are spent waiting for the ZIO pipeline to persist the LWBs to PMEM.
-We conclude that ZIL-LWBs data structure and the ZIO pipeline are unfit to take advantage of PMEM-level performance, motivating the development of ZIL-PMEM.
+Our findings (Section~\ref{ch:lwb_analysis:breakdown}) show that approximately 80\% of overall latency are spent on ZIL-LWB-specific code.
+We conclude that ZIL-LWB's data structures and persistence mechanisms are unfit to take advantage of PMEM-level performance, motivating the development of ZIL-PMEM.
 
 \section{Benchmark Setup}\label{ch:lwb_analysis:setup}
 Our benchmarking system has the following hardware configuration:
-\begin{description}
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[CPU] 2 x Intel(R) Xeon(R) Silver 4215 CPU \@ 2.50GHz
     \item[Mainboard] Supermicro X11DPi-N(T)/X11DPi-NT, BIOS 3.1a 10/16/2019
     \item[DRAM] 16 x Micron 8GiB DDR4 2933MT/s (18ASF2G72PDZ-2G9E1), evenly distributed across sockets.
@@ -658,7 +658,7 @@ Our benchmarking system has the following hardware configuration:
     \item[PMEM] 4 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), two per socket.
 \end{description}
 We use the following software stack:
-\begin{description}
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Kernel] Linux 5.9, Debian buster (5.9.0-0.bpo.5-amd64)
     \item[Userland] Debian GNU/Linux (buster)
     \item[fio] fio-3.23-28-g7064
@@ -668,9 +668,9 @@ We use the following software stack:
         Note that we ensured manually that the \textit{ZIL kinds} patch do not impact ZIL-LWB performance.
 \end{description}
 We use the following system configuration:
-\begin{itemize}
-    \item SMT is enabled.
-    \item The entire second CPU socket is disabled in software using the \lstinline{isolcpus=8,9,10,11,12,13,14,15,24,25,26,27,28,29,30,31} kernel command line parameter.
+\begin{itemize}[noitemsep]
+    \item We leave SMT enabled, resulting in 16 hardware threads per socket.
+    \item We disable the entire second CPU in software using the \lstinline{isolcpus=8-15,24-31} kernel command line parameter.
     \item We configure all Optane DIMMs in \textit{AppDirectNotInterleaved} mode.
     \item We create a \SI{40}{GiB}-sized \textit{fsdax} namespace on the region of the first DIMM on the first socket.
     \item We create a \SI{40}{GiB}-sized \textit{devdax} namespace on the region of the first DIMM on the first socket.
@@ -682,14 +682,14 @@ We use the following system configuration:
 \end{itemize}
 
 We use \textit{fio} to generate a workload of random 4KiB writes with synchronous semantics (\lstinline{blocksize=4k}, \lstinline{rw=randwrite}).
-Each of the \textit{numjobs} threads performs random synchronous write system calls to a separate file per thread (\lstinline{ioengine=sync}, \lstinline{sync=1}, \lstinline{direct=0}, \lstinline{fsync=0}).
-Each file has a size of \lstinline{size=100MiB} which means that the written data volume grows with rising \textit{numjobs}.
+Each of the one to eight \lstinline{numjobs} threads performs random synchronous write system calls to a separate file per thread (\lstinline{ioengine=sync}, \lstinline{sync=1}, \lstinline{direct=0}, \lstinline{fsync=0}).
+Each file has a size of \lstinline{size=100MiB} which means that the written data volume grows with \lstinline{numjobs}, but the amount of dirty data (max.\SI{800}{MiB}) remains well below the NVMe drive's bandwidth limits.
 To avoid scalability-bottlenecks in the \lstinline{itxg} layer\todo{check this is defined}, we place each thread's file onto a separate dataset \lstinline{/dut/ds$jobnum/fio_file} using the \lstinline{filename_format} option.
-We measure for \SI{60}{seconds} (\lstinline{time_based=1}, \lstinline{runtime=60}), with a ramp-up time of \SI{2}{seconds} (\lstinline{ramp_time=2}), and set \lstinline{end_fsync=1}.
+For each value of \lstinline{numjobs}, we measure for one minute (\lstinline{time_based=1}, \lstinline{runtime=60}), with a ramp-up time of \SI{2}{seconds} (\lstinline{ramp_time=2}), and set \lstinline{end_fsync=1}.
 Before we run the benchmark, we prepare the benchmark files with a separate fio invocation with the additional flag \lstinline{--create_only=1}.
 
 We apply the fio workload to the following storage stacks:
-\begin{description}
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[zil-lwb] The zpool with ZIL-LWB ZIL kind as described above.
     \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all datasets.
         This turns \lstinline{zil_commit} into a no-op, reducing the time spent in the \lstinline{write} system call to DMU object modification and ITX allocation, all in DRAM.
@@ -723,20 +723,25 @@ The following graphs show the achieved IOPS and per-thread latency by numjobs.
     \centering
     \includegraphics[height=14cm]{fig/evaluation/motivating_fio_benchmark__iops_and_latency.png}
     \caption{IOPS and latency ZIL-LWB compared to ZFS in async mode as well as the raw fsdax and devdax device.}
+    \label{fig:lwbanalysis:iops_and_latency}
 \end{figure}
 
 ZIL-LWB only achieves approximately 10k IOPS at one thread and peaks at approximately 100k IOPS at seven threads.
-In contrast, without the ZIL, ZFS starts with 200k IOPS with one thread and achieves over 900k IOPS at seven threads.
-This exceeds the performance of the PMEM hardware (mostly around 500k IOPS) and demonstrates that the ZIL is clearly the bottleneck in the \textit{zil-lwb} configuration.
+In contrast, ZFS in \textit{async} mode starts with 200k IOPS with one thread and achieves over 900k IOPS at seven threads.
+This exceeds the performance of the PMEM hardware which mostly stays at 500k IOPS and demonstrates that the ZIL is clearly the bottleneck in the \textit{zil-lwb} configuration.
 A look at the per-IOP average latency emphasizes the vast overhead that ZIL-LWB adds compared to what is possible with the raw PMEM hardware.
 Whereas ZFS in async mode only requires \SI{5}{us} per IOP with \lstinline{numjobs=1}, and raw writes to fsdax require approximately \SI{3}{us}, ZIL-LWB with the same PMEM hardware as SLOG takes more than \SI{60}{us} per write.
 The minimum latency achieved by ZIL-LWB is at \lstinline{numjobs=4} at approximately \SI{50}{us} before it starts increasing to up to approximately \SI{85}{us} at \lstinline{numjobs=8}.
+Note that we do not use the results from the \textit{dev-dax} as a baseline for PMEM hardware because the IOPS and latencies reported by fio do not match.
+For example, fio reports less than \textit{dev-dax} \SI{1}{us} of latency for \textit{dev-dax} but only reports 550k IOPS at \lstinline{numjobs=1} whereas $\frac{1}{\SI{1}{us/IOPS}} = 10^6~\si{IOPS}$ would be anticipated at this latency.
+Figure~\ref{fig:lwbanalysis:zoomed_latency} shows the same latency data as Figure~\ref{fig:lwbanalysis:iops_and_latency} above, albeit zoomed to a scale that allows us to distinguish \textit{dev-dax}, \textit{fsdax}, and \textit{async} latencies.
 
-% \begin{figure}[H]
-%     \centering
-%     \includegraphics[height=5cm]{fig/evaluation/motivating_fio_benchmark__latency_zoomed.png}
-%     \caption{Zoomed section of the latency curves of ZFS in async mode, devdax, and fsdax.}
-% \end{figure}
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=7cm]{fig/evaluation/motivating_fio_benchmark__latency_zoomed.png}
+    \caption{Zoomed section of Figure~\ref{fig:lwbanalysis:iops_and_latency} that allows us to distinguish async mode, devdax, and fsdax.}
+    \label{fig:lwbanalysis:zoomed_latency}
+\end{figure}
 
 \section{Analysis}\label{ch:lwb_analysis:breakdown}
 
@@ -744,11 +749,89 @@ By comparing the numbers for \textit{async} and \textit{zil-lwb}, it is safe to 
 We want to determine where this time is spent.
 
 \subsection{OpenZFS Background: How ZIL-LWB Works}
-foo\todo{figure out what we need to explain the breakdown model and rant on zil-lwb below}
+We have introduced the DRAM representation of the ZIL in Section~\ref{openzfs:the_zil_api}:
+Syscalls modify DMU objects in so-called DMU transactions and log the logical change made in a transaction as an ITX to the ZIL.
+The ZIL stores the ITXs in a data structure called \textit{itxg} until either the transaction group of the ITX's DMU transaction is synced to disk or synchronous semantics are requested through \lstinline{zil_commit}.
+In the latter case, the ZIL constructs the \textit{commit list} which is the sequence of ITXs that needs to be concatenated to some form of per-dataset persistent log structure before \lstinline{zil_commit} is allowed to return.
+
+ZIL-LWB uses a chain of so-called \textit{log-write blocks} (LWBs) to represent this log structure.
+The LWB chain is a single-linked list rooted in the ZIL header of each dataset.
+Each LWB contains a contiguous sequence of variable-length \textit{log records}.
+A log record is the persistent representation of an ITX.
+To reconstruct the concatenated commit lists, ZIL-LWB traverses the LWB chain and concatenates the log record sequences within the LWBs.
+Figure~\ref{fig:zil_lwb__physical_structure_overview} visualizes this structure.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=\textwidth,angle=270]{fig/zil_lwb__physical_structure_overview}
+    \caption{On-disk structure of ZIL-LWB as described in the previous paragraph.}
+    \label{fig:zil_lwb__physical_structure_overview}
+\end{figure}
+
+The packing of $N$ log records on the commit list into $M$ larger LWBs has been advantageous in the past:
+\begin{description}[noitemsep]
+    \item[Latency Amortization]
+        Under the assumption that disk latency ($lat_{disk}$) dominates overall synchronous I/O latency, writing log records one-by-one would result in a total latency of $N * lat_{disk}$.
+        In contrast, grouping records into $M << N$ LWBs reduces the latency to $M * lat_{disk}$
+    \item[LWB Timeout / Group Commit]
+        ZIL-LWB uses a \textit{timeout} mechanism to extend the amortizing effect of LWB packing.
+        When a thread $A$ packs log records into LWBs, it issues the IO operations for all but the last LWB as soon as the LWB is filled.
+        The last LWB remains in \textit{open} state for a short time window.
+        If another thread $B$ \lstinline{zil_commit}ting to the same dataset within that time window, it picks up the \textit{open} LWB and continues to fill it with log records from its own \textit{commit list} and issues the LWB IO operation as soon as the LWB is full.
+        The IO completion callback then wakes up $A$ and which can now safely return from \lstinline{zil_commit} because $A$'s commit list is now fully persisted.
+        If the LWB is not committed within the configured time window, $A$ issues the IO operation itself.
+        Without the timeout mechanism, thread $B$ would need to wait for the last LWB of $A$ to be persisted, \textit{and} for its own LWBs to be persisted because $B$'s first LWB is pointed to by $A$'s last LWB.
+        By sharing the last LWB of $A$ and $B$, up to $1 * lat_{disk}$ of waiting time can be avoided.\todo{review this, just thought of it}
+        Note that whereas ZFS refers to this mechanism as \textit{LWB timeout}, the technique is also well-established in disk-oriented databses under the term \textit{group commit} or \textit{commit group}.
+    \item[Space Efficiency]
+        Log records are stored as a contiguous sequence within the LWB.
+        This avoids fragmentation if the commit list consists of small log records because many such log records can be packed into the smallest LWB (\SI{4}{KiB}).
+        However, the on-disk format does not allow for splitting of individual log records.
+        If the log record cannot be split in software (\lstinline{WR_NEED_COPY}), the open LWB is issued with wasted space and a new LWB is allocated for the log record.
+\end{description}
+
+LWBs are allocated from the metaslab allocator which identifies the location of allocated data through a \textit{ZFS block pointer}.
+Block pointers are fat pointers (\SI{128}{byte}) that, among other metadata, contain up to three \textit{data virtual addresses} (DVAs) that identify where one to three copies of the data are stored.
+A DVA consists of the top-level vdev ID and an offset in the vdev's logical block address space --- other systems would probably refer to this as logical extent(s).
+Block pointers also store the checksum of the data that they point to.
+Computing this checksum is possible because ZFS's main on-disk structure is a tree that is written bottom-up by the \textit{txg sync} thread for every transaction group.
+The end result is a merkle tree that is rooted in a block pointer stored in ZFS's \textit{uberblock} which is roughly equivalent to superblocks in other filesystems.
+
+The LWB chain is a special case because the ZIL must be able to add new LWBs between transaction groups.
+The solution is to pre-allocate LWBs and to store the checksum of their content in the LWB itself.
+The procedure to write out an LWB thus is as follows:
+\begin{enumerate}[noitemsep]
+    \item Wait until the LWB is filled or the timeout triggers the LWB to be written out.
+    \item Predict the best size for the next LWB based on a simple heuristic.
+    \item Allocate the next LWB, prerrably from the \textit{log} allocation class.
+    \item Store the resulting block pointer in the current LWB so that it points to the next LWB.
+    \item Compute the checksum of the current LWB.
+    \item Repurpose the current LWB's block pointer field to store the computed checksum.
+    \item Write out the current LWB.
+\end{enumerate}
+Figure~\ref{fig:zil_lwb__physical_structure_append} visualizes these steps for the initial case where no log exists, and for an existing log.
+The LWB chain's end is implicitly marked by an invalid checksum.
+The checksum also ensures crash-consistency since the list is append-only and a partially written block is equivalent to the end of the log during recovery.
+Note that it is unlikely for an unwritten but allocated LWB to be mistaken for a valid LWB block due to additional metadata stored in the LWB.
+For OpenZFS native encryption, the LWBs are not checksummed but encrypted and authenticated using an AEAD algorithm\todo{I think cipher mode is not the right term} such as \lstinline{aes-256-gcm}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=\textwidth,angle=270]{fig/zil_lwb__physical_structure_append.png}
+    \caption{The procedure for appending an LWB.}
+    \label{fig:zil_lwb__physical_structure_append}
+\end{figure}
+
+ZIL-LWB does not write LWBs directly using the kernel's block device API but uses the ZFS \textit{ZIO pipeline} instead.
+ZIO is ZFS's unified abstraction for performing deferred allocation, transparent data and metadata checksumming, compression, deduplication and encryption as well as redundancy mechanisms such as raidz.
+The architecture is pipeline-oriented and heavily parallelized using ZFS's \textit{taskq}s to maximize throughput for its main consumer, \textit{txg sync}.
+By using the same infrastructure for LWB ZIO operations, a very high degree of code reuse is possible, although there are some special cases, in particular for self-checksumming or encryption.
+Also, integrating LWB I/O into the ZIO pipeline could be beneficial for the case where the pool does not have a SLOG configured because latency-sensitive ZIO operations can be prioritized over throughput-oriented \textit{txg sync} operations.
+However, as we will elaborate on in the next subsections, ZIO adds significant latency overheads, resulting in sub-par performance of ZFS on low-latency storage devices, and PMEM in particular.
 
 \subsubsection{Analysis}
 
-Given the background knowledge on how ZIL-LWB works, we are now ready to analyze its latency.
+Given the background knowledge on how ZIL-LWB works, we are now ready to present out latency analysis.
 We use dynamic instrumentation (eBPF via bpftrace\todo{cite}) to sum up the wall clock time spent in ZFS functions that are executed by the fio threads during a synchronous write.
 We then use the model in Figure~\ref{fig:lwbanalysis:breakdown_model} to compute the time spent in the asynchronous part of the write operation, the ITX layer, and ZIL-LWB specific code.
 We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:breakdown_charts}.
@@ -769,7 +852,7 @@ We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:br
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=14cm]{fig/evaluation/zillwb_latency_analysis__relative_and_absolute_latency_breakdown}
+    \includegraphics[height=10cm]{fig/evaluation/zillwb_latency_analysis__relative_and_absolute_latency_breakdown}
     \caption{The relative and absolute breakdown of latency by activity.
     The absolute breakdown is normalized by the number of write operations.
     We compared the latencies in the breakdown with the latencies observed by fio to ensure that our accounting is correct under the given model.
@@ -778,32 +861,33 @@ We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:br
 \end{figure}
 
 Our observations are as follows:
-\begin{itemize}
+\begin{itemize}[noitemsep]
     \item The instrumentation overhead is 5--\SI{10}{us} per IOP. (We compared the latencies that fio reports for the instrumented and uninstrumented run.)
     \item The relative distribution of latency remains mostly unchanged for the different values of \lstinline{numjobs}.
     \item The \textit{async} part of the write path and the ITX layer together only amount to approximately 20\% of overall latency.
         The remaining 80\% are spent on LWB-specific activities.
-    \item The LWB timeout mechanism, whose purpose is to improve space utilization in the LWBs, amounts to 4\% of overall latency.
+    \item The LWB timeout mechanism amounts to 4\% of overall latency.
     \item At least 20\% of overall latency are spent on filling LWBs, issuing their corresponding ZIOs, and other LWB-related activities.
     \item 45--50\% of overall latency is spent waiting for the ZIO pipeline to persist the LWBs.
         In absolute numbers, the value ranges from 25--\SI{40}{us}.
         We have separately confirmed that ZIL-LWB uses \SI{12}{KiB} LWBs which is the smallest possible LWB size allowed by the implementation.
         In our benchmarking setup (per-thread datasts), each LWB only holds a single \SI{4}{KiB} write log record with \SI{192}{B} of additional metadata.
         This amounts to write amplification of 3x.
-        However, even with this increased data volume per IOP, the results from the previous experiment suggest that with a latency of \SI{3}{us} per 4k write to the raw PMEM hardware, we should expect less than \SI{9}{us} of PMEM write time per LWB.
+        However, even with this increased data volume per IOP, the results from the previous experiment suggest that with a conservative estimate of \SI{3}{us} per 4k write to the raw PMEM hardware, we should expect less than \SI{9}{us} of PMEM write time per LWB.
         Thus, a major fraction of the 25--\SI{40}{us} that are spent waiting for ZIO is actually pure software overhead.
 \end{itemize}
 
-Our observations lead us to the following conclusions.
+Our observations lead us to the following conclusions:
+
 \textbf{First, we have reason to believe that the high overhead of ZIO is unlikely to be reduced} to a degree that allows for exploitation of PMEM-level latency, regardless of whether the hardware is actual PMEM or simply very fast NVMe drives.
 The reason is that there is an inherent conflict of goals for ZIO:
 whereas the ZIL is strictly latency-oriented, all other conumers (\textit{txg sync}, \textit{scrubbing}, \textit{zfs send/recv}) are throughput-oriented.
-The pipeline-oriented, parallelized architecture of ZIO is important for throughput and provides great flexibility%
-\footnote{Many of ZFS’s distinguishing features are implemented in ZIO, including physical block allocation, transparent data and metadata checksumming, compression, deduplication and encryption as well as redundancy mechanisms such as raidz.}%
-, but increases latency through context switches\cite{openzfsZILPerformanceImprovements2020}.
+The pipeline-oriented, parallelized architecture of ZIO is important for throughput and provides great flexibility, but increases latency through context switches.
+This problem is well known in the ZFS community, see \cite{openzfsZILPerformanceImprovements2020}.\todo{more quotes, find gh issues, etc}
+
 \textbf{Second, the persistent representation of the ZIL as a chain of LWBs poses a severe and unnecessary overhead on PMEM.}
-For one, the latency amortization provided by LWBs and the timeout mechanism is unnecessary at PMEM-level latencies where it is cheaper to persist the entry directly.
-And for another, since PMEM is byte-addressable, the persistent representation is no longer constrainted by block-sized, opening up the possibility of greater space efficiency.
+For one, the latency amortization provided by LWBs and the timeout mechanism is unnecessary at PMEM-level latencies where it is cheaper to persist the log records on an individual basis than batching them in LWBs and coordinating with other threads on the matter.
+And for another, since PMEM is byte-addressable, the persistent representation is no longer constrainted by disk block sizes, opening up the possibility of greater space efficiency.
 
 \chapter{Design Overview}\label{ch:designoverview}
 In this chapter we define the project goals for ZIL-PMEM and provide a high-level overview of its design as well as its integration into ZFS.
