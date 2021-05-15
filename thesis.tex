@@ -3024,6 +3024,7 @@ We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
 We seek to answer the following questions:
 \begin{itemize}
     \item What is the speedup that ZIL-PMEM achieves over ZIL-LWB in the 4k synchronous random write workload?
+    \item What benefit does ZIL-PMEM provide to applications that frequently perform synchronous I/O?
     \item How does ZFS with ZIL-PMEM perform compared to other Linux filesystems that were adapted to PMEM?
     \item Is ZIL-PMEM a viable alternative to using Linux filesystems in combination with dm-writecache?
     \item To what degree do ZVOLs benefit from ZIL-PMEM?
@@ -3078,8 +3079,95 @@ And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\%
 \end{figure}
 
 \subsection{Application Benchmarks}
-\subsection{ITXG Bypass}
+We extend our benchmarking suite with several application-level benchmarks to determine ZIL-PMEM's impact on real-world application performance.
+We execute these benchmarks on different storage stacks that represent different usage scenarios for ZFS with ZIL-PMEM.
+We present and discuss the results in the subsequent subsections.
+
+Our benchmarking suite supports the following workloads.
+All of them share a scaling factor that increases the degree of concurrent synchronous I/O operations issued by the application.
+\begin{description}
+    \item[fio-growing] The 4k synchronous random write workload presented in the previous section, but with all files located on a single ZFS dataset.
+        The scaling factor is the fio \lstinline{numjobs} parameter which control the number of threads that perform I/O.
+        The working set (amount of modified data) grows with the scaling factor because each additional thread adds a private file with a constant size of \SI{100}{MiB}.
+        We report mean IOPS as the result metric.
+
+    \item[fio-fixed] The 4k synchronous randomm write workload, with all files on a single dataset, but a fixed working set size, independent of \lstinline{numjobs}.
+        We achieve the fixed working setting the \lstinline{size} parameter to $\frac{1~\text{GiB}}{numjobs}$.
+        We report mean IOPS as the result metric.
+
+    \item[filebench varmail] Filebench is a benchmarking engine that executes workloads described in a domain-specific language.
+        The pre-defined \textit{varmail} workload
+        ``emulates I/O activity of a simple mail server that stores each e-mail in a separate file (/var/mail/ server).
+          The workload consists of a multi-threaded set of create-append-sync, read-append-sync, read and delete operations in a single directory.
+          [...] The workload generated is somewhat similar to Postmark but multi-threaded''~\cite{FilebenchGitHubWiki}.
+        We use filebench in version \lstinline{1.5-alpha1-33-g22620e6} with the upstream workload definitions.
+        The scaling factor maps to the workload's \lstinline{$nthreads} variable which determines the number threads that execute the operations described above.
+        We use a runtime of 20 seconds and report filebench's \textit{ops per second} value as the result metric.
+
+    \item[filebench oltp] The filebench \textit{oltp} workload emulates database workloads.
+        It ''performs file system operations using Oracle 9i I/O model.
+        It tests the performance of small random reads and writes, and is sensitive to the latency of moderate size (128k+) synchronous writes to the log file.
+        By default launches 200 reader processes, 10 processes for asynchronous writing, and a log writer.``~\cite{FilebenchGitHubWiki}.
+        We leave all parameters at the default setting except for the \lstinline{$ndbwriters} parameter for which we use the scaling factor's value instead of its default value of ten.
+        It is our understanding that scaling the number of log writer threads to a number greater than one would not be feasible in practice and thus be unrealistic.
+        We use a runtime of 20 seconds and report filebench's \textit{ops per second} value as the result metric.
+
+    \item[MariaDB/sysbench] We deploy the MariaDB 10.5.9 Docker image in its default configuration (InnoDB storage engine) and the \texttt{/var/lib/mysql} directory set tot he storage stack's mountpoint.
+        We apply the \textit{sysbench} benchmark's \textit{oltp\_insert} workload with its default parameters for ten seconds.
+        The workload spawns a number of threads that inserts rows with random data into one or more tables.
+        We use the default of a single table and map the scaling factor to the number of threads that perform the insert queries.
+        Each thread uses a private, long-lived connection to the MariaDB server.
+        We use Docker's \lstinline{--net=host} parameter to start the MariaDB container to allow sysbench to connect via loopback TCP without and use the\lstinline{--net=host} parameter to avoid proxying overhead.
+        The result metric is the number of transactions per second reported by sysbench.
+
+    \item[Redis-SET] Redis is a popular in-memory key value store.
+        For persistence, it provides two mechanisms that are recommended to be used in combination.
+        First, the system periodically persists a snapshot of the Redis databased (RDB).
+        This process happens in the background.
+        We configure it to happen every second.
+        Second, REDIS features a logical write-ahead log (\textit{append-only file}, AOF) that is extended for every mutating operation and replayed after a crash.
+        Redis supports three different behaviors for ensuring durability of the AOF, configurable through the \lstinline{appendfsync} configuration variable.
+        A value of \lstinline{no} does not perform any fsyncs, \lstinline{everysec} performs an fsync every second (default), and \lstinline{always} performs an fsync operation for operation logged to AOF.
+        We enable AOF and configure \lstinline{appendfsync=always} which effectively turns Redis into a durable key-value store.
+
+        As a benchmark, we use Redis's own \textit{redis-benchmark} tool~\cite{HowFastRedis}.
+        We use the \textit{SET} workload to perform $10^6$ insert/replace operations with a random key drawn from a keyspace of the size $10^6$ to minimize contention within the daemon.
+        We leave the values for pipelining and connection keepalive at their defaults (no pipelining, keepalive enabled).
+        The scaling factor controls the number of parallel clients through the \lstinline{--threads} and \lstinline{-c} parameters.
+        The result metric is the requests-per-second (rps) value reported by redis-benchmark.
+
+        We chose the number of $10^6$ insert/replace operations because it results in runtimes of ten seconds or more per scaling factor value on all storage stacks except \textit{zfs-sync-disabled}.\todo{introduce storage stack names}
+
+    \item[RocksDB-fillsync] RocksDB is a popular key-value store developed by Facebook that is optimized for fast storage devices.
+        It can be used as an embedded database but is also used to implement DBMS storage engines such as MyRocks for MySQL.\todo{ref}
+        % RocksDB mainline supports PMEM as a LRU cache and several academic publications have proposed deeper PMEM integration.\todo{need to cite it}
+        RocksDB uses log-structured merge trees for long-term storage which are written and rewritten in large units that are prepared in DRAM (memtables).
+        Operations that request synchronous semantics (\lstinline{WriteOptions.sync}) are logged to a write-ahead log file.~\cite{FlushWALLessFwrite,RocksDBGitHubWikiWalPerformance}
+
+        We measure the impact of ZIL-PMEM on RocksDB WAL performance with the \textit{fillsync} benchmark in RocksDB's \textit{db\_bench} tool.
+        \textit{Fillsync} performs a fixed number of \textit{Put} operations with random keys in \lstinline{WriteOptions.sync} mode.
+        We set the number of operations to 400k and map the scaling factor to the number of concurrently \textit{Put}ting threads.
+        The result metric is the \textit{ops-per-sec} (operations per second) value reported by \textit{db\_bench}.
+
+        We chose the number of 400k operations because it results in at least ten seconds of runtime for 90\% of configurations.
+        The configurations that achieve less than ten seconds of runtime are:
+        \begin{itemize}[noitemsep]
+            \item All \textit{zfs-pmem} configurations at scaling factor $1$ (approx. \SI{4}{s} of runtime).
+            \item \textit{zfs-sync-disabled} for scaling factors $1, 4, 8$ (approx. $2$, $6.8$ and \SI{8}{s} of runtime).
+            \item \textit{xfs-on-devpmem} with the DAX mount optionat scaling factor $1$ (\SI{9.1}{s} of runtime).
+        \end{itemize}
+\end{description}
+
+\subsection{ZIL-PMEM vs. ZIL-LWB}
+
+\subsection{ZIL-PMEM vs. XFS and Ext4 on PMEM}
+
+\subsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}
+
+\subsection{Impact on ZVOL Performance \& ITXG Bypass}
+
 \subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
+
 
 \section{Discussion}
 
