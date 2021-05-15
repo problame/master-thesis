@@ -3080,11 +3080,50 @@ And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\%
 
 \subsection{Application Benchmarks}
 We extend our benchmarking suite with several application-level benchmarks to determine ZIL-PMEM's impact on real-world application performance.
-We execute these benchmarks on different storage stacks that represent different usage scenarios for ZFS with ZIL-PMEM.
+We execute these benchmarks on top of different \textit{storage stacks} that we believe could be considered as alternatives to ZFS with ZIL-PMEM.
 We present and discuss the results in the subsequent subsections.
 
-Our benchmarking suite supports the following workloads.
-All of them share a scaling factor that increases the degree of concurrent synchronous I/O operations issued by the application.
+We define a \textit{storage stack} as a configuration of storage hardware and software that exposes a filesystem at a mountpoint $M$.
+Executing a benchmark \textit{on top of} a storage stack means that the benchmark is configured to place all of its data within the filesystem mounted at $M$.
+We define the following storage stacks.
+\begin{description}[noitemsep]
+    \item[zfs-{lwb,pmem,sync\_disabled}] A single ZFS dataset created on a fresh zpool with the familiar hardware configuration (30 striped NVMe partitions + 1 /dev/pmem as SLOG).
+        For \textit{zfs-lwb} and \textit{zfs-pmem}, we configure the ZIL-LWB/ZIL-PMEM ZIL kind.
+        For \textit{zfs-sync\_disabled}, we configure the ZIL-LWB ZIL kind but set the \lstinline{sync=disabled} property.
+        All variants set \lstinline{recordsize=4k} and \lstinline{compression=off} on the dataset.
+    \item[\{xfs,ext4\}\_\_on\_\_BDEV\_\_dax\_DAX] Linux 5.9's \textit{xfs} and \textit{ext4} filesystems deployed on the \textit{block device stack} \lstinline{BDEV}.
+        The \lstinline{DAX} value (\lstinline{True} or \lstinline{False}) indicates whether the \lstinline{dax} mount option was set.
+        We always perform benchmark runs without \lstinline{dax}, and perform an additional run if \lstinline{BDEV} is a DAX-capable device, i.e., if it is raw PMEM.\todo{make sure DAX is explained}
+\end{description}
+The xfs and ext4 stacks are parametrized by the \textit{block device stacks} which we define as a hardware and software configuration that ultimately provides a, potentially virtual, block device.
+We define the following block device stacks:
+\begin{description}[noitemsep]
+    \item[devpmem] The \lstinline{fsdax} namespace block device in devfs, i.e., \texttt{/dev/pmem0}.
+    \item[dm-writecache] A dm-writecache target.\todo{config}
+    \item[zvol-lwb-rs\_\{0,1\}] A ZVOL exposed by a zpool in the same config as \textit{zfs-lwb}.
+        We set \lstinline{volblocksize=4k} on the ZVOL dataset.
+        The \textit{rs} variable controls the settings for \lstinline{zvol_request_sync}.\todo{make sure explained}
+    \item[zvol-sync\_disabled] Like \textit{zvol-lwb}, but with \lstinline{sync=disabled}.
+    \item[zvol-pmem-rs\_\{0,1\}-byp\_\{0,1\}-nc\_3] Like \textit{zvol-lwb}, but with ZIL-PMEM as ZIL kind.
+        We set PRB's \lstinline{ncommitters=3} and expose enablement of the ITXG bypass as the \textit{byp} variable.
+\end{description}
+Two examples for storages stacks are:
+\begin{description}[noitemsep]
+    \item[ext4\_\_on\_\_zvol-pmem-rs\_1-byp\_0-nc\_3\_\_dax\_False] Ext4 deployed on a ZVOL on a zpool with the ZIL-PMEM ZIL kind.
+        The zpool is configured with \lstinline{zvol_request_sync=1}, disabled ITXG bypass, and \lstinline{ncommitters=3}.
+        The ext4 file system is mounted without the \lstinline{dax} mount option.
+    \item[xfs\_\_on\_\_devpmem\_\_dax\_True] XFS deployed on the \texttt{/dev/pmem0} block device, mounted with the \lstinline{dax} option.
+    \item[zfs-pmem-rs\_0-byp\_0-nc\_3] ZFS with the ZIL-PMEM ZIL kind. The \lstinline{zvol_request_sync=0} setting and disabled ITXG bypass are irrelevant for ZFS.\todo{mask them out in post?}
+\end{description}
+
+All benchmarks have two common properties:
+\begin{description}
+    \item[Scaling factor] Each benchmark has a scaling factor that increases the degree of concurrent synchronous I/O operations issued by the application.
+        We run each benchmark with three scaling factor values: 1, 4, and 8.
+    \item[Result Metric] Each benchmark reports a single result metric per run which allows to compare the performance of a benchmark across storage stacks and scaling factor values.
+        All of the benchmarks presented below use a result metric where greater values represent better performance.
+\end{description}
+We use the following benchmarks:\todo{language}
 \begin{description}
     \item[fio-growing] The 4k synchronous random write workload presented in the previous section, but with all files located on a single ZFS dataset.
         The scaling factor is the fio \lstinline{numjobs} parameter which control the number of threads that perform I/O.
