@@ -2915,7 +2915,7 @@ Our evaluation in the next chapter shows that ZIL-PMEM yields significant latenc
 However, the benchmarks show that multi-thread scalability within a \textit{single} dataset is limited.
 To demonstrate that PRB/HDL is not the bottleneck, we develop an \textit{itxg bypass} mode for ZIL-PMEM which we present in this section.
 
-\subsubsection{OpenZFS Background: ZVOLs}
+\subsubsection{OpenZFS Background: ZVOLs}\label{sec:itxgbypass:openzfsbackground_zvols}
 The mode only works for ZVOLs, which are sparsely allocated virtual block devices backed by the zpool.
 Other block device consumers, e.g., virtual machines or other file systems, can treat the ZVOL as any other block device exposed by the kernel.
 ZVOLs are implemented as a dataset with a single DMU object that contains the virtual block device's data.
@@ -3079,62 +3079,74 @@ And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\%
 \end{figure}
 
 \subsection{Application Benchmarks}
-We extend our benchmarking suite with several application-level benchmarks to determine ZIL-PMEM's impact on real-world application performance.
-We execute these benchmarks on top of different \textit{storage stacks} that we believe could be considered as alternatives to ZFS with ZIL-PMEM.
-We present and discuss the results in the subsequent subsections.
+We determine ZIL-PMEM's impact on real-world application performance through additional macro-level and application benchmarks.
+We execute each benchmarks on top of different \textit{storage stacks} that represent alternatives to ZFS with ZIL-PMEM and compare the results in the subsequent sections.
 
 We define a \textit{storage stack} as a configuration of storage hardware and software that exposes a filesystem at a mountpoint $M$.
 Executing a benchmark \textit{on top of} a storage stack means that the benchmark is configured to place all of its data within the filesystem mounted at $M$.
 We define the following storage stacks.
-\begin{description}[noitemsep]
-    \item[zfs-{lwb,pmem,sync\_disabled}] A single ZFS dataset created on a fresh zpool with the familiar hardware configuration (30 striped NVMe partitions + 1 /dev/pmem as SLOG).
-        For \textit{zfs-lwb} and \textit{zfs-pmem}, we configure the ZIL-LWB/ZIL-PMEM ZIL kind.
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[zfs-\{lwb,pmem,sync\_disabled\}] A single ZFS dataset created on a zpool with the familiar hardware configuration (30 striped NVMe partitions and \texttt{/dev/pmem} as SLOG).
+        For \textit{zfs-lwb} and \textit{zfs-pmem}, we configure the corresponding ZIL kind.
         For \textit{zfs-sync\_disabled}, we configure the ZIL-LWB ZIL kind but set the \lstinline{sync=disabled} property.
-        All variants set \lstinline{recordsize=4k} and \lstinline{compression=off} on the dataset.
-    \item[\{xfs,ext4\}\_\_on\_\_BDEV\_\_dax\_DAX] Linux 5.9's \textit{xfs} and \textit{ext4} filesystems deployed on the \textit{block device stack} \lstinline{BDEV}.
-        The \lstinline{DAX} value (\lstinline{True} or \lstinline{False}) indicates whether the \lstinline{dax} mount option was set.
-        We always perform benchmark runs without \lstinline{dax}, and perform an additional run if \lstinline{BDEV} is a DAX-capable device, i.e., if it is raw PMEM.\todo{make sure DAX is explained}
+        All variants use a \lstinline{recordsize=4k} and \lstinline{compression=off} on the dataset.
+        The \textit{zil-pmem} variant configures PRB with \lstinline{ncommitters=3}.
+    \item[\{xfs,ext4\}\_\_on\_\_\$BDEV\_\_dax\_\$DAX] Linux 5.9's \textit{xfs} or \textit{ext4} deployed on the \textit{block device stack} \lstinline{$BDEV}.
+        The \lstinline{$DAX} value (\lstinline{True} or \lstinline{False}) indicates whether the \lstinline{dax} mount option was set.
+        We always perform benchmark runs without \lstinline{dax}, and perform an additional run if \lstinline{BDEV} is a DAX-capable device.\todo{make sure DAX is explained}
 \end{description}
-The xfs and ext4 stacks are parametrized by the \textit{block device stacks} which we define as a hardware and software configuration that ultimately provides a, potentially virtual, block device.
+The \textit{xfs} and \textit{ext4} stacks are parametrized by the \textit{block device stack} \lstinline{$BDEV} which we define as a hardware and software configuration that provides a (potentially virtual) block device.
 We define the following block device stacks:
-\begin{description}[noitemsep]
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[devpmem] The \lstinline{fsdax} namespace block device in devfs, i.e., \texttt{/dev/pmem0}.
-    \item[dm-writecache] A dm-writecache target.\todo{config}
-    \item[zvol-lwb-rs\_\{0,1\}] A ZVOL exposed by a zpool in the same config as \textit{zfs-lwb}.
+    \item[dm-writecache]
+        The \textit{dm-writecache} Linux Device Mapper target synchro\-nously persists writes to PMEM and performs asynchronous writes-back to an origin block device in the background.
+        (See Section~\ref{sec:cross_media_storage_systems} for details.)
+        We configure \textit{dm-writecache} with \texttt{/dev/pmem0} as a cache device and a single NVMe partition as the origin data store.
+        \todo{need to address concerns about max bandwidth? I think not...}
+        To ensure that some write-back happens during benchmark execution, we set the low and high watermark configuration values to zero.
+    \item[zvol-lwb-rs\_\{0,1\}]
+        A ZVOL exposed by a zpool in the same config as \textit{zfs-lwb}.
         We set \lstinline{volblocksize=4k} on the ZVOL dataset.
-        The \textit{rs} variable controls the settings for \lstinline{zvol_request_sync}.\todo{make sure explained}
+        The \textit{rs} variable control the value of the \lstinline{zvol_request_sync} tunable which, if enabled, processes block I/O requests (\lstinline{struct bio}) synchronously instead of submitting them to a thread pool.
+        (Refer to Section~\ref{sec:itxgbypass:openzfsbackground_zvols} for more details on ZVOLs.)
     \item[zvol-sync\_disabled] Like \textit{zvol-lwb}, but with \lstinline{sync=disabled}.
-    \item[zvol-pmem-rs\_\{0,1\}-byp\_\{0,1\}-nc\_3] Like \textit{zvol-lwb}, but with ZIL-PMEM as ZIL kind.
-        We set PRB's \lstinline{ncommitters=3} and expose enablement of the ITXG bypass as the \textit{byp} variable.
+    \item[zvol-pmem-rs\_\{0,1\}-byp\_\{0,1\}-nc\_3] Like \textit{zvol-lwb}, but configured with the ZIL-PMEM ZIL kind.
+        PRB's \lstinline{ncommitters} tunable is always set to $3$.\todo{need explain why?}
+        The \textit{byp} variable controls whether the ITXG bypass is enabled (0 disabled, 1 enabled).
 \end{description}
-Two examples for storages stacks are:
-\begin{description}[noitemsep]
-    \item[ext4\_\_on\_\_zvol-pmem-rs\_1-byp\_0-nc\_3\_\_dax\_False] Ext4 deployed on a ZVOL on a zpool with the ZIL-PMEM ZIL kind.
+The following items are examples for storage stacks used in the evaluation:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[ext4\_\_on\_\_zvol-pmem-rs\_1-byp\_0-nc\_3\_\_dax\_False] The Ext4 filesystem deployed on a ZVOL on a zpool with the ZIL-PMEM ZIL kind.
         The zpool is configured with \lstinline{zvol_request_sync=1}, disabled ITXG bypass, and \lstinline{ncommitters=3}.
         The ext4 file system is mounted without the \lstinline{dax} mount option.
-    \item[xfs\_\_on\_\_devpmem\_\_dax\_True] XFS deployed on the \texttt{/dev/pmem0} block device, mounted with the \lstinline{dax} option.
-    \item[zfs-pmem-rs\_0-byp\_0-nc\_3] ZFS with the ZIL-PMEM ZIL kind. The \lstinline{zvol_request_sync=0} setting and disabled ITXG bypass are irrelevant for ZFS.\todo{mask them out in post?}
+    \item[xfs\_\_on\_\_devpmem\_\_dax\_True] The XFS filesystem deployed directly on the PMEM block device (\texttt{/dev/pmem0}).
+    It is mounted with the \lstinline{dax} option.
+    \item[zfs-pmem] ZFS with the ZIL-PMEM ZIL kind and \lstinline{ncommitters=3}.
+        Note that \lstinline{zvol_request_sync} and the ITXG bypass are only relevant for ZVOLs and thus are not part of the configuration matrix.
 \end{description}
 
-All benchmarks have two common properties:
-\begin{description}
+We compare the performance of the storage stacks with the benchmarks described below.
+To facilitate\todo{unify?} the comparison, all benchmarks have the following properties:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Scaling factor] Each benchmark has a scaling factor that increases the degree of concurrent synchronous I/O operations issued by the application.
         We run each benchmark with three scaling factor values: 1, 4, and 8.
-    \item[Result Metric] Each benchmark reports a single result metric per run which allows to compare the performance of a benchmark across storage stacks and scaling factor values.
-        All of the benchmarks presented below use a result metric where greater values represent better performance.
+    \item[Result Metric] Each benchmark reports a single result metric per run.
+        This allows us to compare the performance of a benchmark across different storage stacks and scaling factor values.
+        For all benchmarks in this evaluation, a numerically greater result metric is better.
 \end{description}
-We use the following benchmarks:\todo{language}
-\begin{description}
-    \item[fio-growing] The 4k synchronous random write workload presented in the previous section, but with all files located on a single ZFS dataset.
+What follows is a description of the benchmark name used in text and plots as well as a description of the workload.
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[fio-growing] The 4k synchronous random write workload that motivated our work (see previous section and Section~\ref{ch:lwb_analysis:setup}), but with all fio job files within the same filesystem.
         The scaling factor is the fio \lstinline{numjobs} parameter which control the number of threads that perform I/O.
         The working set (amount of modified data) grows with the scaling factor because each additional thread adds a private file with a constant size of \SI{100}{MiB}.
         We report mean IOPS as the result metric.
 
-    \item[fio-fixed] The 4k synchronous randomm write workload, with all files on a single dataset, but a fixed working set size, independent of \lstinline{numjobs}.
+    \item[fio-fixed] The 4k synchronous randomm write workload, with all files on a single filesystem, but a fixed working set size, independent of \lstinline{numjobs}.
         We achieve the fixed working setting the \lstinline{size} parameter to $\frac{1~\text{GiB}}{numjobs}$.
         We report mean IOPS as the result metric.
 
-    \item[filebench varmail] Filebench is a benchmarking engine that executes workloads described in a domain-specific language.
+    \item[filebench varmail] Filebench is a benchmarking engine that executes arbitrary workloads described in a domain-specific language.
         The pre-defined \textit{varmail} workload
         ``emulates I/O activity of a simple mail server that stores each e-mail in a separate file (/var/mail/ server).
           The workload consists of a multi-threaded set of create-append-sync, read-append-sync, read and delete operations in a single directory.
@@ -3151,49 +3163,52 @@ We use the following benchmarks:\todo{language}
         It is our understanding that scaling the number of log writer threads to a number greater than one would not be feasible in practice and thus be unrealistic.
         We use a runtime of 20 seconds and report filebench's \textit{ops per second} value as the result metric.
 
-    \item[MariaDB/sysbench] We deploy the MariaDB 10.5.9 Docker image in its default configuration (InnoDB storage engine) and the \texttt{/var/lib/mysql} directory set tot he storage stack's mountpoint.
+    \item[MariaDB/sysbench] We deploy the MariaDB 10.5.9 Docker image in its default configuration (InnoDB storage engine) with \texttt{/var/lib/mysql} directory bind-mounted to the storage stack's mountpoint.
         We apply the \textit{sysbench} benchmark's \textit{oltp\_insert} workload with its default parameters for ten seconds.
         The workload spawns a number of threads that inserts rows with random data into one or more tables.
-        We use the default of a single table and map the scaling factor to the number of threads that perform the insert queries.
+        We use the default setting (a single table) and map the scaling factor to the number of threads that perform the insert queries.
         Each thread uses a private, long-lived connection to the MariaDB server.
-        We use Docker's \lstinline{--net=host} parameter to start the MariaDB container to allow sysbench to connect via loopback TCP without and use the\lstinline{--net=host} parameter to avoid proxying overhead.
+        We use Docker's \lstinline{--net=host} parameter when starting the MariaDB container to allow sysbench to connect via loopback TCP to avoid the overhead the overhead of NAT and Docker's user-space proxy.
         The result metric is the number of transactions per second reported by sysbench.
 
     \item[Redis-SET] Redis is a popular in-memory key value store.
         For persistence, it provides two mechanisms that are recommended to be used in combination.
         First, the system periodically persists a snapshot of the Redis databased (RDB).
         This process happens in the background.
-        We configure it to happen every second.
-        Second, REDIS features a logical write-ahead log (\textit{append-only file}, AOF) that is extended for every mutating operation and replayed after a crash.
+        Second, Redis features a logical write-ahead log (\textit{append-only file}, AOF) that is extended for every mutating operation and replayed after a crash.
         Redis supports three different behaviors for ensuring durability of the AOF, configurable through the \lstinline{appendfsync} configuration variable.
         A value of \lstinline{no} does not perform any fsyncs, \lstinline{everysec} performs an fsync every second (default), and \lstinline{always} performs an fsync operation for operation logged to AOF.
-        We enable AOF and configure \lstinline{appendfsync=always} which effectively turns Redis into a durable key-value store.
 
-        As a benchmark, we use Redis's own \textit{redis-benchmark} tool~\cite{HowFastRedis}.
-        We use the \textit{SET} workload to perform $10^6$ insert/replace operations with a random key drawn from a keyspace of the size $10^6$ to minimize contention within the daemon.
+        We deploy Redis 6.2 (built from source).
+        We configure RDB writeback to happen every second, regardless of the number of changes,
+        We enable AOF and configure \lstinline{appendfsync=always} which effectively turns our Redis deployment into a durable key-value store.
+
+        For benchmarking, we use Redis's own \textit{redis-benchmark} tool~\cite{HowFastRedis}.
+        The scaling factor controls the number of parallel clients via the \lstinline{--threads} and \lstinline{-c} parameters.
+        We use the \textit{SET} workload to perform $10^6$ \textit{SET} operations with a random key drawn from a keyspace of the size $10^6$ to reduce contention at the data level.
         We leave the values for pipelining and connection keepalive at their defaults (no pipelining, keepalive enabled).
-        The scaling factor controls the number of parallel clients through the \lstinline{--threads} and \lstinline{-c} parameters.
         The result metric is the requests-per-second (rps) value reported by redis-benchmark.
 
-        We chose the number of $10^6$ insert/replace operations because it results in runtimes of ten seconds or more per scaling factor value on all storage stacks except \textit{zfs-sync-disabled}.\todo{introduce storage stack names}
+        We choose the number of $10^6$ \textit{SET} operations because it results in runtimes of ten seconds or more for most combinations of scaling factor and storage stacks.
+        The only exception is \textit{zfs-sync-disabled} for which the shortes runtime is \SI{8}{s}.
 
     \item[RocksDB-fillsync] RocksDB is a popular key-value store developed by Facebook that is optimized for fast storage devices.
-        It can be used as an embedded database but is also used to implement DBMS storage engines such as MyRocks for MySQL.\todo{ref}
+        It can be used directly by applications as an embedded database but is also the basis for the \textit{MyRocks} storage engine for MySQL~\cite{MyRocksRocksDBStorage}.
         % RocksDB mainline supports PMEM as a LRU cache and several academic publications have proposed deeper PMEM integration.\todo{need to cite it}
         RocksDB uses log-structured merge trees for long-term storage which are written and rewritten in large units that are prepared in DRAM (memtables).
-        Operations that request synchronous semantics (\lstinline{WriteOptions.sync}) are logged to a write-ahead log file.~\cite{FlushWALLessFwrite,RocksDBGitHubWikiWalPerformance}
+        Operations that request synchronous semantics using the \lstinline{WriteOptions.sync} flag are logged to a write-ahead log file.~\cite{FlushWALLessFwrite,RocksDBGitHubWikiWalPerformance}
 
         We measure the impact of ZIL-PMEM on RocksDB WAL performance with the \textit{fillsync} benchmark in RocksDB's \textit{db\_bench} tool.
-        \textit{Fillsync} performs a fixed number of \textit{Put} operations with random keys in \lstinline{WriteOptions.sync} mode.
+        \textit{Fillsync} performs a fixed number of synchronous \textit{Put} operations with random keys.
         We set the number of operations to 400k and map the scaling factor to the number of concurrently \textit{Put}ting threads.
         The result metric is the \textit{ops-per-sec} (operations per second) value reported by \textit{db\_bench}.
 
-        We chose the number of 400k operations because it results in at least ten seconds of runtime for 90\% of configurations.
+        We choose the number of 400k operations because it results in at least ten seconds of runtime for 90\% of configurations.
         The configurations that achieve less than ten seconds of runtime are:
         \begin{itemize}[noitemsep]
-            \item All \textit{zfs-pmem} configurations at scaling factor $1$ (approx. \SI{4}{s} of runtime).
-            \item \textit{zfs-sync-disabled} for scaling factors $1, 4, 8$ (approx. $2$, $6.8$ and \SI{8}{s} of runtime).
-            \item \textit{xfs-on-devpmem} with the DAX mount optionat scaling factor $1$ (\SI{9.1}{s} of runtime).
+            \item All \textit{zfs-pmem} configurations at scaling factor $1$ ($\sim$\SI{4}{s} runtime)
+            \item \textit{zfs-sync-disabled} for scaling factors $1, 4, 8$ (${\sim}2$, $6.8$ and \SI{8}{s} rt.)
+            \item \textit{xfs-on-devpmem} with \lstinline{dax} mount option at scaling factor $1$ (\SI{9.1}{s}~rt.)
         \end{itemize}
 \end{description}
 
@@ -3209,6 +3224,22 @@ We use the following benchmarks:\todo{language}
 
 
 \section{Discussion}
+
+Storage stacks that we investigated but showed subpar perf:
+
+\begin{itemize}
+    \item xfs with separate log
+    \item ext4 with separate log
+\end{itemize}
+
+Future work:
+
+\begin{itemize}
+    \item ext4/xfs data journaling mode (ext4 has it, xfs not sure)
+    \item xfs pmem-aware log (Christoph Hellwig has patches...)
+    \item Scalability comparison of ZIL-LWB and ZIL-PMEM within the same dataset.
+        Expectation: ZIL-PMEM's mutex eventually becomes the bottleneck, but likely still better than ZIL-LWB due to massive latency headroom.
+\end{itemize}
 
 \chapter{Summary}\label{ch:summary}
 
