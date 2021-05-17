@@ -3268,6 +3268,50 @@ Future work should investigate ZIL-PMEM's behavior during this benchmark in deta
 
 \subsection{ZIL-PMEM vs. XFS and Ext4 on PMEM}
 
+Our next set of results is the comparison between ZFS and the Linux filesystems XFS and Ext4.
+We include both ZIL kinds (\textit{lwb}, \textit{pmem}) as well as \lstinline{sync=disabled} to demonstrate the upper bound for any ZIL kind.
+Both XFS and Ext4 are DAX-aware and thus we inlcude both with and without the \textit{dax} mount option.
+%Note that, since the ZIL unconditionally journals all data, including file contents, the \textit{lwb} and \textit{pmem} ZFS configurations provide significantly stronger crash consistency guarantees than the Linux filesystems which only journal metadata.
+%Nope, that argument is moot because all workloads use fsync and all the filesystems impmlement it correctly (hopefully).
+Note that that the ZFS configurations only use PMEM for the ZIL and use the NVMe devices for permanent storage, the Linux filesystem configurations are PMEM-only.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__filesystems}
+    \caption{
+        Speedups of ZFS with ZIL-LWB and \lstinline{sync=disabled} as well as ext4 and xfs with and without the \textit{dax} mount option over ZIL-PMEM as baseline.
+    }
+\end{figure}
+
+Our primary takeaway from this comparison is that, in contrast to ZIL-LWB, ZIL-PMEM is competitive with both ext4 and xfs at scaling factor $1$ in most benchmarks.
+The fio workloads are the exception, where the Linux filesystems achieve a speedup of greater than $3$ if the \textit{dax} mount option is enabled.
+Note that without the \textit{dax} mount option, a significant amount of parallelism (scaling factor $8$) is required to achieve similar results in the fio workloads.
+
+ZIL-PMEM performs significantly better than all other configurations (excluding \lstinline{sync=disabled}) for \textit{Redis-SET} and \textit{RocksDB-fillsync} at all scaling factors.
+The write-ahead log files written by these workloads are append-only and contain the encoded representation of logical changes.
+The mutating requests issued by our benchmarks have small payloads and result in small \lstinline{write+fsync} system calls.%
+\footnote{The RocksDB documentation and comments in the source code suggest that the WAL files are written in 32k blocks that are zero-padded if necessary~\cite[db/log\_writer.h]{RocksDBGitHubWikiWalPerformance}.
+    We observed the contrary behavior using \lstinline{strace}: each \textit{Put} operation with \lstinline{WriteOptions.sync} results in a \lstinline{write} and \lstinline{fdatasync} system call. The \lstinline{write} system call's data size is proportional to the sum of the \textit{Put} operation's key and value sizes.}
+ZIL-PMEM handles this worklaod efficiently than the Linux filesystems because the ZIL's data journaling causes less write amplification than the Linux filesystems whose latency is likely dominated by page-granular write-back cause by \lstinline{fsync}.
+
+For the \textit{MariaDB} benchmark, the DAX-aware Linux filesystem configurations achieve up to 1.6x more transactions per second than ZIL-PMEM.
+The \lstinline{sync=disabled} workload is on-par with the non-DAX-aware configurations, at speedups of ca. 1.1, 1.2 and 1.3 at scaling factors 1, 4, and 8.
+These results suggest the existence of a bottleneck outside of the filesystem implementation.
+A qualitative inspection of the CPU utilization shows a signficant amount of context switching but no clearly identifiable CPU bottleneck.
+% strace -e pwrite64,fdatasync -f -p $(pgrep mysqld)     
+% ls -lah /proc/$(pgrep mysqld)/fd                       
+% => mostly 1024B writes to ib_logfile0 which according to https://mariadb.com/kb/en/innodb-redo-log/ is the redo log file
+The database server process performs 1024 \lstinline{write} + \lstinline{fdatasync} system calls to the InnoDB redo log file from a single thread.
+However, since \lstinline{sync=disabled} does not perform better than any of the systems that actually write to PMEM, we can also rule out a PMEM bandwidth as a possible bottleneck.
+\todo{need to state that we do not have a final conclusion here?}
+
+Regarding the \textit{filebench-oltp} benchmark, no configuration performs exceptionally better than another, including \lstinline{sync=disabled}.
+Again, we suspect the high CPU utilization of the 200 reader processes to be the true bottleneck in this benchmark.
+
+For \textit{filebench-varmail}, the highest speedup at scaling factor $1$ is 1.35 achieved by XFS in DAX-aware mode, followed by ZFS with \lstinline{sync=disabled} with 1.22.
+For higher scaling factors, the speedups are slightly lower.
+Knwoing that no configuration is able to achieve a speedup as dramatic as observed for the \textit{fio} workloads is an additional indicator that \textit{filebench-varmail} performance is likely not bounded by ZIL-PMEM's implementation.
+
 \subsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}
 
 \subsection{Impact on ZVOL Performance \& ITXG Bypass}
