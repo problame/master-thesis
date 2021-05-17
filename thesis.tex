@@ -2893,6 +2893,10 @@ The following cases required additional code to adapt betweent he two domains:
         Starting a new generation for every entry ensures that the commit list's entries will be replayed in commit list order.
         Note that the \lstinline{zilog_pmem_t}-wide mutex already serializes the start of the new generations as required by the HDL API, see Section~\ref{di:prb:api:write}.
 
+        Serializing the entire \lstinline{zil_commit} call allows for less parallelism than ZIL-LWB's \textit{commit ITXs}.
+        Commit ITXs implement a sort of\todo{language, help} pipelining by allowing log writers to issue LWB ZIOs in parallel while ensuring that they only return from \lstinline{zil_commit} after all LWBs up to and including the log writer's last LWB have been written.
+        Whereas a similar approach cold be applied to ZIL-PMEM in principle by mapping parallel writers to the same generation, the current implementation of \textit{commit ITXs} is too tightly coupled to the concept of LWBs and the ZIO pipeline.
+
     \item[WR\_NEED\_COPY Chunking]
         Remember from Section~\ref{openzfs:the_zil_api} that the ZIL allocates ITXs for \textit{all} changes to a dataset in DRAM.
         The ITXs are queued in the \textit{itxg} structure from where they are either \lstinline{zil_commit}ted or freed when the txg syncs.
@@ -2991,7 +2995,7 @@ Steps:
             tx := dmu_transaction()
             dmu_write(tx, zv.dmu_object_id, ...)
             itx := zil_itx_create(...)
-            prb_write_entry(...(itx), needs_new_gen=zv.start_gen)
+            prb_write_entry(itx.into_log_entry(), needs_new_gen=zv.start_gen)
             assert zv.start_gen => zv.rwl.holding_write_lock
             if zv.start_gen:
                 zv.start_gen = false
@@ -3034,7 +3038,7 @@ We seek to answer the following questions:
 
 \subsection{Setup \& Methodology}
 
-\subsection{4k Synchronous Random Write Workload}
+\subsection{4k Synchronous Random Write Workload}\label{sec:eval:4ksyncwrites}
 The first pillar of our performance evaluation is the \textit{fio} 4k synchronous random write workload that motivated the design of ZIL-PMEM.
 We already described the workload characteristics in detail in Section~\ref{ch:lwb_analysis:setup}.
 We use the same zpool layout as for ZIL-LWB (30 striped NVMe partitions, a single Optane DIMM region's /dev/pmem as SLOG).
@@ -3061,8 +3065,33 @@ The slight decline to 346k IOPS at eight threads correlates with a similar decli
     \begin{subfigure}{0.5\textwidth}
         \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__zilpmem__latency_zoomed}
     \end{subfigure}
-    \caption{IOPS and latency measured by \textit{fio} for our 4k synchronous random write workload, by number of threads.}
+    \caption{Mean IOPS and latency measured by \textit{fio} for our 4k synchronous random write workload, by number of threads.}
     \label{fig:eval:fio4k:metrics}
+\end{figure}
+
+We observed that the speedup for \lstinline{numjobs=1} and \lstinline{2} varies significantly between benchmark runs but remains stable for higher values of \lstinline{numjobs}.
+We investigate this issue by computing the coefficient of variation (CoV) of the different configurations based on the mean and standard deviation of IOPS reported by fio.
+The results are displayed in Figure~\ref{fig:eval:fio4k:cov}:
+The \textit{zil-pmem} CoV remains close to the CoV of \textit{async} until \lstinline{numjobs=4} from where it starts to decline towards the CoV of \textit{fsdax}.
+This phenomenon correlates with the stop of increase in IOPS at \lstinline{numjobs=4}, supporting our assumption that \textit{zil-pmem}'s behavior is dominated by the PMEM hardware for numjobs 4--7.
+In contrast, \textit{zil-lwb}'s CoV is 5x that of \textit{zil-pmem} for \lstinline{numjobs=1} and 2x for \lstinline{numjobs=2} before it starts to align closely with \textit{async}.
+In absolute terms, for \lstinline{numjobs=1}, the standard deviation for ZIL-LWB is 4700 with a mean value of merely 16k IOPS.
+In contrast, for ZIL-PMEM, the standard deviation is 7557 at 128k IOPS.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[height=7cm]{fig/evaluation/motivating_fio_benchmark__cov_comparison}
+    \caption{Comparison of the coefficient of variation ($\frac{stddev}{mean}$). The smaller plots display the absolute values.}
+\end{figure}
+
+To get an idea of ZIL-PMEM's impact on tail latencies, we compare the 5th, 95th, 99.9th, 99.9th, 99.99th and 99.99th's percentiles for completion latency, as reported by fio.
+\textit{zil-pmem} follows \textit{async} latency's almost flat curve at all percentiles until the expectable knee at \lstinline{numjobs=4}.
+In contrast, \textit{zil-lwb}'s 99.9th and 99.99th percentile show steadier but steeper growth with rising \lstinline{numjobs}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/motivating_fio_benchmark__tail_latencies}
+    \caption{Comparison of completion latencies by percentile. Note the different y-axis scales.}
 \end{figure}
 
 We generalize our eBPF instrumentation from Section~\ref{ch:lwb_analysis:breakdown} to support ZIL-PMEM and compare the resulting breakdown of per-IOP latency in Figure~\ref{fig:eval:fio4k:breakdown}.
@@ -3213,6 +3242,29 @@ What follows is a description of the benchmark name used in text and plots as we
 \end{description}
 
 \subsection{ZIL-PMEM vs. ZIL-LWB}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__zilpmem_vs_zillwb}
+    \caption{App Benchmarks: ZIL-PMEM vs. ZIL-LWB with ZIL-LWB as baseline.}
+\end{figure}
+
+We first compare the speedup of ZIL-PMEM vs ZIL-LWB with ZIL-LWB as the baseline.
+ZIL-PMEM outperforms ZIL-PMEM in all benchmarks, but the speedup varies significantly for the different workloads and scaling factors.
+The highest speedups are achieved at scaling factor $1$ by the fio workloads ($7.1$, $5.3$) and \textit{RocksDB-fillsync} (100k ops-per-sec, speedup of $5.8$).
+\textit{Redis-SET} achieves shows a speedup of $2.68$ (30k rps) and MariaDB achieves 10k tps which is a speedup of $2.14$.
+For scaling factor $4$, the fio workload and RocksDB speedup declines whereas Redis grows to $2.77$ and MariaDB grows to $3.08$.
+For scaling factor $8$, all workloads show a reduction in speedup (RocksDB $2.8$, Redis $1.9$, MariaDB $1.4$).
+
+The \textit{filebench-oltp} workload shows no relevant speedup or slowdown for all scaling factor values.
+We observed during benchmark execution that the 200 reader processes always cause 100\% CPU utilization.
+Since PMEM I/O appears as CPU-bound activity towards the thread scheduler, the single log writer thread might have competed with the reader processes.
+
+The \textit{filebench-varmail} workload only shows a speedup of $1.4$ at scaling factor 1 which shrinks to $1.1$ at scaling factor 8.
+A possible explanation for the meager speedup is the larger data volume (16k appends) compared to the fio workloads (4k writes).
+In combination with the large amount of metadata (file creation and deletion), ZIL-LWB might also be benefitting from the \textit{commit ITXs'} pipelininig behavior.
+In any way, \textit{filebench-varmail} shows that the large speedups for small writes cannot be generalized to all filesystem workloads.
+Future work should investigate ZIL-PMEM's behavior during this benchmark in detail and determine how beneficial pipelining akin to \textit{commit ITXs} would be.
 
 \subsection{ZIL-PMEM vs. XFS and Ext4 on PMEM}
 
