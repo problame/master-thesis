@@ -383,15 +383,21 @@ ZFS with and without ZIL-PMEM compares to Ziggurat as follows:
           %\item Ziggurat has been unmaintained since the publication. OpenZFS has a healthy community of both hobbyist and paid full-time contributors.
 \end{itemize}
 
-\citerelwork{dm-writecache}{WritecacheTargetLinux} is a new Linux Device Mapper target that synchronously persists writes to PMEM and performs asynchronous writes-back to the origin block device in the background.
-Dm-writecache is relevant to ZIL-PMEM because both systems expose a PMEM-accelerated virtual block device.
-For this use case, a write-back cache can be more space efficient because it only needs to store the most recent version of a block.
-In contrast, ZIL-PMEM logs each block write (smallest block size for ZVOLs is 4k) separately and does not coalesce or delta-encode log entries.
-ZIL-PMEM protects data integrity through checksums whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
-Once ZVOL modifications are txg-synced\todo{backref} to the main pool, they benefit from ZFS's strong data redundancy mechanisms such as \textit{raidz}.
-With dm-writecache, the origin block device driver must handle data redundancy if desired, e.g., though another Device Mapper target such as \textit{dm-raid}.
-We compare the performance of the two implementations in Section X.Y \todo{ref block device comparison}):
-dm-writecache delivers on the promise of low latency but shows significant lock contention with multiple threads, failing to saturate PMEM bandwidth and performing significantly worse than ZIL-PMEM.\todo{verify claim}
+\citerelwork{dm-writecache}{WritecacheTargetLinux} is a new (2018) Linux Device Mapper target that implements a write-back caching layer for block devices.
+Given an \textit{origin} device and a \textit{cache} device, it exposes a new virtual block device with the same capacity as the origin device.
+Write-back is controlled by relative thresholds on the cache device space utilization (low and high watermark, default to 45\% and 50\%).
+Reads are not handled by dm-writecache and instead served from the Linux page cache.~\cite{WritecacheTargetLinux}
+\\
+Dm-writecache is relevant to ZIL-PMEM because it is the closest functional analogue to the ZIL in the Linux Device Mapper stack.
+It has been designed with explicit support for persistent memory and its authors have presented it as a means to accelerate database workloads~\cite{tadakamadlaAcceleratingDatabaseWorkloads2019}.
+However, both the data flow and guarantees differ substantially between the two systems.
+First, ZIL-PMEM pools the PMEM space for all filesystems and ZVOLs in a zpool whereas dm-writecache is limited to a single block device and thus would require partitioning.
+Second, ZIL-PMEM persists writes as log entries to an append-only log structure and does not perform coalescing or or delta-encoding.
+In contrast, dm-writecache is a block-level cache where an overwrite of the virtual block results in an over-write in the cache.
+Further, ZIL-PMEM protects data integrity through checksums whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
+And after ZFS has synced out modifications to the main pool, they benefit from ZFS's strong data redundancy mechanisms such as \textit{raidz}.
+In contrast, with dm-writecache, the origin block device driver must handle data redundancy if desired, e.g., though another Device Mapper target such as \textit{dm-raid}.
+We compare the performance of the two implementations in Section ~\ref{sec:eval:dmwritecache} of our evaluation.
 
 \subsection{Journaling \& Write-Ahead Logs Adapted PMEM}
 The following publications use persistent memory to accelerate file system journals and write-ahead logs.
@@ -3131,9 +3137,8 @@ We define the following block device stacks:
     \item[dm-writecache]
         The \textit{dm-writecache} Linux Device Mapper target synchro\-nously persists writes to PMEM and performs asynchronous writes-back to an origin block device in the background.
         (See Section~\ref{sec:cross_media_storage_systems} for details.)
-        We configure \textit{dm-writecache} with \texttt{/dev/pmem0} as a cache device and a single NVMe partition as the origin data store.
-        \todo{need to address concerns about max bandwidth? I think not...}
-        To ensure that some write-back happens during benchmark execution, we set the low and high watermark configuration values to zero.
+        We configure \textit{dm-writecache} with \texttt{/dev/pmem0} as a cache device and a \textit{dm-stripe} of the 30 NVMe partitions as the origin data store.
+        To induce some level writeback, we configure dm-writecache's \textit{low watermark} to 0\% and \textit{high watermark} to 1\%.
     \item[zvol-lwb-rs\_\{0,1\}]
         A ZVOL exposed by a zpool in the same config as \textit{zfs-lwb}.
         We set \lstinline{volblocksize=4k} on the ZVOL dataset.
@@ -3312,9 +3317,51 @@ For \textit{filebench-varmail}, the highest speedup at scaling factor $1$ is 1.3
 For higher scaling factors, the speedups are slightly lower.
 Knwoing that no configuration is able to achieve a speedup as dramatic as observed for the \textit{fio} workloads is an additional indicator that \textit{filebench-varmail} performance is likely not bounded by ZIL-PMEM's implementation.
 
-\subsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}
+\subsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}\label{sec:eval:dmwritecache}
+
+The comparison betwen ZIL-PMEM with NVMe storage and Linux filesystems on pure PMEM in the previous section is insightful but not a level comparison:
+The ZFS configuration only uses PMEM as short-term storage to bridge the gap between the background txg syncs to the striped pool of NVMe partitions.
+And while we disable ZFS's advanced features such as encryption, redundancy, compression, and deduplication for our benchmark, they are readily available.
+In contrast, the Linux filesystem configuration store all their data on PMEM.
+A fairer comparison is thus to deploy the Linux filesystems on the \textit{dm-writecache} stack with a \textit{dm-stripe} of the NVMe partitions as the origin block device.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__dm-writecache.png}
+    \caption{
+        Comparison of Linux filesystems on dm-writecache to ZIL-PMEM as a baseline.
+    }
+\end{figure}
+
+ZFS with ZIL-PMEM performance is within +/-30\% of XFS on \textit{dm-writecache} at all scaling factors in all benchmarks except \textit{Redis-SET} and \textit{rocksdb-fillsync} where ZIL-PMEM performs significantly better.
+The 30\% spread decreases slightly with increasing scaling factor but does not change the overall impression.
+Ext4+dm-writecache often performs signficantly worse than ZIL-PMEM (and XFS+dm-writecache!), with only 45\%, 28\% and 14\% of ZIL-PMEM's performance in the \textit{filebench-varmail}, \textit{Redis-SET}, and \textit{rocksdb-fillsync} benchmarks at scaling factor $1$.
+Our explanation for ZIL-PMEM's better performance in the \textit{Redis-SET} and \textit{rocksdb-fillsync} workloads is the low write amplification of the ZIL's logical write-ahead logging compared to the block-sized granularity of dm-writecache.
+Note that this is a fundamental advantage of ZFS's integrated design (filesystem and volume manager) that cannot be attained by the layered design of the Device Mapper stack.
+Ext4's under-performance in the \textit{filebench-varmail} benchmark could also be observed in the previous sections and must be due to another factor.
+
+We have manually observed the system during while benchmarking the \textit{dm-writecache} stack to ensure that the comparison with ZFS is actually fair.
+We found that, despite the very aggressive write-back configuration (high watermark = 1, low watermark = 0), the system performed very little write-back to the NVMe drives.
+The two \textit{fio} workloads were the exception but the write load toward the NVMe devices was well below their maximum capacity.
+Thus, NVMe was not a bottleneck in the benchmark.
+However, we found that \textit{dm-writecache} has severe multi-core scalability problems.
+For example, XFS on raw PMEM without the \textit{dax} mount option achieves 150k IOPS at scaling factor 1 and 409k IOPS at scaling factor 4.
+In contrast, on dm-writecache, it is 112k IOPS at scaling factor 1 but only 165k IOPS at scaling facto 4.
+Using the \textit{perf} tool, we observed severe contention at a lock that serializes access to the entire dm-writecache instance's state.
+In private communication, dm-writecache's maintainer Mikulas Patocka stated that "the purpose of dm-writecache is to decrease commit latency, not to increase throughput. There is not much that can be done with the lock contention".\todo{waiting for permission to quote him publicly}
+ZIL-PMEM has similar problems (125k at factor 1, 217k at factor 4) albeit due to the serial structure of ZIL chain.
+In the next section, we show how a more relaxed log structure such as the ITXG bypass can improve the situation.\todo{is this a good transition?}
 
 \subsection{Impact on ZVOL Performance \& ITXG Bypass}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__zvol_xfs}
+    \caption{
+        Comparison of Linux filesystems on dm-writecache to ZIL-PMEM as a baseline.
+    }
+\end{figure}
 
 \subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
 
