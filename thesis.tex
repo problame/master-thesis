@@ -3246,7 +3246,7 @@ What follows is a description of the benchmark name used in text and plots as we
         \end{itemize}
 \end{description}
 
-\subsection{ZIL-PMEM vs. ZIL-LWB}
+\subsection{ZIL-PMEM vs. ZIL-LWB}\label{sec:eval:zilpmemvslwb}
 
 \begin{figure}[H]
     \centering
@@ -3355,13 +3355,43 @@ In the next section, we show how a more relaxed log structure such as the ITXG b
 
 \subsection{Impact on ZVOL Performance \& ITXG Bypass}
 
+In this section, we examine the impact of ZIL-PMEM on ZVOL performance.
+We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, \lstinline{zvol_request_sync} (\lstinline{rs_{0,1}), and ITXG bypass setting (\lstinline{byp_{0,1}).
+The results are relative to \textit{zvol-pmem-rs\_0-byp\_0-\_nc3} as a baseline which is the standard configuration for ZIL-PMEM pools.
+Note that deploying a filesystem on a ZVOL generally makes little sense since ZFS filesystems provide the same basic service with more optional features at less overhead.
+However, ZVOLs are a popular choice for compute \& storage virtualization where the ZVOL is used as a virtual machine's virtual hard disk or as an iSCSI target.
+To simplify our evaluation, we avoid the overhead of a hypervisor/iSCSI and instead instantiate XFS directly on top of the ZVOL, mount it, and execute the benchmarks.
+
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__zvol_xfs}
     \caption{
-        Comparison of Linux filesystems on dm-writecache to ZIL-PMEM as a baseline.
+        Comparison of XFS on ZVOLs on different zpool configurations.
     }
 \end{figure}
+
+
+ZIL-PMEM in its default configuration delivers a significant speedup over ZIL-LWB.
+At scaling factor 1, the speedup over ZIL-LWB is approximately 2x for all workloads except \textit{MariaDB} (1.5x) and \textit{filebench-oltp} (1.05x).
+At higher scaling factors, the speedup declines for all benchmarks albeit less so for \textit{Redis-SET} and \textit{RocksDB-fillsync} than the other workloads.
+
+The effect of \lstinline{zvol_request_sync=1} is ambiguous and not very signficant for ZIL-LWB but very beneficial for ZIL-PMEM in the \textit{fio} workloads at scaling factor 1 with a 2x and 2.6x speedups over standard configuration, respectively.
+\textit{MariaDB}, \textit{Redis-Set} and \textit{RocksDB-fillsync} also benefit with speedups of 1.18x, 1.23, and 1.30 over the standard configuration.
+However, for scaling factor 4, \textit{MariaDB} performs substantially worse if \lstinline{zvol_request_sync} is set (30k tps vs. 20k tps).
+We also conducted the benchmarks with Ext4 instead of XFS which showed worse performance in almost all configurations if \lstinline{zvol_request_sync} was set, with the exception of \textit{fio}.
+
+The ITXG bypass only has marginal effects with and without \lstinline{zvol_request_sync} except for the \textit{fio} workloads at scaling factors 1 and 4.
+For example, for \textit{fio-growing}, at scaling factor 8, IOPS increase from 84k to 102k (21\%) for \lstinline{zvol_request_sync=0} and from 117k to 159k (35\%) with \lstinline{zvol_request_sync=1}.
+For Ext4 (not shown in the figure), \textit{filebench-varmail} also shows a 20\% improvement with enabled ITXG bypass and \lstinline{zvol_request_sync=0}.
+In contrast to \lstinline{zvol_request_sync=1}, activation of the ITXG bypass does not appear to have a negative impact for XFS.
+For Ext4, enabling ITXG bypass causes some performance degradations if \lstinline{zvol_request_sync=1}.
+
+In summary, ZIL-PMEM provides a signficant performance advantage for ZVOLs but is less effective than than with ZFS filesystems (see Sections~\ref{sec:eval:4ksyncwrites} and \ref{sec:eval:zilpmemvslwb}).
+This is particularly noticable for the \textit{fio} workloads, \textit{Redis-SET} and \textit{RocksDB-fillsync}.
+For example, the speedups achieved by the \textit{fio} workloads and \textit{RocksDB-fillsync} on ZFS vs. XFS+ZVOL, both with ZIL-PMEM, halved for scaling factor 1.
+Write amplification cannot be the explanation because \textit{fio}'s 4k writes are unlikely to be amplified whereas \textit{RocksDB-fillsync}'s writes are guaranteed to be amplified to the emulated block size (4k).
+The more likely cause is the latency overhead added by the layering.
+For example, the \textit{fio-growing} workload, which purely latency-bound, achieves 126k IOPS at scaling factor 1 on ZFS+ZIL-PMEM but only 28.6k IOPS on XFS+ZVOL+ZIL-PMEM.
 
 \subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
 
