@@ -3390,11 +3390,108 @@ In summary, ZIL-PMEM provides a signficant performance advantage for ZVOLs but i
 This is particularly noticable for the \textit{fio} workloads, \textit{Redis-SET} and \textit{RocksDB-fillsync}.
 For example, the speedups achieved by the \textit{fio} workloads and \textit{RocksDB-fillsync} on ZFS vs. XFS+ZVOL, both with ZIL-PMEM, halved for scaling factor 1.
 Write amplification cannot be the explanation because \textit{fio}'s 4k writes are unlikely to be amplified whereas \textit{RocksDB-fillsync}'s writes are guaranteed to be amplified to the emulated block size (4k).
-The more likely cause is the latency overhead added by the layering.
-For example, the \textit{fio-growing} workload, which purely latency-bound, achieves 126k IOPS at scaling factor 1 on ZFS+ZIL-PMEM but only 28.6k IOPS on XFS+ZVOL+ZIL-PMEM.
+The more likely cause is mere overhead added by the additional software layer.
+For example, the \textit{fio-growing} workload, which is purely latency-bound, achieves 126k IOPS at scaling factor 1 on ZFS+ZIL-PMEM but only 28.6k IOPS on XFS+ZVOL+ZIL-PMEM.
+
+% TODO:
+% more detailed itxg bypass evaluation?
 
 \subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
 
+PRB's \textit{commit slot} mechanism limits the amount of parallel writers to PMEM through the \lstinline{ncommitters} variable.
+The goal is to avoid wasteful on-CPU stall cycles which inevitable occur if the aggregate write bandwidth to PMEM exceeds the hardware capacity.
+(See Section~\ref{sec:requirements} and \ref{di:prb:write} for a more detailed explanation.)
+
+To determine the mechanism's effectiveness, we use our 4k synchronous random write workload with private ZFS filesystems per fio thread.
+We add low-overhead per-CPU counters to ZIL-PMEM to sum up the time $T_{pmem}$ that is spent writing PMEM as well as the number of write operations $N_{ops}$.
+We then compute the \textit{average PMEM write time per IOP} $T_{pmem_{iop}} = \frac{T_{pmem}}{N_{ops}} [\frac{ns}{op}]$.
+The most efficient value for \lstinline{ncommitters} maximizes average IOPS (reported by fio) while minimizing excessive of $T_{pmem_{iops}}$.
+
+We compute $T_{pmem_{iops}}$ for 1 to 18 numjobs, different values of \lstinline{ncommitters} and two different PMEM configurations.
+The first PMEM configuration is a single, non-interleaved Optane DIMM.
+The second configuration are four interleaved Optane DIMMs.
+On both PMEM configurations, we create a \SI{40}{GiB}-sized \textit{fsdax} namespace which we use as the PMEM SLOG for ZIL-PMEM.
+We use a machine with higher core count.
+The system configuration is as follows:
+\begin{description}[noitemsep]
+    \item[System] Supermicro SYS-1029U-TRT
+    \item[Mainboard] Supermicro X11DPU, Version 1.10
+    \item[CPU] 2 x Intel(R) Xeon(R) Gold 5220 CPU \@ 2.20GHz \\
+        18 cores per socket, 2-way SMT per core
+    \item[DRAM] 12 x 32GiB SK HYNIX DDR4-2666, HMA84GR7CJR4N-VK  % sudo dmidecode | grep -C8 DRAM | grep 'Part Number'
+    \item[PMEM] 8 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), 4 per socket.
+    \item[NVMe] System rootfs only, no dedicated NVMe hardware.
+    \item[Kernel] Linux Kernel, Fedora 5.11.15-100.fc32.x86\_64
+    \item[Userland] Fedora 32
+    \item[fio] fio-3.21
+\end{description}
+As with our main evaluation system (Section~\ref{ch:lwb_analysis:setup}), we leave SMT enabled.
+Since NUMA-concerns are out of scope for this thesis, we disable the second socket in software using the \lstinline{isolcpus=18-35,54-71} kernel command line parameter.
+Because the system does not have NVMe devices available, we provision the disabled socket's Optane DIMMs in \lstinline{AppDirectNotInterleaved} move with one PMEM region and a single \lstinline{fsdax} namespace per DIMM.
+We use these namespaces as the zpool's main (non-SLOG) vdevs.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/ncommitters_scalability__comparison}
+    \caption{Comparison of performance and PMEM write time per IOPS for different values of $ncommitters$ in two PMEM configurations (left non-interleaved, right four-way interleaved).}
+    \label{fig:eval:ncommitters_scalability:main}
+\end{figure}
+
+Figure~\ref{fig:eval:ncommitters_scalability:main} visualizes the results of this experiment.\todo{need a better figure}
+For the non-interleaved DIMM, we observe that the system's peak IOPS is 400k, first achieved with $ncommitters \ge 3$.
+For $ncommitters = 3$, the peak is at $numjobs = 8$, followed by a decline to 263k IOPS for higher $numjobs$.
+With $ncommitters = 8$, the system is able to sustain the 400k IOPs for the for $numjobs \in 7 \dots 13$.
+The price for this sustained throughput at $ncommitters = 8$ is paid in significantly more on-CPU PMEM time per IOP:
+looking at $numjobs = 8$, the $T_{pmem_{iops}}$ is $3300, 4300, 6500~\text{ns}$ for $ncommitters = 3, 4, 8$.
+Moving to higher $numjobs = 12$, $T_{pmem_{iops}}$ climbs to $11600, 20600~\text{ns}$ for $ncommitters = 8, 12$ whereas $ncommitters = 3$ is successfully limited to $2700~\text{ns}$ of PMEM write time per IOP.
+The $ncommitters = 12, 24$ configurations do not achieve higher peak IOPS than $ncommitters = 8$ but decline to lower values for high $numjobs$, e.g., only 237k IOPS for $ncommitters = 24, numjobs = 18$.
+This performance decline at high degrees of concurrency is a property of the Intel Optane PMEM hardware~\cite{yangEmpiricalGuideBehavior2020}.
+
+The four-way interleaved configuration exhibits a very different behavior.
+We achieve the highest IOPS for the configuration where the \textit{commit slot} mechanism has no effect, i.e., $ncommitters = 24, numjobs = 18$ with 900k IOPS.
+Given that the IOPS curve has not reached a plateau at this point, it may be possible that even more IOPS are possible at higher $numjobs$.
+$T_{pmem_{iops}}$ is the same for all $ncommitters$ values at a given $numjobs$ value (+/- $100~\text{ns}$).
+It is $1660~\text{ns}$ for $numjobs = 1$ and grows slightly unevenly towards $2560~\text{ns}$ at $numjobs = 24$.
+This is an increase of merely 54\% which is likely to be acceptable in any setup, given the 9.6x increase in IOPS (93k to 900k) that is possible with $ncommitters = 24$.
+
+To determine the degree to which the \textit{commit slot} abstraction impacts performance in $ncommitters > numjobs$ configurations, we add additional instrumentation that measures the average latency of commit slot aquisition and release.
+Figure~\ref{fig:eval:ncommitters_scalability:overhead} visualizes the results for $ncommitters = 24$.
+The absolute overhead is approximately the same for both PMEM comfigurations.
+It starts at approximately $100~\text{ns}$ for $numjobs = 1$, climbs to $240~\text{ns}$ at $numjobs = 4$, and then scales linearly to $385~\text{ns}$ at $numjobs = 18$.
+In the interleaved configuration, for any $numjobs > 4$, this corresponds to approximately 11--13\% of the overall write latency per log entry.
+Thus, without \textit{commit slots}, \lstinline{zil_commit} could be $\frac{1}{1 - 0.13} = 14.9\%$ faster.
+However, due to the overhead of the other ZFS components, the contribution to overall IOP latency is only 2\%, which is a rather meager improvement.
+\todo{Think this through again, I think it's correct, but should be double-checked.}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{fig/evaluation/ncommitters_scalability__overhead}
+    \caption{
+        Overhead of the \textit{commit slot} for $24 = ncommitters > numjobs = 18$.
+        Note the different y-axis scales.
+        Also note that the relative latency contribution for the non-interleaved configuration only shrinks because the PMEM write time (not shown) grows significantly.}
+    \label{fig:eval:ncommitters_scalability:overhead}
+\end{figure}
+
+
+We draw the following conclusion from the observations made above:
+\begin{itemize}[noitemsep]
+    \item The \textit{commit slot} mechanism successfully limits PMEM write time.
+    \item The \textit{commit slots} mechanism's multi-core scalability is acceptable and contributes little relative overhead to each IOP compared to non-ZIL ZFS components.
+    \item Single Optane DIMM in non-interleaved mode:
+        \begin{itemize}
+            \item Our 4k synchronous write workload is able to achieve peak performance with 400k IOPS as early as $ncommitters = 3$.
+            \item Setting $ncommitters = 8$ extends the peak to a plateau with regards to $numjobs$, but consumes $\frac{6500~\text{ns}}{3300~\text{ns}} = 1.96$ times more PMEM write time per IOP.
+            \item Note that we use $ncommitters = 3$ as the default configuration for ZIL-PMEM in all of the previous benchmarks.
+                Our rationale is that an in-kernel filesystem should not waste CPU time on PMEM I/O because it is primarily one of many OS services and not the main purpose of the system.
+                If the system's primary role is that of an NFS/SMB share, or that of an iSCSI target backed by ZVOLs, it may be appropriate to adjust this policy.
+        \end{itemize}
+    \item Four interleaved Optane DIMMs:
+        \begin{itemize}
+            \item The \textit{commit slot} mechanism is not useful for the observed range of $numjobs$ values.
+            \item The reason is that ZIL-PMEM cannot saturate the Optane DIMMs' write bandwidth due to per-IOP overhead added by other components of ZFS.
+        \end{itemize}
+\end{itemize}
 
 \section{Discussion}
 
