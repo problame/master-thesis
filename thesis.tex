@@ -3065,6 +3065,9 @@ We codify the walkthrough of the PRB/HDL API that we presented in Section~\ref{d
         We record body content and the ZIL header update as records in a list.
         We report successful replay for every callback invocation.
     \item After replay is complete, we compare the recorded list's contents to the expected replay order.
+\end{enumerate}
+
+
 \subsection{ZIL-PMEM}
 
 \subsubsection{Correct Handling Of Obsolete Entries}
@@ -3110,7 +3113,7 @@ This provides maximum flexibility for testing the core logic:
     \item[Independence of ZIL-PMEM]
         It is not necessary to mock or subsititute for any behavior in ZIL-PMEM.
     \item[Crash Consistency Testing]
-        To test crash consistency and correctness for resumed replay, the tester can forge an arbitrary replay state in DRAM and invoke \textit{replay_resume()} with it.
+        To test crash consistency and correctness for resumed replay, the tester can forge an arbitrary replay state in DRAM and invoke \lstinline{replay_resume()} with it.
 \end{description}
 
 We leverage Rust's macro system to define test cases in a concise and expressive manner.
@@ -3151,11 +3154,11 @@ TestSet {
 \end{lstlisting}
 
 We test the following properties:
-\begin{description}[description]
+\begin{description}[noitemsep]
     \item[Shapes] We test replay for different ``shapes'' in the 2-D grid, e.g., a ``V''-shape with entries for different txgs, or the ``I-'' shape from the snippet above.
     \item[Claim Txg] We ensure that log entries from the $precrash\_txg = claim\_txg - 1$ are ignored during replay.
     \item[Missing Entry Handling] We test the behavior for missing entries in the already replayed and still to be replayed parts of the replay sequence, as well as in the last generation.
-    \item[Resumability] We test resumability of \textit{replay_resume()} for the cases for the cases of missing entries, re-appearing entries, and no change of \textit{EntrySet} between resume attempts.
+    \item[Resumability] We test resumability of \lstinline{replay_resume()} for the cases for the cases of missing entries, re-appearing entries, and no change of \textit{EntrySet} between resume attempts.
     \item[Entry Reappearance] We test that re-appearing entries ordered before the last-replayed entry are ignored, and re-appearing entries in the unreplayed part are discovered and replayed.
 \end{description}
 
@@ -3176,8 +3179,68 @@ At this time, we use them primarily to ensure that the PRB API triggers assertio
 
 \subsection{ZIL-PMEM}
 
-Our integration of PRB/HDL into ZFS by the \texttt{zil\_pmem.c} code module is (sparsely) covered by integration tests:
-\todo{ziltest, zts scripts, mention incomplete}
+Our changes to ZFS are covered (sparsely) by the testing infrastructure of the OpenZFS project.
+\begin{description}
+    \item[ZFS Test Suite (ZTS)] The ZFS Test Suite is an suite of automated integration tests that asserts behavior of the kernel module and CLI tools.
+        ZTS is implemented in Korn shell and consists mostly of functional test.\todo{... of mostly functional tests?}
+    \item[ztest] A user-space binary that links against \textit{libzpool} and stress-tests the core components of ZFS that are shared among all support platforms.
+        The strategy is to imitate a zpool with lots of concurrent activity initiated from many threads.
+        The focus is on code paths in the administrative layer, e.g., dataset creation \& deletion or VDEV management.
+        Whereas these code paths are also executed by ZTS, the lack of concurrency in ZTS hides potential race conditions that are discovered using \textit{ztest}.
+        \textit{ztest} is designed for easy extensibility.
+\end{description}
+
+\subsubsection{ZIL Kinds}
+\textit{ztest} has several functions that induce ZIL data path activity (\lstinline{ztest_freeze()})
+Whereas these functions use the public ZIL API and required little to no modification, the ztest mocks for datasets (\lstinline{ztest_ds_t}) and its assertions of ZIL state are specific to ZIL-LWB.
+Due to time constraints, we
+\begin{itemize}[noitemsep]
+    \item disabled \lstinline{ztest_freeze()} for ZIL-PMEM and
+    \item changed the ZIL-LWB specific assertions to perform a checked downcast of \lstinline{zilog_t} to \lstinline{zilog_pmem_t}.
+\end{itemize}.
+In the future, this change will need to be reverted and a maintainable design for testing multiple ZIL kinds be devised.
+We let \textit{ztest} run once for one hour and did not experience a failure.
+
+\subsubsection{ZIL-PMEM}
+After the test run with the ZIL kinds patch, we hard-coded /dev/pmem0 as a SLOG device in \textit{ztest} to get basic testing exposure for ZIL-PMEM.
+Despite the disabled \lstinline{ztest_freeze()}, this change helped us discover and fix bugs in the lifecycle of ZIL-PMEM, i.e., dataset creation, mounting, unmounting, and destruction.
+
+Regarding the ZFS test suite, we have identified the following functional tests as relevant for the ZIL and/or SLOG devices:
+\todo{proceed with next section}
+%% fdfind slog tests
+%tests/zfs-tests/tests/functional/slog/slog_{001--015}_*.ksh
+%tests/zfs-tests/tests/functional/slog/slog_replay_fs_001.ksh
+%tests/zfs-tests/tests/functional/slog/slog_replay_fs_002.ksh
+%tests/zfs-tests/tests/functional/slog/slog_replay_volume.ksh
+%% fdfind --print0 slog tests  | xargs -0 grep log_assert
+%tests/zfs-tests/tests/functional/slog/slog_001_pos.ksh:log_assert "Creating a pool with a log device succeeds."
+%tests/zfs-tests/tests/functional/slog/slog_002_pos.ksh:log_assert "Adding a log device to normal pool works."
+%tests/zfs-tests/tests/functional/slog/slog_003_pos.ksh:log_assert "Adding an extra log device works."
+%tests/zfs-tests/tests/functional/slog/slog_004_pos.ksh:log_assert "Attaching a log device passes."
+%tests/zfs-tests/tests/functional/slog/slog_005_pos.ksh:log_assert "Detaching a log device passes."
+%tests/zfs-tests/tests/functional/slog/slog_006_pos.ksh:log_assert "Replacing a log device passes."
+%tests/zfs-tests/tests/functional/slog/slog_007_pos.ksh:log_assert "Exporting and importing pool with log devices passes."
+%tests/zfs-tests/tests/functional/slog/slog_008_neg.ksh:log_assert "A raidz/raidz2 log is not supported."
+%tests/zfs-tests/tests/functional/slog/slog_009_neg.ksh:log_assert "A raidz/raidz2 log can not be added to existed pool."
+%tests/zfs-tests/tests/functional/slog/slog_010_neg.ksh:log_assert "Slog device can not be replaced with spare device."
+%tests/zfs-tests/tests/functional/slog/slog_011_neg.ksh:log_assert "Offline and online a log device passes."
+%tests/zfs-tests/tests/functional/slog/slog_012_neg.ksh:log_assert "Pool can survive when one of mirror log device get corrupted."
+%tests/zfs-tests/tests/functional/slog/slog_013_pos.ksh:log_assert "Verify slog device can be disk, file, lofi device or any device " \
+%tests/zfs-tests/tests/functional/slog/slog_014_pos.ksh:log_assert "log device can survive when one of the pool device get corrupted."
+%tests/zfs-tests/tests/functional/slog/slog_replay_fs_001.ksh:log_assert "Replay of intent log succeeds."
+%tests/zfs-tests/tests/functional/slog/slog_replay_fs_002.ksh:log_assert "Replay of intent log succeeds."
+%tests/zfs-tests/tests/functional/slog/slog_replay_volume.ksh:log_assert "Replay of intent log succeeds."
+\begin{description}
+    \item[TODO] TODO
+\end{description}
+
+The following changes need to be covered by additional ZTS tests:
+\begin{itemize}
+    \item As described in Section~\ref{sec:zilpmemzilkind:activation}, we plan to automatically activate ZIL-PMEM based on the whether the SLOG device is PMEM.
+        However, we have not yet implemented the support for online switching of ZIL kinds for a dataset (Section~\ref{sec:zil_kinds:change}).
+        That work should be accompanied by corresponding additions to ztest.
+    \item Although we force the replay callback to use the \lstinline{prb_replay_read_replay_node} function which handles \textit{machine check exceptions (MCE)} through \lstinline{memcpy_mcsafe()}, we should somehow ensure that such errors are actually handled.
+\end{itemize}
 
 \section{Performance}
 We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
