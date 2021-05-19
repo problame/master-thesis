@@ -1463,7 +1463,7 @@ If the system crashes, we recover \textit{replay state} from the checkpoint in t
 
 The following variables are stored in \textit{replay state}:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[$(gen_{last}, gsid_{last}$] $(E.gen, E.gsid)$ of the last entry $E$ that was replayed.
+    \item[$\mathbf{(gen_{last}, gsid_{last})}$] The $(E.gen, E.gsid)$ of the last entry $E$ that was replayed.
     \item[Live Table] The \textit{live table} at the time the entry was replayed, i.e., $R_i$ with $i~\in~{0,1,2,3}$.
     \item[Last Table] The \textit{last table} at the time the entry was replayed.
     \item[$E_{seal}$] An artificial entry header that is used to detect lost entries at the end of the log structure.
@@ -2749,7 +2749,7 @@ Consequently, \lstinline{is_dax} becomes an independent \textit{zpool feature}.
 
 \section{The ZIL-PMEM ZIL Kind}\label{sec:zilpmemzilkind}
 
-\subsection{Activation}
+\subsection{Activation}\label{sec:zilpmemzilkind:activation}
 The ZIL-PMEM ZIL kind is used instead of ZIL-LWB based on the following rule:
 \begin{displayquote}
   If the pool has exactly one SLOG and that SLOG is \lstinline{is_dax}, the ZIL kind is ZIL-PMEM. Oterwise, it is ZIL-LWB.
@@ -3022,12 +3022,162 @@ In this chapter we evaluate whether ZIL-PMEM meets the project goals established
 
 \section{Usability \& Architecture}
 
+Our high-level requirements for ZIL-PMEM were: simple administration, sharing of PMEM as a pool-wide resource, same crash consistency guarantees, and coexistence with the existing ZIL(-LWB).
+Our design meets all of these requirements:
+\begin{description}[noitemsep]
+    \item[Simple Administration] Activation of ZIL-PMEM is completely transparent to the administrator.
+        There is no change in user experience.
+        (See Section~\ref{sec:zilpmemzilkind:activation} for details.)
+    \item[Pooled Storage] PRB wraps the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
+        (See Section~\ref{sec:zilpmem:prbconstruction} for details.)
+    \item[Coexistence] The introduction of \textit{ZIL Kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
+        The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure while providing sufficient freedom to implement a more efficient persistence strategy.
+    \item[Same Guarantees] \lstinline{zilog_pmem_t} maintains the same crash consistency guarantees as ZIL-PMEM, courtesy of the shared logical structure and PRB/HDL's guarantees.
+\end{description}
+
 \section{Correctness}
-We use unit tests and integration tests to validate our implementation's behavior.
+
+We use unit tests and integration tests to validate that our implementation handles expected scenarios correctly.
 
 \subsection{PRB}
 
+We test PRB/HDL's functionality in user space which is possible because PRB/HDL is included in the \textit{libzpool} user-space library.
+\textit{libzpool} contains the majority of the ZFS kernel module's code --- it is used to implement \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool.
+We implement our unit tests in Rust to leverage its expressive type and macro system, rich standard library, and its built-in testing harness.
+We use the popular \textit{bindgen} crate to generate the bindings to \textit{libzpool} and implement a few idiomatic wrappers to reduce boilerplate code.
+
+\subsubsection{API Walkthrough}
+We codify the walkthrough of the PRB/HDL API that we presented in Section~\ref{di:prb:api} in a large test:
+\begin{enumerate}
+    \item Allocate a ZIL header on the stack.
+    \item Create a chunk whose space is allocated from the heap.
+    \item Construct PRB and add the chunk to it.
+    \item Setup a HDL.
+    \item Create a log for the HDL.
+    \item Write two entries for $txg=2$ body values $23$ and $42$ to the HDL.
+    \item Teardown the object set.
+    \item Destroy the PRB with \lstinline{free_chunks=false}. This moves ownership of the chunk moves back from PRB to us.
+    \item Construct a new PRB instance with the same chunk.
+    \item Setup a HDL from the ZIL header.
+    \item Trigger claiming.
+    \item Trigger replay, and record the replay callback invocations.
+        For each invocation, we read the body length and content, assert that no read error occurred.
+        We record body content and the ZIL header update as records in a list.
+        We report successful replay for every callback invocation.
+    \item After replay is complete, we compare the recorded list's contents to the expected replay order.
 \subsection{ZIL-PMEM}
+
+\subsubsection{Correct Handling Of Obsolete Entries}
+PRB/HDL assumes that there are only three unsynced txgs at any given time.
+This manifests in frequent use of the \lstinline{txg&3} indexing idiom that is common in ZFS.
+Whenever state needs to be kept for each of the unsynced txgs, a 4-ary array is used to represent it.
+The \lstinline{txg&3}'th element in the array then contains \lstinline{txg}'s state.
+The \lstinline{txg} is most often repeated within the per-txg state to detect when an array element is re-used.
+
+In the context of PRB/HDL, it is critical for correctness that an entry $E_i$ for txg $E_i.txg$ is only written if it is either newer than $txg_{open}$ or one of $\{txg_{open}, txg_{open}-1, txg_{open}-2\}$ (dependency tracking, see Section~\ref{di:prb:deptrack}).
+We have tests that the \lstinline{prb_write_entry} API does not allow writing entries that do not meet this criterion.
+We also cover the replay path and ensure that, if the implementation were incorrect, the replay code would identify the problem with a distinct error code.
+
+\subsubsection{Replay Algorithm}
+We structure the PRB/HDL implementation such that it becomes possible to test the core replay logic that we described in Sections~\ref{di:prb:replayapproach},~\ref{di:prb:deptrack},~\ref{di:prb:modeldatacorruption} and ~\ref{di:prb:ccrecovery}:
+The idea is to isolate the core logic in a function \lstinline{replay_resume()} that takes as input
+\begin{description}[noitemsep]
+    \item[NodeSet] the set of entries, represented as \textit{replay nodes}, that were discovered for the HDL,
+    \item[ReplayState] a pointer to the DRAM representation of replay state,
+    \item[Callback] the callback that receives the \textit{replay node} to be replayed and a pointer to the replay state that needs to be persisted to the ZIL header during replay.
+\end{description}
+It then constructs the replay sequence from \textit{NodeSet} and invokes the \textit{Callback} for each entry that needs to be replayed, with the replay node and ZIL header update as arguments.
+\lstinline{prb_claim()} uses \lstinline{replay_resume()} for ZIL headers in state \textit{logging} to determine $E_{seal}$, and for a dry-run of replay for headers in state \textit{replaying} to detect missing entries early (see Section~\ref{di:prb:ccrecovery}, Step~\ref{ccReplay:claimscan}).
+It provides its own \textit{Callback} (\lstinline{prb_claim_cb()}) which only checks that all replay nodes can be read.
+\lstinline{prb_replay()} uses \lstinline{replay_resume()} to perform actual for the actual replay.
+Its \textit{Callback} (\lstinline{prb_replay_cb()}) serializes \textit{ReplayState} to the representation stored in the ZIL header, builds the ZIL header update, and invokes the user-provided callback.
+Figure~\ref{fig:eval:prb_replay_resume_architecture} visualizes this architecture.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[angle=270,width=\textwidth]{fig/prb_replay_resume_architecture}
+    \caption{The architecture that enables code re-use and testability for the core replay logic.}
+    \label{fig:eval:prb_replay_resume_architecture}
+\end{figure}
+
+\lstinline{replay_resume()} pushes the responsibility to discover entries and to persist replay state to the caller.
+This provides maximum flexibility for testing the core logic:
+\begin{description}[noitemsep]
+    \item[Independence of PRB \& Chunks]
+        Testers do not need to mock chunks or parts of PRB that would have to be scanned.
+        They also do not need to allocate the actual entries.
+        It is sufficient to allocate arbitrary \textit{replay nodes} and to put them into the \textit{EntrySet}
+    \item[Independence of ZIL-PMEM]
+        It is not necessary to mock or subsititute for any behavior in ZIL-PMEM.
+    \item[Crash Consistency Testing]
+        To test crash consistency and correctness for resumed replay, the tester can forge an arbitrary replay state in DRAM and invoke \textit{replay_resume()} with it.
+\end{description}
+
+We leverage Rust's macro system to define test cases in a concise and expressive manner.
+Our goal was to minimize the mental step from the two-dimensional grid visualization (See~\ref{fig:prb_hdl_log_structure_example}) to a test case.
+The following code snippet is adapted from the test suite.
+
+\begin{lstlisting}
+TestSet {
+    title: "I- shape",
+    entries: maplit::btreemap! {
+        // SynthEntry(txg,gen,gsid, (<counters>))
+        "A" => SynthEntry(3,10,1, ([(0,0),(0,0),(0,0)])),
+        "B" => SynthEntry(4,10,2, ([(0,0),(0,0),(0,0)])),
+        "C" => SynthEntry(5,10,3, ([(0,0),(0,0),(0,0)])),
+        "D" => SynthEntry(4,11,1, ([(5,1),(4,1),(3,1)]))
+    },
+    tests: vec![
+        test! {
+            "tail truncation ok",
+            claim_txg = 1,
+            // hide entry D during replay and assert that
+            // replay does not complain
+            stages = stages!(single, hide=&["D"], check=OK,),
+            // expected replay callback invocations
+            expect_replay = vec!["A", "B", "C"],
+        },
+        test! {
+            "'A missing' detected, but remainder of its gen is replayed",
+            claim_txg = 1,
+            // hide entry A during replay and ensure that replay
+            // complains about missing entries
+            stages = stages!(single, hide=&["A"], check=M_ENTRIES,),
+            // expected replay callback invocations
+            expect_replay = vec!["B", "C"],
+        },
+    ],
+}
+\end{lstlisting}
+
+We test the following properties:
+\begin{description}[description]
+    \item[Shapes] We test replay for different ``shapes'' in the 2-D grid, e.g., a ``V''-shape with entries for different txgs, or the ``I-'' shape from the snippet above.
+    \item[Claim Txg] We ensure that log entries from the $precrash\_txg = claim\_txg - 1$ are ignored during replay.
+    \item[Missing Entry Handling] We test the behavior for missing entries in the already replayed and still to be replayed parts of the replay sequence, as well as in the last generation.
+    \item[Resumability] We test resumability of \textit{replay_resume()} for the cases for the cases of missing entries, re-appearing entries, and no change of \textit{EntrySet} between resume attempts.
+    \item[Entry Reappearance] We test that re-appearing entries ordered before the last-replayed entry are ignored, and re-appearing entries in the unreplayed part are discovered and replayed.
+\end{description}
+
+\subsubsection{Crash Tests}
+We make heavy use of runtime assertions in the implementation to protect against implementation errors.
+On the recovery path, almost all assertions are enabled for release builds of the module.
+On the write path, most are only enabled for debug builds to improve code generation and runtime performance.
+However, \textit{libzpool} is always compiled in debug mode.
+We modify \textit{libzpool} such that our test suite can install a hook whenever a runtime assertion triggers.
+This allows us to implement \textit{crash tests}
+At this time, we use them primarily to ensure that the PRB API triggers assertions if used incorrectly:
+\begin{itemize}
+    \item Operations on a HDL in the wrong state, e.g., replay of a HDL which was not claimed.
+    \item Attempts to set up a HDL that has already been set up.
+    \item Writes that exceed the maximum allowed chunk size.
+    \item Correct interplay of garbage collection and PRB during PRB allocation (critical for pool export).
+\end{itemize}
+
+\subsection{ZIL-PMEM}
+
+Our integration of PRB/HDL into ZFS by the \texttt{zil\_pmem.c} code module is (sparsely) covered by integration tests:
+\todo{ziltest, zts scripts, mention incomplete}
 
 \section{Performance}
 We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
