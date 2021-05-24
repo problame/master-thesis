@@ -399,7 +399,7 @@ And after ZFS has synced out modifications to the main pool, they benefit from Z
 In contrast, with dm-writecache, the origin block device driver must handle data redundancy if desired, e.g., though another Device Mapper target such as \textit{dm-raid}.
 We compare the performance of the two implementations in Section ~\ref{sec:eval:dmwritecache} of our evaluation.
 
-\subsection{Journaling \& Write-Ahead Logs Adapted PMEM}
+\subsection{Journaling \& Write-Ahead Logs Adapted To PMEM}
 The following publications use persistent memory to accelerate file system journals and write-ahead logs.
 
 \citerelwork{Unioning of the Buffer Cache and Journaling Layers with Non-volatile Memory}{leeUnioningBufferCache2013} is an academic paper that presents a PMEM-aware buffer cache design which
@@ -513,7 +513,7 @@ PMTest works within kernel modules but the implementation is limited to a single
 The processing of the operation trace happens in userspace.
 PMTest could be used to check ZIL-PMEM kernel code: for a single ZPL filesystem and a single thread that performs synchronous I/O, the pool's PMEM is only written from that thread.\todo{ref design sections}
 
-\subsection{Fault Injection}
+\subsection{Fault Injection}\label{sec:rel_work:fault_injection}
 Error handling code are notoriously difficult to test but often critical for correctness.
 Fault injection is a common technique to simulate failures and thereby exercise these code paths.
 
@@ -1298,17 +1298,17 @@ However, our implementation has no such provisions because even with the (absurd
     %     \item[Loss of Entries] If such a missing entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
         % However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
     % \end{description}
-Replay is complicated by the fact the entries that were stored in the PRB can be lost.
+Replay is complicated by the fact that the entries that were stored in the PRB can be lost.
 For example, bitflips in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
 If an entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
-However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
+However, all entries $E_p$ that do not depend on $E_m$ and need replay should still be replayed (their $E_p \le E_m \wedge E_p.txg > precrash\_txg$).
 
 We detect missing entries through a set of counters that we store in the metadata of each entry.
 For an entry $E$, the counter $E.C_{ctxg_i}$
 \begin{gather*}
-    E.C_{ctxg_i} := \#\{ D : D.gen < E.gen \wedge D.txg = ctxg\_i\}
+    E.C_{ctxg_i} := \#\{ D : D.gen < E.gen \wedge D.txg = ctxg_i\}
 \end{gather*}
-stores the number of entries that were written to the log since its inception, for a DMU transction with txg $ctxg\_i$, until generation $E.gen$.
+stores the number of entries that were written to the log since its inception, for a DMU transction with txg $ctxg_i$, until generation $E.gen$.
 During replay, we first construct the replay sequence (example in the previous section, Figure~\ref{fig:prb_hdl_log_structure_example__replay}).
 Then, we re-compute and compare the counters for each entry in the replay sequence.
 If an entry $E_m$ has been lost, the counters of any dependent entry $E_d$ (their $E_d.gen > E_m.gen$) will not match, causing replay to stop with $E_d$ as a \textit{witness}.
@@ -1337,18 +1337,18 @@ We use the same algorithm to compute the counters on both the write and recovery
 This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
 The counters are stored in a table called \textit{live table}.
 It has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
-When an entry $E$ is written or visited, it modifies the counter in the row with index $I_T := T \mod 4$ where $T := E.txg$.
+When an entry $E$ is written or visited, it modifies the counter in the row with index $I_T := T \bmod 4$ where $T := E.txg$.
 We distinguish the following conditions:
 \begin{itemize}[noitemsep]
 \item If $R_{I_T}.txg = T$, we simply increment $R_{I_T}.ctr$ and are done.
-\item If $T > R_{I_T}.txg$, we can infer that txg $R_{I_T}.txg$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by $T\mod 4$.
+\item If $T > R_{I_T}.txg$, we can infer that txg $R_{I_T}.txg$ must have been synced out because there are only three unsynced txgs at any given time but four array entries that are reused in a circular manner, curtesy of indexing by $T \bmod 4$.
 In that case, we can discard the state in the row and reuse it for $T$ by setting $R_{I_T} \leftarrow (T, 1)$.
 \item Conversely, if $T < R_{I_T}$, we can infer that the entry we are writing is for an already synced txg and hence obsolete.
 In that case, we do not change the \textit{live table} and turn the entry write operation into a no-op.
 \end{itemize}
 Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&3]}).
 
-To detect the start of a new generation and support crash-consistent replay, we maintain a separate variable $E_{last} := (gen, gsid)$.
+To detect the start of a new generation, and support crash-consistent replay (Section~\ref{di:prb:ccrecovery}), we maintain a separate variable $E_{last} := (gen, gsid)$.
 When an entry $E$ is written or visisted, we compare it to $E_{last}$ using the following rules:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
 \item[$E < E_{last}$] This case is prohibited because the API contract for log writers is that generation numbers must be monotonically increasing.
@@ -1356,7 +1356,7 @@ We consider the log corrupted if such an entry $E$ is found.
 \item[$E.gen = E_{last}.gen$] The writer did not start a new generation and we leave the \textit{last table} unmodified.
 \item[$E.gen > E_{last}.gen$] We create a copy of the \textit{live table}. We refer to this snapshot as \textit{last table}.
 \end{description}
-Regardless of whether a new generation was started or not, we always update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph after evaluation the rules above.
+Regardless of whether a new generation was started or not, we always update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph after evaluating the rules above.
 
 The counters $E.C_{txg_i}$ have the same value for all entries in generation $E.gen$  because, by defintion, they only count entries written up to but not including $E.gen$.
 Hence we compute them from the \textit{last table} once and cache the results until the next generation is started:
@@ -1391,7 +1391,7 @@ We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
         Note that their txgs differ sometimes but stay in a corridor of at most three txgs.
         The table at the bottom shows the counter values in the entry headers:
         each row represents the counter table that is stored in the entry headers of one generation.
-        The table at the upper right shows the algorithm's table's content over time.
+        The table at the upper right shows the \textit{live table}'s content over time.
         Instead of counters, we show the entries that would cause the specific counter to be incremented.
         We visualize row-reuse by separating new row content with a ``\lstinline{|}" symbol in each cell of the reused row.
     }
@@ -1563,7 +1563,7 @@ We move chunks between the following data structures to keep track of their curr
     PRB maintains one full list for each unsynced txg $T_i$. The \textit{full list} for $T_i$ contains exactly those (full) chunks whose \textit{max txg} is $T_i$.
     After $T_i$ has been synced, the chunks on the corresponding \textit{full list} are emptied and moved to the \textit{free list}.
     Note that it is sufficient to maintain three full lists at any given time --- one for each of the three unsynced transaction groups \textit{open}, \textit{quiescing}, and \textit{syncing}.
-    The three lists can be represented as an array of three lists that is indexed by $T_i \mod 3$.
+    The three lists can be represented as an array of three lists that is indexed by $T_i \bmod 3$.
     Our implementation follows the common ZFS idiom of using four lists that are indexed by \lstinline{T_i&3} where \lstinline{&} is the \textit{bitwise and} operation.
     \item[Wait Replay List]
     During the claiming phase, all of the PRB's chunks are on the \textit{wait replay list}.
@@ -1706,7 +1706,7 @@ For the case where PMEM is corrupted, we distinguish the following conditions\to
         The closure reads the body into DRAM using \lstinline{memcpy_mcsafe}, then validates the body checksum stored in the header.
         Validation failures are returned as an error.
         The caller can decide whether they want to iterate further or propagate the error up the call stack.
-        Note that in our C implementation, the closure is replaced by the opaque struct \lstinline{zilpmem_replay_node_t} and function \lstinline{zilpmem_prb_replay_read_replay_node}.
+        Note that in our C implementation, the closure is replaced by the opaque struct \lstinline{zilpmem_replay_node_t} and function \lstinline{prb_replay_read_replay_node}.
     \item[Data corruption in the padding]
         We require that the padding in the space that follows the body to the next 256 byte multiple consists only of zero.
         We validate this property in the closure that reads the body.
@@ -2349,7 +2349,7 @@ Synchronization is handled internally.
 %     \item Loss of entries at the tail of the logical log cannot be detected because there is no record of their existence in prior log entries.
 %         Note that this is the status quo with ZIL-LWB as well, both with and without OpenZFS Native Encryption.
 %     \item The iteration phase correctly handles \textit{online} data corruption in PMEM, i.e., data corruption while the iteration is running.
-%         The reason is that we operate on DRAM-buffered copies of the entry metadata in the replay node, and force the callback to use the \lstinline{zilpmem_prb_replay_read_replay_node} function to access the entry.
+%         The reason is that we operate on DRAM-buffered copies of the entry metadata in the replay node, and force the callback to use the \lstinline{prb_replay_read_replay_node} function to access the entry.
 %         The function copies the entry to PMEM using \lstinline{memcpy_mcsafe}, revalidates the checksums, and esnures that the entry metadata still matches the replay node.
 %     \item The iteration phase can be checkpointed by snaphotting its state variables from within the callback invocation for a replay node $N_{cp}$.
 %         The replay sequence algorithm can be restarted from the checkpointed state by re-executing the \textit{scanning phase} and restoring the iteration state variables from the checkpoint.
@@ -2376,7 +2376,7 @@ Synchronization is handled internally.
 % The reason is that both phases only operate on DRAM-buffered copies of the entry metadata in the replay node.
 % Further, if the callback needs to read the entry, our API forces it to use DRAM-buffering as well:
 % it does not receive a pointer into PMEM but a pointer to the (opaque) replay node struct.
-% To copy the entry into a DRAM buffer, it must use the \lstinline{zilpmem_prb_replay_read_replay_node} function which
+% To copy the entry into a DRAM buffer, it must use the \lstinline{prb_replay_read_replay_node} function which
 % \begin{itemize}[noitemsep]
 %     \item handles machine-check exceptions (MCEs) through \lstinline{memcpy_mcsafe},
 %     \item validates the header and body checksums of the entry, and
@@ -2393,7 +2393,7 @@ Synchronization is handled internally.
 % \begin{enumerate}[noitemsep]
 %     \item Add the chunk $N.chunk\_ref$ to the HDL's claimset.
 %         If the chunk was not yet included in the set, increment the chunk's \textit{claim refcount} (Section~\ref{prb:di:chunkownership}).
-%     \item Check for PMEM corruption by reading the log entry from PMEM using \lstinline{zilpmem_prb_replay_read_replay_node}.
+%     \item Check for PMEM corruption by reading the log entry from PMEM using \lstinline{prb_replay_read_replay_node}.
 % \end{enumerate}
 % If log corruption is detected by the replay sequence algorithm or the callback, we fail the pool import operation.
 % In that case, the \textit{claim refcount}s are decremented during HDL teardown.
@@ -2907,7 +2907,7 @@ ZIL kinds are forced into the \textit{commit list} model defined by the shared \
 ZIL-LWB is a long chain of log entries grouped in LWBs, and ZIL-PMEM starts a new generation for every entry on the commit list to encode it properly.
 We believe that this architecture is the best compromise for consistent behavior, performance, code duplication, and maintainablility (see Section~\ref{sec:zil_kinds:alternatives}).
 Our evaluation in the next chapter shows that ZIL-PMEM yields significant latency benefits and can saturate PMEM bandwidth when performing synchronous I/O from multiple threads to \textit{separate} datasets.
-However, the benchmarks show that multi-thread scalability within a \textit{single} dataset is limited.
+However, the benchmarks show that multi-thread scalability within a \textit{single} dataset is limited.\todo{validate claim or rewrite}
 To demonstrate that PRB/HDL is not the bottleneck, we develop an \textit{itxg bypass} mode for ZIL-PMEM which we present in this section.
 
 \subsubsection{OpenZFS Background: ZVOLs}\label{sec:itxgbypass:openzfsbackground_zvols}
@@ -3016,7 +3016,7 @@ Our design meets all of these requirements:
     \item[Pooled Storage] PRB wraps the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
         (See Section~\ref{sec:zilpmem:prbconstruction} for details.)
     \item[Coexistence] The introduction of \textit{ZIL Kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
-        The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure while providing sufficient freedom to implement a more efficient persistence strategy.
+        The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure but enables coexistence of different persistence strategies.
     \item[Same Guarantees] \lstinline{zilog_pmem_t} maintains the same crash consistency guarantees as ZIL-PMEM, courtesy of the shared logical structure and PRB/HDL's guarantees.
 \end{description}
 
@@ -3033,7 +3033,7 @@ We use the popular \textit{bindgen} crate to generate the bindings to \textit{li
 
 \subsubsection{API Walkthrough}
 We codify the walkthrough of the PRB/HDL API that we presented in Section~\ref{di:prb:api} in a large test:
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
     \item Allocate a ZIL header on the stack.
     \item Create a chunk whose space is allocated from the heap.
     \item Construct PRB and add the chunk to it.
