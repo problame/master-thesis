@@ -771,7 +771,7 @@ Figure~\ref{fig:zil_lwb__physical_structure_overview} visualizes this structure.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=\textwidth,angle=270]{fig/zil_lwb__physical_structure_overview}
+    \includegraphics{fig/zil_lwb__physical_structure_overview}
     \caption{On-disk structure of ZIL-LWB as described in the previous paragraph.}
     \label{fig:zil_lwb__physical_structure_overview}
 \end{figure}
@@ -825,7 +825,7 @@ For OpenZFS native encryption, the LWBs are not checksummed but encrypted and au
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=\textwidth,angle=270]{fig/zil_lwb__physical_structure_append.png}
+    \includegraphics{fig/zil_lwb__physical_structure_append}
     \caption{The procedure for appending an LWB.}
     \label{fig:zil_lwb__physical_structure_append}
 \end{figure}
@@ -1069,7 +1069,7 @@ Chapter~\ref{ch:prbhdl} describes our main contribution --- the PRB/HDL data str
 The integration of PRB/HDL into ZFS is then presented in Chapter~\ref{ch:zilpmem}.
 
 \begin{figure}[H]
-    \includegraphics[height=20cm,angle=270,width=\textwidth,keepaspectratio]{fig/zilpmem_architecture_overview}
+    \includegraphics{fig/zilpmem_architecture_overview}
     \caption{Overview of the system architecture as described in this section.}
 \end{figure}~\todo{actual figure}
 
@@ -1128,7 +1128,7 @@ We provide an example for the commit list and the replay sequence for different 
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=6.5cm]{fig/zil_writepath_and_replay_sequence_logical_level}
+    \includegraphics{fig/zil_writepath_and_replay_sequence_logical_level}
     \caption{
         Example for a commit list with entries from different files and txgs.
         We show the replay sequences for different precrash-txgs.
@@ -1255,8 +1255,7 @@ The projection of entries onto the horizontal axis shows the dependency relation
 The projection of entries onto the vertical axis shows the sets in which entries are garbage-collected.
 
 \begin{figure}[H]
-    \centering
-    \includegraphics[height=8cm]{fig/prb_hdl_log_structure_example}
+    \includegraphics{fig/prb_hdl_log_structure_example}
     \caption{Structure of a single HDL's log as described in the previous paragraph.}
     \label{fig:prb_hdl_log_structure_example}
 \end{figure}
@@ -1370,30 +1369,21 @@ Hence we compute them from the \textit{last table} once and cache the results un
         If the \textit{last table} does not contain those counters, we use a value of zero.
 \end{enumerate}
 
-Figure~\ref{fig:prb_counters_table__computation} contains a graphical illustration of the algorithm described above.
-Figure~\ref{fig:prb_counters_table__encoding} shows how we encode the counters in the entry header.
+Figure~\ref{fig:prb_counters_table__computation_and_encoding} contains an illustration of the process that converts the \textit{last table} into the counters table.
 We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=10cm]{fig/prb_counters_table__computation}
+    \includegraphics{fig/prb_counters_table__computation_and_encoding}
     \caption{
-        Visualization of the \textit{live} and \textit{last table} structures, and a declarative definition of how the \textit{last table} is computed.
-        %Note that we also provide an Example in Figure~\ref{fig:prb_counters_table__example}.
+        Visualization of how the counters table is computed from the \textit{last table} structure.
     }
     \label{fig:prb_counters_table__computation}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=4cm]{fig/prb_counters_table__encoding}
-    \caption{Space-efficient encoding of the counters.}
-    \label{fig:prb_counters_table__encoding}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[height=16cm]{fig/prb_counters_table__example}
+    \includegraphics{fig/prb_counters_table__example}
     \caption{
         Example for the computation of the counters that are stored in the entry.
         The following entries are written to the log:
@@ -1590,14 +1580,14 @@ Figure~\ref{fig:prb_chunk_ownership_cycle__example} provides a corresponding exa
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=\textwidth]{fig/prb_chunk_ownership_cycle__transitions}
+    \includegraphics{fig/prb_chunk_ownership_cycle__transitions}
     \caption{The different owners of a chunk and the events that cause ownership transitions.}
     \label{fig:prb_chunk_ownership_cycle__transitions}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=12cm]{fig/prb_chunk_ownership_cycle__example}
+    \includegraphics{fig/prb_chunk_ownership_cycle__example}
     \caption{
         Example for chunk ownership transitions.
         The PRB is constructed with all eight chunks added as \lstinline{_for_claim}.
@@ -1672,7 +1662,8 @@ However, chunk sizes much larger than a single average entry are advisable for m
 %The choice of chunk size is a trade-off between PMEM space-efficiency (fragmentation at the end of the chunk), the acceptable blast radius\todo{this is a common ops term but not sure if academic enough...} of data corruption (traversal, see Section~\ref{di:prb:traversal}), and multi-core scalability on the write path (see Section~\ref{di:prb:write}).
 
 \begin{figure}[H]
-    \includegraphics[height=7cm]{fig/prb_persistent_structure__chunklayout}
+    \centering
+    \includegraphics{fig/prb_persistent_structure__chunklayout}
     \caption{Example chunk layout. Note that although we partition the PMEM space very regularly in this example, the PRB consumer is free to use variable-sized chunks.}
     \label{fig:prb_physical_data_structure__chunklayout}
 \end{figure}
@@ -2029,7 +2020,7 @@ The \lstinline{sfence} (phase 2) is required for correctness  because we must co
 
 \begin{figure}[H]
     \centering
-    \includegraphics[height=6cm]{fig/prb_writepath_crashconsistent_append}
+    \includegraphics{fig/prb_writepath_crashconsistent_append}
     \caption{
         The crash-consistent append operation to a PMEM chunk.
         The traversal algorithm reaches the existing entries at all times and reaches the new entry only after its body and header have been written completely.
@@ -2572,18 +2563,12 @@ These abstract methods must be implemented by concrete subclasses.
 \lstinline{zilog_lwb_t} is such a subclass that implements the LWB-based persistence strategy.
 For ZIL-PMEM, the \lstinline{zilog_pmem_t} struct which we introduce in Section~\ref{ch:zilpmem} implements persistence directly to PMEM.
 Which subclass is instantiated at runtime is determined by the \lstinline{zh_kind} field in the ZIL header.
-Figures~\ref{fig:zilog_splitup_class_diagram} and \ref{fig:zilog_splitup_example_code} illustrate the changes described in this section.
+Figure~\ref{fig:zilog_splitup_viz} illustrates the changes described in this section.
 
 \begin{figure}[H]
-\missingfigure[figheight=10cm]{}
-\caption{\lstinline{zilog_t} before and after the introduction of ZIL kinds, visualized as a class diagram.}
-\label{fig:zilog_splitup_class_diagram}
-\end{figure}
-
-\begin{figure}[H]
-\missingfigure[figheight=20cm]{}
-\caption{The refactoring steps described in Section~\ref{sec:zil_kinds:runtime} by example of the \lstinline{zil_itx_assign()} and \lstinline{zil_commit()} APIs.}
-\label{fig:zilog_splitup_example_code}
+\includegraphics{fig/zilog_splitup_viz}
+\caption{\lstinline{zilog_t} before and after the introduction of ZIL kinds by example of the \lstinline{zil_itx_assign()} and \lstinline{zil_commit()} APIs.}
+\label{fig:zilog_splitup_viz}
 \end{figure}
 
 \subsection{Changing ZIL Kinds}\label{sec:zil_kinds:change}
@@ -2832,7 +2817,7 @@ Figure~\ref{fig:zilpmem:datasethdlsync} visualizes the constellation\todo{langua
 
 \begin{figure}[H]
     \centering
-    \missingfigure[figheight=7cm]{}
+    \includegraphics{fig/zilpmem_dataset_hdl_sync}
     \caption{The different allocation lifecycles of HDLs and datasets, and how we bridge them for ZIL-PMEM.}
     \label{fig:zilpmem:datasethdlsync}
 \end{figure}
@@ -3098,7 +3083,7 @@ Figure~\ref{fig:eval:prb_replay_resume_architecture} visualizes this architectur
 
 \begin{figure}[H]
     \centering
-    \includegraphics[angle=270,width=\textwidth]{fig/prb_replay_resume_architecture}
+    \includegraphics{fig/prb_replay_resume_architecture}
     \caption{The architecture that enables code re-use and testability for the core replay logic.}
     \label{fig:eval:prb_replay_resume_architecture}
 \end{figure}
