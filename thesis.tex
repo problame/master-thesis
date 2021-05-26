@@ -3022,12 +3022,12 @@ Our design meets all of these requirements:
 
 \section{Correctness}
 
-We use unit tests and integration tests to validate that our implementation handles expected scenarios correctly.
+We use unit tests and integration tests to validate\todo{better verb?} that our implementation.
 
-\subsection{Testing Strategy for PRB}
+\subsection{Testing Strategy for PRB/HDL}
 
 We test PRB/HDL's functionality in user space which is possible because PRB/HDL is included in the \textit{libzpool} user-space library.
-\textit{libzpool} contains the majority of the ZFS kernel module's code --- it is used to implement \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool.
+\textit{libzpool} contains the majority of the ZFS kernel module's code --- it is used to by \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool (next section).
 We implement our unit tests in Rust to leverage its expressive type and macro system, rich standard library, and built-in testing harness.
 We use the popular \textit{bindgen} crate to generate the bindings to \textit{libzpool} and implement a few idiomatic wrappers around PRB/HDL to reduce boilerplate code in our tests.
 
@@ -3098,7 +3098,7 @@ This factorization of responsibilities provides maximum flexibility for testing 
 \end{description}
 
 We leverage Rust's macro system to define test cases in a concise and expressive manner.
-Our goal was to minimize the mental step from the two-dimensional grid visualization to a test case (ex. Figure~\ref{fig:prb_hdl_log_structure_example}).
+Our goal is to minimize the mental step from the two-dimensional grid visualization to a test case (ex. Figure~\ref{fig:prb_hdl_log_structure_example}).
 The following code snippet is an excerpt from the test suite.
 
 \begin{lstlisting}[style=figurepseudocode]
@@ -3153,8 +3153,8 @@ In \textit{libzpool}, which is used by our user space tests, assertions are alwa
 
 We modify \textit{libzpool} such that our test suite can install a callback that is invoked when a runtime assertion fails.
 The callback receives the formatted panic message as an argument.
-We use this mechanis to implement \textit{crash tests} which assert that a piece of test code will trigger a runtime assertion.
-The panic message is used to identify the assertion, since cross-FFI stack unwinding is not yet supported in Rust.
+We use this mechanism to implement \textit{crash tests} which assert that a piece of test code triggers a runtime assertion.
+The panic message is used to identify the assertion since cross-FFI stack unwinding is not yet supported in Rust.
 
 At this time, we use crash tests to ensure that incorrect usage of the PRB API is detected at runtime:
 \begin{itemize}[noitemsep]
@@ -3166,7 +3166,7 @@ At this time, we use crash tests to ensure that incorrect usage of the PRB API i
 
 \subsection{Testing Strategy for ZIL-PMEM}
 
-Our changes to ZFS have considerably less coverage than PRB/HDL.
+Our changes to ZFS have less coverage than PRB/HDL.
 The OpenZFS project has the following existing facilities for testing:
 \begin{description}[noitemsep]
     \item[ZFS Test Suite (ZTS)] The ZFS Test Suite is a set of automated integration tests that assert behavior of the kernel module and CLI tools.
@@ -3178,30 +3178,42 @@ The OpenZFS project has the following existing facilities for testing:
         \textit{ztest} is particularly useful for exposing race conditions in the administrative layer that would not be discovered by the mostly sequential usage in the ZTS.
 \end{description}
 
-\textit{Ztest} mocks the representation of datasets (\lstinline{ztest_ds_t}) but uses the production \lstinline{objset_t} and \lstinline{zilog_t} types and APIs.
-The mocking code generally uses the public ZIL API and thus required little modifications regarding the introduction of ZIL kinds.
-However, the \lstinline{ztest_freeze} routine which tests ZIL writes and replay is largely specific to ZIL-LWB.
-Due to time constraints, we take a shortcut with regards to \textit{ztest}:
-\begin{itemize}[noitemsep]
-    \item We disable \lstinline{ztest_freeze} for ZIL-PMEM.
-    \item We adjust the \lstinline{ztest_freeze} code to use \lstinline{zilog_lwb_t} instead of \lstinline{zilog_t}.
-        We use a checked downcast of \lstinline{zilog_t} to produce the pointer to \lstinline{zilog_lwb_t}.
-\end{itemize}
-In the future, this change will need to be reverted and a maintainable design for stress-testing multiple ZIL kinds be devised.
+We identify three major challenges in adapting OpenZFS's testing infrastructure to ZIL-PMEM:
+\begin{description}[noitemsep]
+    \item[Dimensionality] ZIL kinds add a new dimension in the configuration space that has not been anticipated by the designers of ZTS and ztest.
+        Since all ZIL kinds should be functionally equivalent, the ideal testing strategy would execute all existing tests for each ZIL kind.
+        However, the testing harnesses for ZTS and ztest do not have the infrastructure for this task.
 
+    \item[File VDEVs] Both ZTS and ztest rely heavily on the \textit{file} VDEV type.
+        \textit{File} VDEVs are plain files that can be used in lieu of block devices when constructing a zpool.
+        They are problematic for ZIL-PMEM because we only added support for DAX block devices, not files.
+        To support \textit{file} VDEVs for ZIL-PMEM, the ZFS kernel module would need to \lstinline{mmap} the file in the kernel.
+        We are unaware of a kernel API that allows an external module, such as ZFS, to accomplish this.
+        For crash consistency, the memory mapping would further need to map directly to PMEM, i.e., be located on a Linux filesystem mounted with the \textit{dax} mount option.\todo{ref pmem in linux section}
 
-Regarding ZTS, we identify two main challenges in adapting it to ZIL-PMEM:
-\begin{enumerate}[noitemsep]
-    \item ZTS relies heavily on the \textit{file} VDEV type, and
-    \item was not designed with the idea of ZIL kinds in mind.
-\end{enumerate}
-\textit{File} VDEVs are plain files that can be used in lieu of block devices when constructing a zpool.
-They are problematic for ZIL-PMEM because a the kernel module would need to \lstinline{mmap} the file in the kernel.
-We are unaware of a kernel API that allows an external module, such as ZFS, to perform \lstinline{mmap}s.
-For crash consistency, the memory mapping would further need to map directly to PMEM, i.e., be located on a Linux filesystem mounted with the \textit{dax} mount option.\todo{ref pmem in linux section}
-And even though we could ignore crash consistency during testing, the other problem of the missing concept for ZIL kinds remains.
+    \item[VDEV Management]
+        A significant number of tests in ZTS and ztest deals with\todo{language} mutations of the pool's VDEV config, e.g., adding, removing, growing, offlining devices.
+        This is related to ZIL-PMEM because our design goal is to transparently switch ZIL kinds based on the absence or presence of exactly one PMEM SLOG vdev.
+        However, the current state of our implementation does not yet support changing ZIL kinds after pool creation and prevents changes to the SLOG VDEV config to ensure that the PMEM SLOG vdev is always present (Section~\ref{sec:zil_kinds:change}).
+        Thus, many tests that would work correctly in the final implementation currently fail when attempting to change the VDEV config.
+\end{description}
 
-The following ZTS tests are relevant for the ZIL:
+We modify \textit{ztest} as follows:
+\begin{description}[noitemsep]
+    \item[Mocking]  \textit{Ztest} mocks the representation of datasets (\lstinline{ztest_ds_t}) but uses the production implementation of the \lstinline{objset_t} and \lstinline{zilog_t} types and related APIs.
+        Since ZIL kinds do not change the public ZIL API significantly, the parts of ztest that are concerned with mocking the dataset lifecycle, such as dataset creation, snapshotting, destruction, and cloning, only required minor modifications.
+    \item[ZIL-LWB Specific Assertions] Some \textit{ztest} routines assert ZIL-LWB specific state.
+        We move these assertions behind \lstinline{if} conditions that check whether the ZIL kind is ZIL-LWB and if so, downcast \lstinline{zilog_t} to \lstinline{zilog_lwb_t} to perform the check.
+    \item[Configurable ZIL Kinds] We add a command line switch to \textit{ztest} to configure the default ZIL kind that is used for the test pool.
+        This is equivalent to the \lstinline{zil_default_kind} kernel module parameter (Section~\ref{sec:zil_kinds:change}).
+    \item[VDEV Management] There are several \textit{ztest} routines that randomly add and remove VDEVs, inlcuding SLOG devices.
+        We change the function that selects the target VDEV such that it never returns SLOG device if the pool's ZIL kind is ZIL-PMEM.
+\end{description}
+We have not added any ZIL-PMEM specific assertions or additional PMEM SLOG related test routines to \textit{ztest}.
+To get coverage for ZIL-PMEM and ZIL-LWB, it is required to run ztest twice with the respective values for the command line flag.
+Future work should extend the \textit{zloop.sh} script which already provides infrastructure to run \textit{ztest} with different combinations of parameters (i.e., CLI flags).
+
+Regarding the ZTS, the following tests are relevant for the ZIL:
 \begin{lstlisting}[style=figurepseudocode]
 $ fdfind --print0 slog ./tests | xargs -0 grep log_assert | ...
 slog_001_pos.ksh  Creating a pool with a log device succeeds
@@ -3226,7 +3238,7 @@ slog_replay_fs_001.ksh   Replay of intent log succeeds
 slog_replay_fs_002.ksh   Replay of intent log succeeds
 slog_replay_volume.ksh   Replay of intent log succeeds
 \end{lstlisting}
-The \lstinline|slog_*_{pos,neg}.ksh| tests cover administrative operations which are well-described by the excerpts above.
+The \lstinline|slog_*_{pos,neg}.ksh| tests cover VDEV management operations which are well-described by the excerpts above.
 The \lstinline{slog_replay_*} tests exercise the replay code path as follows:
 \begin{enumerate}[noitemsep]
     \item Create a zpool and a dataset in it.
@@ -3243,46 +3255,42 @@ The \lstinline{slog_replay_*} tests exercise the replay code path as follows:
     \item Use the \textit{diff} utility to compare the archived state, including metadata such as \textit{mtime} and extended attributes, against the replayed state of the filesystem.
         The test passes if no differences are found.
 \end{enumerate}
-
-To get some test coverage for ZIL-PMEM, we adjust these tests as follows:
-\begin{enumerate}
-    \item Add a mechanism to skip tests based on the current value of the the \lstinline{zil_default_kind} module parameter that we introduced as our provisional solution for changing ZIL kinds (see Section~\ref{sec:zil_kinds:change}).
+The \lstinline|slog_replay_fs_00{1,2}| tests use ZFS filesystem.
+The \lstinline|slog_replay_volume| test exercises the ZVOL code paths by instantiating a platform-native file system on top of the ZVOL (ext4 on Linux, UFS2 on FreeBSD).
+We modify ZTS as follows:
+\begin{enumerate}[noitemsep]
+    \item Add a mechanism to skip tests based on the current value of the the \lstinline{zil_default_kind} module parameter (Section~\ref{sec:zil_kinds:change}).
     \item Skip all \lstinline|slog_*_{pos,neg}.ksh| tests for ZIL-PMEM.
-    \item Add a new ZIL-PMEM specific test to assert the behavior of our current ZIL kind switching implementation.
+    \item Add a new ZIL-PMEM specific test to assert the behavior of our current implementation.
         The test ensures that ``ZIL-PMEM does not allow device removal, addition, replacing, offlining or pool splitting''.
-    \item Make ZIL kind specific variants of \lstinline{slog_replay_*}:
+    \item Replace \lstinline{slog_replay_*} with ZIL kind specific variants:
         \begin{enumerate}
             \item Copy \lstinline{slog_replay_*} to \lstinline{slog_replay_*__lwb} and \lstinline{slog_replay_*__pmem}.
             \item Remove \lstinline{slog_replay_*}.
-            \item Make \lstinline{slog_replay_*__{lwb,pmem}} exclusive to either\todo{correct preposition} ZIL kind.
+            \item Make \lstinline|slog_replay_*__{lwb,pmem}| exclusive to either ZIL kind.
             \item For \lstinline{slog_replay_*_pmem}, hard-code \lstinline{/dev/pmem0} instead of \textit{file} VDEVs as a SLOG device.
         \end{enumerate}
 \end{enumerate}
+To execute the tests, it is now required to load the ZFS kernel module and configure \lstinline{zil_default_kind} before starting the ZTS test harness.
+To achieve full coverage, the ZTS must be run twice, once for ZIL-LWB and once for ZIL-PMEM.
 
 \subsection{Results}
 
-Our user-space test suite for PRB/HDL enabled fast iteration on the implementation with high confidence.
+Our user-space tests for PRB/HDL enabled fast iteration on the implementation with high confidence in its correctness.
 The majority of test cases are the collection of edge-cases that we discovered while designing the PRB/HDL data structure.
-Naturally, we have addressed all of these edge cases and thus all PRB/HDL tests pass.
+We have addressed all of these edge cases in the design and implementation, and thus all of our PRB/HDL tests pass.
 
-Using  Despite our limited limited 
+\textit{Ztest} helped us find many implementation errors in the integration code (\textit{zil\_pmem.c}).
+Again, the fast\todo{high?} iteration speed and ease of debugging in user space proved beneficial.
+We have run the \textit{zloop.sh} script for X\todo{value} minutes for each ZIL kind and did not encounter any crashes.
 
+The \lstinline{ZTS} tests listed above pass (or are marked for skipping) for both ZIL-LWB and ZIL-PMEM.
+However, they exposed significantly less implementation issues than \textit{ztest}.
+(We used ZTS during initial development and only adopted \textit{ztest} later in the process, hence we were able to experience the difference.)
 
-
-
-
-
-\subsubsection{ZIL-PMEM}
-For ZIL-PMEM, we hard-code /dev/pmem0 as a SLOG device in \textit{ztest} to get basic testing exposure for ZIL-PMEM.
-Despite the disabled \lstinline{ztest_freeze}, this change helped us discover and fix bugs in the lifecycle of ZIL-PMEM, i.e., dataset creation, mounting, unmounting, and destruction.
-
-The following changes need to be covered by additional ZTS tests:
-\begin{itemize}
-    \item As described in Section~\ref{sec:zilpmemzilkind:activation}, we plan to automatically activate ZIL-PMEM based on the whether the SLOG device is PMEM.
-        However, we have not yet implemented the support for switching ZIL kinds after pool creation (Section~\ref{sec:zil_kinds:change}).
-        That work should be accompanied by corresponding additions to ztest.
-    \item Although we force the replay callback to use the \lstinline{prb_replay_read_replay_node} function which handles \textit{machine check exceptions (MCE)} through \lstinline{memcpy_mcsafe()}, we should somehow ensure that such errors are actually handled.
-\end{itemize}
+We use the code coverage analysis tools included in the OpenZFS and Linux kernel build system to get some quantitative results.
+The following table compares the code coverage by $\{\text{Upstream}, \text{Our Tree}\} \times  \{\text{ztest + PRB/HDL tests}), \text{ZTS with kernel module}\}$.
+\todo{todo}
 
 \section{Performance}
 We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
