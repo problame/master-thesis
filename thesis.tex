@@ -373,7 +373,8 @@ ZFS with and without ZIL-PMEM compares to Ziggurat as follows:
 
 \citerelwork{dm-writecache}{WritecacheTargetLinux} is a new (2018) Linux Device Mapper target that implements a write-back caching layer for block devices.
 Given an \textit{origin} device and a \textit{cache} device, it exposes a new virtual block device with the same capacity as the origin device.
-Write-back is controlled by relative thresholds on the cache device space utilization (\textit{low} and \textit{high watermark}, default to 45\% and 50\%).
+Write-back is asynchronous and controlled by relative thresholds on the cache device space utilization (\textit{low} and \textit{high watermark}, default to 45\% and 50\%).
+It starts when the cache fill ratio reaches the \textit{high watermark} and stops once it reaches the \textit{low watermark}.
 Reads are not handled by dm-writecache and instead served from the Linux page cache.~\cite{WritecacheTargetLinux}
 \\
 Dm-writecache is relevant to ZIL-PMEM because it is the closest functional analogue to the ZIL in the Linux Device Mapper stack.
@@ -3279,22 +3280,34 @@ The following table compares the code coverage by $\{\text{Upstream}, \text{Our 
 \todo{todo}
 
 \section{Performance}
+
 We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
-We seek to answer the following questions:
+We start with the familiar 4k synchronous random write workload that motivated this thesis (ref. Section~\ref{ch:lwb_analysis}):
 \begin{itemize}[noitemsep]
-    \item What is the speedup that ZIL-PMEM achieves over ZIL-LWB in the 4k synchronous random write workload?
+    \item How many IOPS does ZIL-PMEM achieve for this workload? What is the speedup over ZIL-LWB?
+    \item How does ZIL-PMEM scale with an increasing number of writer threads?
+    \item What are the tail latencies experienced during the benchmark? How do these compare to ZIL-LWB?
+\end{itemize}
+In Section~\ref{sec:eval:appbenchmarks}, we expand our scope to more realistic workloads and different storage stacks:
+\begin{itemize}[noitemsep]
     \item What benefit does ZIL-PMEM provide to applications that frequently perform synchronous I/O?
     \item How does ZFS with ZIL-PMEM perform compared to other Linux filesystems that were adapted to PMEM?
-    \item Is ZIL-PMEM a viable alternative to Linux filesystems deployed on top of with dm-writecache?
+    \item Is ZIL-PMEM a viable alternative to Linux filesystems deployed on top of dm-writecache?
     \item To what degree do ZVOLs benefit from ZIL-PMEM?
     \item What is the benefit of the ITXG bypass for ZVOLs?
-    \item Is PRB's \textit{commit slots} mechanism effective at improving CPU efficiency if the maximum PMEM write bandwidth is exceeded? And what is its overhead?
+\end{itemize}
+We also answer the following question apply this benchmark suite to ZVOLs:
+Finally, in Section~\ref{sec:eval:ncommitters_scalability}, we examine PRB's \textit{commit slot} mechanism:
+\begin{itemize}[noitemsep]
+    \item Do \textit{commit slots} achieve their goal to limit on-CPU waiting for PMEM I/O?
+    \item What is the mechanism's performance overhead?
+    \item What is the effect of PMEM bandwidth through interleaving of Optane DIMMs?
 \end{itemize}
 
 \subsection{Setup \& Reproducibility}
 We have already described our primary evaluation hardware in detail in Section~\ref{ch:lwb_analysis:setup}.
 In summary, we configure the system such that it effectively becomes a single-socket system with sufficient DRAM, two \SI{128}{GiB} Optane DIMMs, and three Micron 960GB NVMe SSDs.
-We use this system for all benchmarks except for Section~\ref{sec:ncommitters_scalability} where we evaluate the \textit{commit slot} abstraction on a system with higher core count and more Optane DIMMs.
+We use this system for all benchmarks except for Section~\ref{sec:eval:ncommitters_scalability} where we evaluate the \textit{commit slot} abstraction on a system with higher core count and more Optane DIMMs.
 
 To ensure reproducibility, we automate our performance evaluation using a custom benchmarking harness written in Python.
 The system has the following features:
@@ -3313,14 +3326,14 @@ We also automate post-processing of the results in Python Jupyter notebooks usin
 \subsection{4k Synchronous Random Write Workload}\label{sec:eval:4ksyncwrites}
 The first pillar of our performance evaluation is the \textit{fio} 4k synchronous random write workload that motivated the design of ZIL-PMEM.
 We use the same zpool layout as for ZIL-LWB (30 striped NVMe partitions \& 1 non-interleaved Optane DIMM region / \lstinline{fsdax} namespace as SLOG).
-We configure PRB with \textit{ncommitters=3}, which is the most CPU-efficient settings for a single Optane DIMM as we will show in Section~\ref{sec:ncommitters_scalability}.
+We configure PRB with \textit{ncommitters=3}, which is the most CPU-efficient settings for a single Optane DIMM as we will show in Section~\ref{sec:eval:ncommitters_scalability}.
 
 Figure~\ref{fig:eval:fio4k:metrics} shows the cummulative IOPS and per-IOP average latency measured by fio for 1--8 threads.
 With a single thread, ZIL-PMEM achieves 128k IOPS which is a speedup of 8 over ZIL-LWB (16k IOPS).
 ZIL-PMEM scales almost linearly to 400k IOPS at four threads where the speedup over ZIL-LWB is still $5.5$.
 Performance does not increase further for higher thread counts.
 The constant offset to the \textit{fsdax} curve for thread count 4--7 suggests that performance is limited by PMEM write bandwidth.
-(Remember that \textit{fsdax} shows the raw \texttt{/dev/pmem} block device's performance under the same workload.
+(Remember that \textit{fsdax} shows the raw \texttt{/dev/pmem} block device's performance under the same workload.)
 The slight decline to 346k IOPS at eight threads correlates with a similar decline in the \textit{async} curve but not the \textit{fsdax} curve, suggesting a CPU bottleneck (8 cores per socket) or scalability bottleneck in ZFS.
 
 \begin{figure}[H]
@@ -3341,7 +3354,7 @@ The slight decline to 346k IOPS at eight threads correlates with a similar decli
 \end{figure}
 
 We observed that the speedup for \lstinline{numjobs=1} and \lstinline{2} varies significantly between benchmark runs but remains stable for higher values of \lstinline{numjobs}.
-We investigate this issue by computing the coefficient of variation (CoV) of the different configurations based on the mean and standard deviation of IOPS reported by fio.
+We investigate this issue by computing the coefficient of variation (CoV) of the different configurations based on the mean and standard deviation of IOPS reported by fio ($\frac{stddev}{mean}$).
 The results are displayed in Figure~\ref{fig:eval:fio4k:cov}:
 The \textit{zil-pmem} CoV remains close to the CoV of \textit{async} until \lstinline{numjobs=4} from where it starts to decline towards the CoV of \textit{fsdax}.
 This phenomenon correlates with the stop of increase in IOPS at \lstinline{numjobs=4}, supporting our assumption that \textit{zil-pmem}'s behavior is dominated by the PMEM hardware for numjobs 4--7.
@@ -3353,11 +3366,13 @@ In contrast, for ZIL-PMEM, the standard deviation is 7557 at 128k IOPS.
     \centering
     \includegraphics[height=7cm]{fig/evaluation/motivating_fio_benchmark__cov_comparison}
     \caption{Comparison of the coefficient of variation ($\frac{stddev}{mean}$). The smaller plots display the absolute values.}
+    \label{fig:eval:fio4k:cov}
 \end{figure}
 
 To get an idea of ZIL-PMEM's impact on tail latencies, we compare the 5th, 95th, 99.9th, 99.9th, 99.99th and 99.99th's percentiles for completion latency, as reported by fio.
-\textit{zil-pmem} follows \textit{async} with a near-constant offset for all percentiles until the expectable knee at \lstinline{numjobs=4}.
-\textit{zil-lwb}'s 99.9th and 99.99th percentile show steadier but steeper growth with rising \lstinline{numjobs}.
+\textit{zil-pmem} follows \textit{async} with a near-constant offset for all percentiles until \lstinline{numjobs=4} where we observe the characteristical ``knee in the curve'' which is expectable given that the system's peak IOPS are first achieved at this value of \lstinline{numjobs}.
+In contrast, \textit{zil-lwb} base latency (5th percentile, \lstinline{numjobs=1}) is $\frac{36.6}{6.7} = 5.46$ times higher than \textit{zil-pmem}'s and the higher percentiles show a steeper growth with rising \lstinline{numjobs}.
+Note that, by definition, the tail latencies for high percentiles at higher \lstinline{numjobs} only have proportional and thus minor impact on the CoV.
 
 \begin{figure}[H]
     \centering
@@ -3368,13 +3383,17 @@ To get an idea of ZIL-PMEM's impact on tail latencies, we compare the 5th, 95th,
 We generalize our eBPF instrumentation from Section~\ref{ch:lwb_analysis:breakdown} to support ZIL-PMEM and compare the resulting breakdown of per-IOP latency in Figure~\ref{fig:eval:fio4k:breakdown}.
 The new \lstinline{zil_persistence} component is defined as the overall time spent in \lstinline{zil_commit} minus the time spent filling the commit list.
 Whereas it is the dominant factor for latency in ZIL-LWB (80\% of average per-IOP latency, as observed in Section~\ref{ch:lwb_analysis:breakdown}), ZIL-PMEM only spends approximately 25\% on persistence to PMEM.
-For ZIL-PMEM, the most dominant component is the \textit{async} code, i.e., modification of DMU objects.
-And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\% contribution to overall latency.
+For ZIL-PMEM, the most dominant component is the \textit{async} code, i.e, VFS-level work and modification of in-DRAM DMU objects.
+In contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\% contribution to overall latency.
+Note that the absolute \textit{async} overhead for ZIL-PMEM is lower than for ZIL-LWB, particularly for low \lstinline{numjobs} values.
+We have no satisfying explanation for this behavior --- presumably, ZFS's \textit{async} code has non-linear scaling behavior with regards to latency.
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{fig/evaluation/comparison_zil_overhead_lwb_vs_pmem}
-    \caption{Comparison of relative and absolute latency contribution of functions executed by fio threads when they perform synchronous writes.}
+    \caption{
+        Comparison of relative and absolute latency contribution of functions executed by fio threads when they perform synchronous writes.
+    }
     \label{fig:eval:fio4k:breakdown}
 \end{figure}
 
@@ -3398,12 +3417,12 @@ We define the following storage stacks.
 The \textit{xfs} and \textit{ext4} stacks are parametrized by the \textit{block device stack} \lstinline{$BDEV} which we define as a hardware and software configuration that provides a (potentially virtual) block device.
 We define the following block device stacks:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[devpmem] The raw \lstinline{fsdax} namespace block device in devfs, i.e., \texttt{/dev/pmem0}.
+    \item[devpmem] The raw \lstinline{fsdax} namespace block device in devfs (\texttt{/dev/pmem0}).
     \item[dm-writecache]
-        The \textit{dm-writecache} Linux Device Mapper target synchro\-nously persists writes to PMEM and performs asynchronous writes-back to an origin block device in the background.
+        The \textit{dm-writecache} Linux Device Mapper target synchro\-nously persists writes to PMEM and performs asynchronous write-back to an origin block device in the background.
         We configure \textit{dm-writecache} with \texttt{/dev/pmem0} as a cache device and a \textit{dm-stripe} of the 30 NVMe partitions as the origin data store.
-        To induce some level writeback, we configure dm-writecache's \textit{low watermark} to 0\% and \textit{high watermark} to 1\%.
-        (See Section~\ref{sec:cross_media_storage_systems} for details.)
+        Since most benchmarks consume relatively little space compared to \texttt{/dev/pmem0}'s capacity (40GiB), we configure dm-writecache's \textit{low watermark} to 0\% and \textit{high watermark} to 1\% in order to trigger some write-back during benchmark execution.
+        (See Section~\ref{sec:cross_media_storage_systems} for details on \textit{dm-writecache}.)
     \item[zvol-lwb-rs\_\{0,1\}]
         A ZVOL exposed by a zpool in the same config as \textit{zfs-lwb}.
         We set \lstinline{volblocksize=4k} on the ZVOL dataset.
@@ -3428,7 +3447,7 @@ The following items are examples for storage stacks used in the evaluation:
 We compare the performance of the storage stacks with the set of benchmarks described below.
 To facilitate the comparison, all benchmarks have the following properties:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Scaling factor] The scaling factor increases the degree of concurrent synchronous I/O operations issued by the benchmark.
+    \item[Scaling Factor] The scaling factor increases the degree of concurrent synchronous I/O operations issued by the benchmark.
         We run each benchmark with three scaling factor values: 1, 4, and~8.
     \item[Result Metric] Each benchmark reports a single result metric per run.
         This allows us to compare performance across different storage stacks and scaling factor values.
@@ -3455,9 +3474,9 @@ What follows is a description of the benchmarks:
         We use a runtime of 20 seconds per configuration and report filebench's \textit{ops per second} value as the result metric.
 
     \item[filebench oltp] The filebench \textit{oltp} workload emulates database workloads.
-        It ''performs file system operations using Oracle 9i I/O model.
+        It ``performs file system operations using Oracle 9i I/O model.
         It tests the performance of small random reads and writes, and is sensitive to the latency of moderate size (128k+) synchronous writes to the log file.
-        By default launches 200 reader processes, 10 processes for asynchronous writing, and a log writer.``~\cite{FilebenchGitHubWiki}.
+        By default [it] launches 200 reader processes, 10 processes for asynchronous writing, and a log writer.''~\cite{FilebenchGitHubWiki}.
         We leave all parameters at the default setting except for the \lstinline{$ndbwriters} parameter for which we use the scaling factor's value instead of its default value of ten.
         It is our understanding that scaling the number of log writer threads to a number greater than one would not be feasible with the real DBMS and thus be unrealistic.
         We use a runtime of 20 seconds and report filebench's \textit{ops per second} value as the result metric.
@@ -3491,7 +3510,7 @@ What follows is a description of the benchmarks:
         The result metric is the requests-per-second (rps) value reported by redis-benchmark.
 
         We choose the number of $10^6$ \textit{SET} operations because it results in runtimes of ten seconds or more for most combinations of scaling factor and storage stacks.
-        The only exception is \textit{zfs-sync-disabled} for which the shortes runtime is \SI{8}{s}.
+        The only exception is \textit{zfs-sync-disabled} for which the shortest runtime is \SI{8}{s}.
 
     \item[RocksDB-fillsync] RocksDB is a popular key-value store developed by Facebook that is optimized for fast storage devices.
         It can be used directly by applications as an embedded database but is also the basis for the \textit{MyRocks} storage engine for MySQL~\cite{MyRocksRocksDBStorage}.
@@ -3522,7 +3541,7 @@ What follows is a description of the benchmarks:
 \end{figure}
 
 We first compare the speedup of ZIL-PMEM over ZIL-LWB.
-ZIL-PMEM outperforms ZIL-PMEM in all benchmarks, but the speedup varies significantly for the different workloads and scaling factors.
+ZIL-PMEM outperforms ZIL-LWB in all benchmarks, but the speedup varies significantly for the different workloads and scaling factors.
 The highest speedups are achieved at scaling factor $1$ by the fio workloads (7.1x, 5.3x) and \textit{RocksDB-fillsync} (100k ops-per-sec, a speedup of 5.8).
 \textit{Redis-SET} achieves shows a speedup of $2.68$ (30k rps) and MariaDB achieves 10k tps which is a speedup of 2.14.
 For scaling factor $4$, the fio and RocksDB's speedup declines whereas Redis's grows to 2.77 and MariaDB's grows to 3.08.
@@ -3556,6 +3575,8 @@ Note that that the ZFS configurations only use PMEM for the ZIL but NVMe devices
 
 Our primary takeaway from this comparison is that, in contrast to ZIL-LWB, ZIL-PMEM is competitive with both ext4 and xfs at scaling factor $1$ in most benchmarks.
 The fio workloads are the exception, where the Linux filesystems achieve a speedup of greater than $3$ if the \textit{dax} mount option is enabled.
+The reason for this phenomenon is most likely lower CPU overhead at scaling factor $1$ (compare \textit{zfs-pmem} with \lstinline{sync=disabled}), and better multi-core scalability at higher scaling factors.
+(Note that, since the benchmarks in this section all write to a single dataset, ZIL-PMEM's scalability is bounded by the sequential logical structure of the ZIL.)
 
 ZIL-PMEM performs significantly better than all other configurations (excluding \lstinline{sync=disabled}) for \textit{Redis-SET} and \textit{RocksDB-fillsync} at all scaling factors.
 The write-ahead log files written by these workloads are append-only and contain the encoded representation of logical changes.
@@ -3564,7 +3585,7 @@ The mutating requests issued by our benchmarks have small payloads and result in
     The RocksDB documentation and comments in the source code suggest that the WAL files are written in 32k blocks that are zero-padded if necessary~\cite[db/log\_writer.h]{RocksDBGitHubWikiWalPerformance}.
     We observed the contrary behavior with \lstinline{strace}: each \textit{Put} operation with \lstinline{WriteOptions.sync} results in a \lstinline{write} and \lstinline{fdatasync} system call. The \lstinline{write} system call's data size is proportional to the sum of the \textit{Put} operation's key and value sizes.
 }
-ZIL-PMEM handles this workload more efficiently than the Linux filesystems because the ZIL's data journaling causes less write amplification than the Linux filesystems whose latency is likely dominated by page-granular write-back on every \lstinline{fsync}.
+We assume that ZIL-PMEM handles this workload more efficiently than the Linux filesystems because the ZIL's data journaling causes less write amplification than the Linux filesystems whose latency is likely dominated by page-granular write-back on every \lstinline{fsync}.
 
 In the \textit{MariaDB} benchmark, the DAX-aware Linux filesystem configurations achieve up to 1.6x more transactions per second than ZIL-PMEM.
 The \lstinline{sync=disabled} workload is on-par with the non-DAX-aware configurations, at speedups over ZIL-PMEM of ca. 1.1, 1.2 and 1.3 at scaling factors 1, 4, and 8.
@@ -3573,25 +3594,22 @@ Manual inspection of the CPU utilization shows a signficant amount of context sw
 % ls -lah /proc/$(pgrep mysqld)/fd                       
 % => mostly 1024B writes to ib_logfile0 which according to https://mariadb.com/kb/en/innodb-redo-log/ is the redo log file
 The database server process performs 1024 \lstinline{write} + \lstinline{fdatasync} system calls to the InnoDB redo log file from a single thread.
-However, since \lstinline{sync=disabled} does not perform better than any of the systems that actually write to PMEM, we can also rule out a PMEM bandwidth as a possible bottleneck.
-\todo{need to state that we do not have a final conclusion here?}
+However, since \lstinline{sync=disabled} does not perform better than any of the systems that actually write to PMEM, we can also rule out PMEM bandwidth as a possible bottleneck.
 
 Regarding the \textit{filebench-oltp} benchmark, no configuration performs exceptionally better than any other, including \lstinline{sync=disabled}.
 We observe high CPU utilization in all benchmark configurations, caused by the \textit{hog} stage of the 200 processes that simulate reader threads.
 Thus, CPU is most likely the bottleneck in all configurations.
 
 For \textit{filebench-varmail}, the highest speedup is 1.35 at scaling factor $1$, achieved by XFS in DAX-aware mode, followed by ZFS with \lstinline{sync=disabled} with 1.22x.
-For higher scaling factors, the speedups are slightly lower.
-The fact that \lstinline{sync=disabled} achieves a lower speedup than XFS can be taken as an indicator that \textit{filebench-varmail} is not bound by PMEM performance, contradicting our speculation in the previous section.
+For higher scaling factors, XFS's speedups diminish and even go below 1 at scaling factor $8$, albeit in DAX-aware mode.
+We have no satisfying explanation for this behavior.
+Also, the fact that \lstinline{sync=disabled} achieves a lower speedup than XFS can be taken as an indicator that \textit{filebench-varmail} is not bound by PMEM performance, contradicting our speculation in the previous section.
 
 \subsubsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}\label{sec:eval:dmwritecache}
 
-A fairer comparison is thus the deployment of the Linux filesystems on top of \textit{dm-writecache} with a \textit{dm-stripe} of the NVMe partitions as the origin block device.
-The comparison betwen ZIL-PMEM with NVMe storage and Linux filesystems on pure PMEM in the previous section is insightful but not a level comparison.
-The ZFS configuration only uses PMEM as short-term storage to bridge the gap between the background txg syncs to the striped pool of NVMe partitions.
-%And while we disable ZFS's advanced features such as encryption, redundancy, compression, and deduplication for our benchmark, they are readily available.
-In contrast, the Linux filesystem configurations store all their data on PMEM.
-Essentially, this 
+The comparison between ZIL-PMEM with NVMe storage and Linux filesystems on pure PMEM in the previous section is insightful but not a level comparison in terms of storage hardware performance and available functionality.
+A more practically relevant competitor to ZIL-PMEM is \textit{dm-writecache} with a \textit{dm-stripe} of NVMe partitions as the origin block device.
+In this section, we compare ZFS with ZIL-PMEM and ZIL-LWB to Ext4 and XFS on such a setup.
 
 \begin{figure}[H]
     \centering
@@ -3602,30 +3620,31 @@ Essentially, this
 \end{figure}
 
 ZIL-PMEM's performance is within +/-30\% of XFS on \textit{dm-writecache} at all scaling factors in all benchmarks except \textit{Redis-SET} and \textit{rocksdb-fillsync} where ZIL-PMEM performs significantly better.
-The 30\% spread decreases slightly with higher scaling factor but does not change the overall impression\todo{better word?}.
+The 30\% spread decreases slightly with higher scaling factors but does not change the overall picture.
 Our explanation for ZIL-PMEM's significantly better performance in the \textit{Redis-SET} and \textit{rocksdb-fillsync} workloads is (again) write amplification:
-due to ZFS's integrated design (filesystem and volume manager), the ZIL is able to write logical changes directly to PMEM with little write amplification.
-In contrast, dm-writecache hides PMEM behind the block device interface, prohibiting direct access to PMEM (i.e., the \textit{dax} mount option is not avaialble).
+whereas the ZIL is able to write small log entries directly to PMEM, dm-writecache hides PMEM behind a virtual block device that is not DAX-capable.
+Thus, even if the Linux filesystems supported DAX-aware logical logging, this functionality would not come to fuition on top of \textit{dm-writecache}.
+This highlights a fundamental advantage of ZFS's integrated design (filesystem and volume manager) which, with ZIL-PMEM, is \textit{both} optimized for PMEM \textit{and} provides a rich set of additional functionality such as redundancy via mirroring or raidz, checksumming, and encryption.
 
 Ext4 performs signficantly worse than ZIL-PMEM (and XFS!) in some benchmarks, with only 45\%, 28\%, and 14\% of ZIL-PMEM's performance in \textit{filebench-varmail}, \textit{Redis-SET}, and \textit{rocksdb-fillsync} at scaling factor~1.
 Write amplification might be a possible explanation as well.
 
 We have manually observed the system while benchmarking the \textit{dm-writecache} stack to ensure that the comparison with ZFS is actually fair.
-We found that, despite the very aggressive write-back configuration (high watermark = 1, low watermark = 0), the system performed very little write-back to the NVMe drives.
+We found that, despite the very aggressive write-back configuration (high watermark = 1\%, low watermark = 0\%), the system performed very little write-back to the NVMe drives.
 The two \textit{fio} workloads were the exception but the write load towards the NVMe devices was well below their maximum capacity.
 Thus, NVMe was not a bottleneck in the benchmark.
 However, we found that \textit{dm-writecache} has severe multi-core scalability problems.
-For example, XFS on raw PMEM without the \textit{dax} mount option achieves 150k IOPS at scaling factor 1 and 409k IOPS at scaling factor 4.
-In contrast, on dm-writecache, it is 112k IOPS at scaling factor 1 but only 165k IOPS at scaling facto 4.
+For example, XFS on raw PMEM without the \textit{dax} mount option achieves 150k IOPS at scaling factor 1 and 409k IOPS at scaling factor 4 in the \textit{fio-growing}.
+In contrast, on dm-writecache, it is 112k IOPS at scaling factor 1 but only 165k IOPS at scaling factor 4.
 Using the \textit{perf} tool, we observed severe contention at a lock that serializes access to the entire dm-writecache instance's state.
-In private communication, dm-writecache's maintainer Mikulas Patocka stated that "the purpose of dm-writecache is to decrease commit latency, not to increase throughput. There is not much that can be done with the lock contention".\todo{waiting for permission to quote him publicly}
-ZIL-PMEM has similar problems (125k at factor 1, 217k at factor 4) albeit due to the sequential structure of ZIL chain.
-In the next section, we show how a more relaxed log structure such as the ITXG bypass can improve the situation.\todo{is this a good transition?}
+In private communication, dm-writecache's maintainer Mikulas Patocka stated that ``the purpose of dm-writecache is to decrease commit latency, not to increase throughput. There is not much that can be done with the lock contention''.
+ZIL-PMEM has similar problems (125k IOPS at factor 1, 217k at factor 4) albeit due to the sequential structure of ZIL chain.
+In the next section, we show how a more relaxed log structure such as the ITXG bypass can improve the situation.
 
 \subsubsection{Impact on ZVOL Performance \& ITXG Bypass}
 
 In this section, we examine the impact of ZIL-PMEM on ZVOL performance.
-We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, \lstinline{zvol_request_sync} (\lstinline{rs_{0,1}), and ITXG bypass setting (\lstinline{byp_{0,1}).
+We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, \lstinline{zvol_request_sync} (\lstinline|rs_{0,1}|), and ITXG bypass setting (\lstinline|byp_{0,1}|).
 The results are relative to \textit{zvol-pmem-rs\_0-byp\_0-nc\_3} as the baseline which is the standard configuration for ZIL-PMEM pools.
 Note that deploying a filesystem on a ZVOL generally makes little sense in practice because ZFS filesystems provide the same basic service with more additional features at less overhead.
 However, ZVOLs are a popular choice for storage virtualization where ZVOLs are used as virtual hard disks, either on the same host or via a SAN (e.g., iSCSI, Fibre Channel).
@@ -3635,7 +3654,7 @@ To simplify our evaluation, we avoid the overhead of a hypervisor or SAN and ins
     \centering
     \includegraphics[width=\textwidth]{fig/evaluation/app_benchmarks__zvol_xfs}
     \caption{
-        Comparison of XFS on ZVOLs on different zpool configurations.
+        Comparison of XFS on ZVOLs on different zpool configurations with \textit{zvol-pmem-rs\_0-byp\_0-nc\_3} as baseline.
     }
 \end{figure}
 
@@ -3659,12 +3678,12 @@ For Ext4, we observed some performance degradatations in setups whether both ITX
 In summary, ZIL-PMEM provides a signficant performance advantage for ZVOLs but is less effective than than with ZFS filesystems (see Sections~\ref{sec:eval:4ksyncwrites} and \ref{sec:eval:zilpmemvslwb}).
 This is particularly noticable for the \textit{fio} workloads and \textit{RocksDB-fillsync}.
 Their speedup with ZIL-PMEM on XFS+ZVOL is only half the speedup of what we observed for ZFS at scaling factor~1.
-Write amplification cannot be responsible for this behavior because only \textit{RocksDB-fillsync} causes write amplification.
+Write amplification cannot be responsible for this behavior because fio already writes at 4k block size.
 The most likely cause is latency overhead added by the filesystem that affects all workloads equally.
 
-\subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:ncommitters_scalability}
+\subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:eval:ncommitters_scalability}
 
-PRB's \textit{commit slot} mechanism limits the amount of parallel writers to PMEM through the \lstinline{ncommitters} variable.
+PRB's \textit{commit slot} mechanism limits the amount of parallel writers to PMEM to \lstinline{ncommitters}.
 The goal is to avoid wasteful on-CPU stall cycles which inevitably occur if the aggregate write bandwidth to PMEM exceeds the hardware capacity.
 (See Sections~\ref{sec:requirements} and \ref{di:prb:write} for a more detailed explanation.)
 
@@ -3672,9 +3691,9 @@ To determine the mechanism's effectiveness, we use our 4k synchronous random wri
 We add low-overhead per-CPU counters to ZIL-PMEM to sum up the total mount of time that is spent writing PMEM ($T_{pmem}$), as well as the number of write operations performed during the benchmark ($N_{ops}$).
 We then compute the \textit{average PMEM write time per IOP} $T_{pmem_{iop}} = \frac{T_{pmem}}{N_{ops}} [\frac{s}{op}]$.
 The most efficient value for \lstinline{ncommitters} for a given system then depends on the workload and efficiency goals.
-In general, \lstinline{ncommitters} should be the minimal value where $T_{pmem_{iops}}$ is tolerable but the system's primary performance metric is not impacted.
+In general, \lstinline{ncommitters} should be the minimal value where $T_{pmem_{iop}}$ is tolerable but the system's primary performance metric is not impacted.
 
-We compute $T_{pmem_{iops}}$ for 1 to 18 numjobs, different values of \lstinline{ncommitters} and two different PMEM configurations.
+We compute $T_{pmem_{iop}}$ for 1 to 18 numjobs, different values of \lstinline{ncommitters} and two different PMEM configurations.
 The first PMEM configuration is a single, non-interleaved Optane DIMM.
 The second configuration are four interleaved Optane DIMMs.
 Regardless of how interleaving is configured, we create a \SI{40}{GiB}-sized \textit{fsdax} namespace on the resulting region and use it as the PMEM SLOG for ZIL-PMEM.
@@ -3709,10 +3728,10 @@ We use these namespaces as the zpool's main (non-SLOG) vdevs.
 Figure~\ref{fig:eval:ncommitters_scalability:main} visualizes the results of this experiment.
 For the non-interleaved configuration, we observe that the system's peak IOPS is 400k, first achieved with \lstinline{ncommitters=3}.
 For \lstinline{ncommitters=3}, IOPS quickly decline to 263k IOPS for higher $numjobs$.
-With \lstinline{ncommitters=8}, the system is able to sustain the 400k IOPs for the for $numjobs \in 7 \dots 13$.
+With \lstinline{ncommitters=8}, the system is able to sustain the 400k IOPS for the for $numjobs \in 7 \dots 13$.
 The price is significantly more on-CPU PMEM time per IOP:
-looking at $numjobs = 8$, the $T_{pmem_{iops}}$ is $3300, 4300, 6500~\text{ns}$ for \lstinline{ncommitters=3, 4} and \lstinline{8}.
-And at $numjobs = 12$, $T_{pmem_{iops}}$ climbs to $11600, 20600~\text{ns}$ for \lstinline{ncommitters=8} and \lstinline{12} whereas \lstinline{ncommitters=3} is successfully limited to $2700~\text{ns}$ of PMEM write time per IOP.
+looking at $numjobs = 8$, the $T_{pmem_{iop}}$ is $3.3, 4.3, 6.5~\text{us}$ for \lstinline{ncommitters=3}, \lstinline{4} and \lstinline{8}.
+And at $numjobs = 12$, $T_{pmem_{iop}}$ climbs to $11.6, 20.6~\text{us}$ for \lstinline{ncommitters=8} and \lstinline{12} whereas \lstinline{ncommitters=3} is successfully limited to $2700~\text{ns}$ of PMEM write time per IOP.
 The \lstinline{ncommitters=12} and \lstinline{24} configurations do not achieve higher peak IOPS than \lstinline{ncommitters=8} but decline to lower values for high $numjobs$, e.g., only 237k IOPS for \lstinline{$ncommitters=24}, $numjobs = 18$.
 This performance decline at high degrees of concurrency is a property of the Intel Optane PMEM hardware~\cite{yangEmpiricalGuideBehavior2020}.
 The limitation to \lstinline{ncommitters=8} mitigates this effect (331k vs. 237k IOPS at $numjobs = 18$).
@@ -3720,24 +3739,23 @@ The limitation to \lstinline{ncommitters=8} mitigates this effect (331k vs. 237k
 The four-way interleaved configuration exhibits a very different behavior.
 We achieve the highest IOPS for the configuration where the \textit{commit slot} mechanism has no effect, i.e., \lstinline{ncommitters=24}, $numjobs = 18$ with 900k IOPS.
 Given that the IOPS curve has not reached a plateau at this point, a higher value might be possible with higher $numjobs$.
-$T_{pmem_{iops}}$ is the same for all \lstinline{ncommitters} values at a given $numjobs$ value (+/- $100~\text{ns}$).
-It is $1660~\text{ns}$ for $numjobs = 1$ and grows slightly unevenly towards $2560~\text{ns}$ at $numjobs = 24$.
+$T_{pmem_{iop}}$ is the same for all \lstinline{ncommitters} values at a given $numjobs$ value (+/- $0.1~\text{us}$).
+It is $1.660~\text{us}$ for $numjobs = 1$ and grows slightly unevenly towards $2.56~\text{us}$ at $numjobs = 24$.
 This is an increase of merely 54\% which is likely to be acceptable in any setup, given the 9.6x increase in IOPS (93k to 900k) that is possible with \lstinline{ncommitters=24}.
 
-To determine the \textit{commit slot} abstraction's impacts performance in ${\footnotesize\texttt{ncommitters}} > numjobs$ configurations, we add additional instrumentation that measures the average latency of commit slot aquisition and release.
+To determine how the \textit{commit slot} abstraction impacts performance in ${\footnotesize\texttt{ncommitters}} > \max numjobs$ configurations, we add additional instrumentation that measures the average latency of commit slot aquisition and release.
 Figure~\ref{fig:eval:ncommitters_scalability:overhead} visualizes the results for \lstinline{ncommitters=24}.
 The absolute overhead is approximately the same for both PMEM comfigurations.
 It starts at $100~\text{ns}$ for $numjobs = 1$, climbs to $240~\text{ns}$ at $numjobs = 4$, and then scales linearly to $385~\text{ns}$ at $numjobs = 18$.
 In the interleaved configuration, for any $numjobs > 4$, this corresponds to approximately 11--13\% of the overall write latency per log entry.
 Without \textit{commit slots}, \lstinline{zil_commit} could thus be $\frac{1}{1 - 0.13} = 14.9\%$ faster.
 However, due to the overhead of the other ZFS components, the contribution to overall IOP latency is only 2\%, which would constitute a rather meager improvement.
-\todo{Think this paragraph through again, I think it's correct, but should be double-checked.}
 
 \begin{figure}[H]
     \centering
     \includegraphics[width=\textwidth]{fig/evaluation/ncommitters_scalability__overhead}
     \caption{
-        Overhead of the \textit{commit slot} for $24 = {\footnotesize \texttt{ncommitters}} > numjobs = 18$.
+        Overhead of the \textit{commit slot} for $24 = {\footnotesize \texttt{ncommitters}} > \max numjobs$.
         Note the different y-axis scales.
         Also note that the relative latency contribution for the non-interleaved configuration only shrinks because the PMEM write time (not shown) grows significantly.}
     \label{fig:eval:ncommitters_scalability:overhead}
@@ -3751,16 +3769,17 @@ We draw the following conclusion from the observations made above:
     \item Regarding the non-interleaved configuration (single Optane DIMM):
         \begin{itemize}
             \item Our 4k synchronous write workload is able to achieve peak performance with 400k IOPS as early as \lstinline{ncommitters=3}.
-            \item Setting \lstinline{ncommitters=8} extends the peak to a plateau with regards to $numjobs$, but consumes $\frac{6500~\text{ns}}{3300~\text{ns}} = 1.96$ times more (on-CPU!) PMEM write time per IOP.
-            \item Note that we use \lstinline{ncommitters=3} as the default configuration for ZIL-PMEM in all of the previous benchmarks.
-                Our rationale is that an in-kernel filesystem should not waste CPU time on PMEM I/O because it is a system-wide OS service whose overall priority in the system is not known ahead of time.
+            \item Setting \lstinline{ncommitters=8} extends the peak to a plateau with regards to $numjobs$, but consumes $\frac{6.5~\text{us}}{3.3~\text{us}} = 1.96$ times more (on-CPU!) PMEM write time per IOP.
+            \item Note that we used \lstinline{ncommitters=3} as the configuration for ZIL-PMEM in all of the previous benchmarks.
+                Since our main evaluation system on which these benchmarks were executed only has 8 cores (2x SMT), this setting ensured CPU-efficient execution at all times.
+                Our rationale is that an in-kernel filesystem such as ZFS should not waste CPU time on PMEM I/O because it is a system-wide OS service whose overall priority in the system is not known ahead of time.
                 However, if the system's primary role is that of an NFS/SMB share, or that of a SCSI target (ZVOLs), it may be appropriate to allow more on-CPU waiting.
         \end{itemize}
     \item Regarding the four-way interleaved configuration (4 Optane DIMMs):
         \begin{itemize}
             \item The \textit{commit slot} mechanism is not useful for the observed range of $numjobs$ values.
             \item The reason is that ZIL-PMEM cannot saturate the Optane DIMMs' write bandwidth due to per-IOP overhead added by other components of ZFS.
-            \item However, with ${\footnotesize\texttt{ncommitters}} > numjobs$, the overhead per IOP is negligible.
+            \item However, with ${\footnotesize\texttt{ncommitters}} > \max numjobs$, the overhead per IOP is negligible.
         \end{itemize}
 \end{itemize}
 
