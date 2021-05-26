@@ -3291,11 +3291,27 @@ We seek to answer the following questions:
     \item Is PRB's \textit{commit slots} mechanism effective at improving CPU efficiency if the maximum PMEM write bandwidth is exceeded? And what is its overhead?
 \end{itemize}
 
-\subsection{Setup \& Methodology}
+\subsection{Setup \& Reproducibility}
+We have already described our primary evaluation hardware in detail in Section~\ref{ch:lwb_analysis:setup}.
+In summary, we configure the system such that it effectively becomes a single-socket system with sufficient DRAM, two \SI{128}{GiB} Optane DIMMs, and three Micron 960GB NVMe SSDs.
+We use this system for all benchmarks except for Section~\ref{sec:ncommitters_scalability} where we evaluate the \textit{commit slot} abstraction on a system with higher core count and more Optane DIMMs.
+
+To ensure reproducibility, we automate our performance evaluation using a custom benchmarking harness written in Python.
+The system has the following features:
+\begin{description}[noitemsep]
+    \item[Declarative PMEM Provisioning] Declarative definition of the desired PMEM configuration (interleaving / regions, namespaces).
+    \item[Hardware Resource Registry]  All hardware resources, e.g., NVMe partitions and PMEM namespaces, are registered in a global registry object by label, e.g., label \lstinline{fsdax} for PMEM \textit{fsdax} namespaces.
+    \item[Unified Storage Software Configuration] We abstract the setup and teardown of software storage systems such as ZFS or \textit{dm-writecache} as Python \textit{context manager} objects.
+        We use the global registry object to discover the hardware on which the software storage stack should be instantiated, thereby improving re-usability on different hardware configurations.
+    \item[Unified Benchmark Abstraction] We abstract all benchmarks presented in this section as Python objects with a unified interface for benchmark execution.
+    \item[Pinned Software Versions] We either build benchmarks from pinned source code versions (git submodules) or use pinned binary versions.\todo{Still need to do this}
+    \item[Result Storage] For each benchmark invocation, we serialize a description of the storage stack, benchmark parameters, and results into JSON objects and store these objects as unique files in the filesystem.
+        Results can be grouped by a prefix for post-processing, e.g., files with prefix \lstinline{app_benchmarks__v4} contain the results of the fourth iteration of our application benchmark design.
+\end{description}
+We also automate post-processing of the results in Python Jupyter notebooks using popular Pandas framework and render plots using Matplotlib and/or Seaborn.\todo{need refs for all this software?}
 
 \subsection{4k Synchronous Random Write Workload}\label{sec:eval:4ksyncwrites}
 The first pillar of our performance evaluation is the \textit{fio} 4k synchronous random write workload that motivated the design of ZIL-PMEM.
-We already described the workload characteristics in detail in Section~\ref{ch:lwb_analysis:setup}.
 We use the same zpool layout as for ZIL-LWB (30 striped NVMe partitions \& 1 non-interleaved Optane DIMM region / \lstinline{fsdax} namespace as SLOG).
 We configure PRB with \textit{ncommitters=3}, which is the most CPU-efficient settings for a single Optane DIMM as we will show in Section~\ref{sec:ncommitters_scalability}.
 
@@ -3362,7 +3378,7 @@ And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\%
     \label{fig:eval:fio4k:breakdown}
 \end{figure}
 
-\subsection{Application Benchmarks}
+\subsection{Application Benchmarks}\label{sec:eval:appbenchmarks}
 We determine ZIL-PMEM's impact on real-world application performance through additional macro-level and application benchmarks.
 We execute each benchmarks on top of different \textit{storage stacks} that represent alternatives to ZIL-PMEM and compare the results in the subsequent sections.
 
@@ -3497,7 +3513,7 @@ What follows is a description of the benchmarks:
         \end{itemize}
 \end{description}
 
-\subsection{ZIL-PMEM vs. ZIL-LWB}\label{sec:eval:zilpmemvslwb}
+\subsubsection{ZIL-PMEM vs. ZIL-LWB}\label{sec:eval:zilpmemvslwb}
 
 \begin{figure}[H]
     \centering
@@ -3521,7 +3537,7 @@ In combination with the large amount of metadata (file creation and deletion), Z
 In any way, \textit{filebench-varmail} shows that the large speedups for small writes cannot be generalized to all filesystem workloads.
 Future work should investigate ZIL-PMEM's behavior during this benchmark in detail and determine how beneficial pipelining akin to \textit{commit ITXs} could be.
 
-\subsection{ZIL-PMEM vs. XFS and Ext4 on PMEM}
+\subsubsection{ZIL-PMEM vs. XFS and Ext4 on PMEM}
 
 Our next set of results is the comparison between ZFS and the Linux filesystems XFS and Ext4.
 We include both ZIL kinds (\textit{lwb}, \textit{pmem}) as well as \lstinline{sync=disabled} to demonstrate the upper bound for any ZIL kind.
@@ -3568,7 +3584,7 @@ For \textit{filebench-varmail}, the highest speedup is 1.35 at scaling factor $1
 For higher scaling factors, the speedups are slightly lower.
 The fact that \lstinline{sync=disabled} achieves a lower speedup than XFS can be taken as an indicator that \textit{filebench-varmail} is not bound by PMEM performance, contradicting our speculation in the previous section.
 
-\subsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}\label{sec:eval:dmwritecache}
+\subsubsection{ZIL-PMEM vs. XFS and Ext4 on Dm-writecache}\label{sec:eval:dmwritecache}
 
 A fairer comparison is thus the deployment of the Linux filesystems on top of \textit{dm-writecache} with a \textit{dm-stripe} of the NVMe partitions as the origin block device.
 The comparison betwen ZIL-PMEM with NVMe storage and Linux filesystems on pure PMEM in the previous section is insightful but not a level comparison.
@@ -3606,7 +3622,7 @@ In private communication, dm-writecache's maintainer Mikulas Patocka stated that
 ZIL-PMEM has similar problems (125k at factor 1, 217k at factor 4) albeit due to the sequential structure of ZIL chain.
 In the next section, we show how a more relaxed log structure such as the ITXG bypass can improve the situation.\todo{is this a good transition?}
 
-\subsection{Impact on ZVOL Performance \& ITXG Bypass}
+\subsubsection{Impact on ZVOL Performance \& ITXG Bypass}
 
 In this section, we examine the impact of ZIL-PMEM on ZVOL performance.
 We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, \lstinline{zvol_request_sync} (\lstinline{rs_{0,1}), and ITXG bypass setting (\lstinline{byp_{0,1}).
