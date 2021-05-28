@@ -1,6 +1,6 @@
 .PHONY: thesis.pdf release clean fig
 
-thesis.pdf:
+thesis.pdf: fig
 	latexmk -pdf thesis.tex
 
 fig:
@@ -9,7 +9,7 @@ fig:
 	fig_src/generate_fig.py fig
 	tree fig
 
-release: fig thesis.pdf
+release: thesis.pdf
 	mkdir -p releases
 	if git describe --always --dirty | grep dirty ; then echo must not be dirty; exit 1; fi
 	releasename="$$(date '+%F')"-"$$(git describe --always --dirty)"; \
@@ -21,3 +21,4 @@ release: fig thesis.pdf
 
 clean:
 	latexmk -C
+	rm -rf fig
