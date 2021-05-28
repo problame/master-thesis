@@ -29,6 +29,7 @@ names_in_page_order = [
         ]
 
 def process_lucidchart_zip(zip_path, format, outdir, overwrite=False):
+    """Take a lucidchart ZIP export (that's what you get with 'All pages' + 'Crop to Content') and map it to individual, renamed files."""
 
     if outdir.exists():
         if overwrite:
@@ -62,6 +63,7 @@ def process_lucidchart_zip(zip_path, format, outdir, overwrite=False):
         return paths
 
 def process_lucidchart_allpages_pdf(pdf_path, outdir, overwrite=False):
+    """I thought this was nice but turns out Lucidchart's PDF exporter produces pretty whacky output for the connector lines (bezier curves, I think)"""
 
     if not Path(pdf_path).is_file():
         raise Exception(f"{pdf_path} must be a regular file")
@@ -101,6 +103,10 @@ def process_lucidchart_allpages_pdf(pdf_path, outdir, overwrite=False):
 
     return paths
 
+###########################################################################
+# Script from now on
+###########################################################################
+
 
 outdir = Path(sys.argv[1])
 if outdir.exists():
@@ -109,12 +115,18 @@ outdir.mkdir()
 
 scriptdir = Path(__file__).parent
 
-# lucidchart
+# Export Lucidchart
 with tempfile.TemporaryDirectory() as tmp:
     tmp = Path(tmp)
 
-    #process_lucidchart_zip('export_png_transparent_background_all_pages_crop_to_content_print_quality.zip', 'png', outdir / "png")
+    # Lucidchart's PDF output isn't any good
     #process_lucidchart_allpages_pdf('export_pdf_all_pages_crop_to_content.pdf', outdir / "pdf")
+
+    # Have an option for Lucidchart-generated PNG's in case the SVG export + rsvg resizing below
+    # breaks in the future.
+    #process_lucidchart_zip('export_png_transparent_background_all_pages_crop_to_content_print_quality.zip', 'png', outdir / "png")
+
+    # We use the Lucidchart SVG export to generate the PDF figures.
     svgs = process_lucidchart_zip(scriptdir / "lucidchart" / 'export_svg_transparent_background_all_pages_crop_to_content.zip', 'svg', tmp / "svg")
     pdfs = []
     for svg in svgs:
@@ -132,7 +144,6 @@ with tempfile.TemporaryDirectory() as tmp:
             raise Exception(f"file {dst} already exists")
         shutil.move(pdf, dst)
 
-# static
+# Export static assets
 static_dir = scriptdir / "static"
 subprocess.run(["cp", "-npr", *static_dir.iterdir(), f"{outdir}/"], check=True)
-
