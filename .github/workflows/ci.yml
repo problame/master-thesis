@@ -6,6 +6,7 @@ jobs:
     steps:
       - name: Set up Git repository
         uses: actions/checkout@v1
+      - run: make fig
       - name: Compile LaTeX document
         uses: dante-ev/latex-action@master
         with:
