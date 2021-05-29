@@ -26,6 +26,7 @@ names_in_page_order = [
         "zfs_log_write_sequence_diagram",
         "zilpmem_dataset_hdl_sync",
         "prb_replay_resume_architecture",
+        "zil_writepath_activity_diagram_write_fsync_sync",
         ]
 
 def process_lucidchart_zip(zip_path, format, outdir, overwrite=False):
@@ -124,7 +125,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # Have an option for Lucidchart-generated PNG's in case the SVG export + rsvg resizing below
     # breaks in the future.
-    process_lucidchart_zip(scriptdir / "lucidchart" / 'export_png_transparent_background_all_pages_crop_to_content_print_quality.zip', 'png', outdir / "lucidchart_png")
+    #process_lucidchart_zip(scriptdir / "lucidchart" / 'export_png_transparent_background_all_pages_crop_to_content_print_quality.zip', 'png', outdir / "lucidchart_png")
 
     # We use the Lucidchart SVG export to generate the PDF figures.
     svgs = process_lucidchart_zip(scriptdir / "lucidchart" / 'export_svg_transparent_background_all_pages_crop_to_content.zip', 'svg', tmp / "svg")
