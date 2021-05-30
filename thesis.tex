@@ -613,7 +613,7 @@ The ZFS term for the metadata about an individual object set that contains user 
 
 \subsection{On-Disk State}
 
-ZFS's on-disk structure is a tree of SPA-allocated blocks that are linked to their children through \textit{block pointers}.
+ZFS's on-disk structure is a tree of SPA-allocated blocks that link\todo{reference?} to their children through \textit{block pointers}.
 Block pointers are 128 byte sized structures that, among other metadata, contain the size, checksum and DVA of the pointee.
 % It is possible to specify multiple DVAs in a single block pointer where each DVA contains an identical copy of the pointee.
 % When a block pointer is ``dereferenced'', the pointee can be read through any of the DVAs stored in the block pointer.
@@ -623,7 +623,7 @@ The root of the tree structure is located in the \textit{uberblock}.
 The uberblock points, with a block pointer, to an \lstinline{objset_phys_t} structure.
 \lstinline{objset_phys_t} is the root of an object set's persistent representation that itself is a tree of SPA-allocated blocks linked by block pointers.
 However, in the interest of brevity, we will view \lstinline{objset_phys_t} as an opaque structure for now.
-Regarding the uberblock, the specific \lstinline{objset_phys_t} structure that it points to is that of the MOS whose object's contains the DSL dataset metadata.
+Regarding the uberblock, the specific \lstinline{objset_phys_t} structure that it points to is that of the MOS whose object's contains the DSL's metadata about all datasets.
 The most important piece of per-dataset metdata is a block pointer (\lstinline{dsl_dataset_phys_t::ds_bp}) that points to a block that contains the root of the dataset's object set, i.e., an \lstinline{objset_phys_t} structure.
 The interpretation of that \lstinline{objset_phys_t}'s content depends on the dataset type, i.e., whether it is a filesystem or ZVOL.
 
@@ -647,11 +647,11 @@ It is the txg that is currently being written out to disk by the procedure outli
 The \textit{open} txg is the youngest unwritten txg.
 It is the txg that is used for any newly started DMU transactions.
 Between syncing and open txg sits the \textit{quiescing} txg.
-It is not used for any new DMU transactions (that's the open txg's role), but some of the DMU transactions assigned to it have not yet completed.
-However, once that has happened, it is guaranteeed that the accumulated dirty state for the quiescing txg is not going not change and ready to be written out.
+It is not used for any new DMU transactions, but some of the DMU transactions assigned to it may not yet have completed.\todo{may not have yet?}
+However, once that has happened, it is guaranteeed that the accumulated dirty state for the quiescing txg is not going not change and is ready to be written out by \textit{txg sync}.
 Thus, as soon as the syncing txg has been fully written, the quiescing txg becomes the new syncing txg, the open txg becomes the new syncing txg, and a new open txg is born.
 
-It is of crucial importance that the completion of a DMU transaction, indicated by a call to \lstinline{dmu_tx_commit}, does \underline{not} guarantee persistence.
+It is of crucial importance that the completion of a DMU transaction, indicated by a call to the \lstinline{dmu_tx_commit} function, does \underline{not} guarantee persistence.
 DMU transactions merely scope modifications on the DMU level to a txg; more specifically, the txg that was the \textit{open txg} at the time the transaction was started.
 If the system crashes before that txg has finished \textit{syncing}, the in-flight txgs' modifications are lost.
 
@@ -659,7 +659,7 @@ If the system crashes before that txg has finished \textit{syncing}, the in-flig
 
 The ZIL bridges the gap between the time at which a DMU transaction $T_i$ completes via \lstinline{dmu_tx_commit} and the time at which the changes made by $T_i$ actually reach the main pool through \textit{txg sync}.
 For that purpose, the DMU consumer that performs the DMU transaction encodes the logical change $C_i$ that was made in $T_i$ as an \textit{intent log transaction} (ITX) and \textit{assigns} it to the ZIL.
-To guarantee synchronous semantics, the DMU consumer must invoke the ZIL's \lstinline{zil_commit} API after completing the transaction but before reporting the logical change as committed to any upper layer.
+For synchronous semantics, the DMU consumer must invoke the ZIL's \lstinline{zil_commit} API after completing its DMU transaction(s) but before reporting the logical change as committed to any upper layer.
 \lstinline{zil_commit} persists assigned ITXs to a sequential log on disk, independent of the DMU's \textit{txg sync} procedure.
 This persistent log is used to recover lost changes in the event of a crash.
 %To recover from a system crash, the consumer uses the \lstinline{zil_replay} API which invokes a callback for each change that has been \lstinline{zil_commit}ted but whose txg did not finish syncing before the crash.
@@ -718,12 +718,12 @@ zil_commit(object_id)
 \end{lstlisting}
 
 After a system crash, the zpool is in the state of the last synced transaction group which we call $precrash\_txg$.
-All datasets (i.e, filesystems, ZVOLs) are effectively reset to their $precrash\_txg$ state.
+All datasets (i.e, filesystems, ZVOLs) are at their $precrash\_txg$ state and any changes made in younger DMU transactions are missing.
 The ZPL and ZVOL code uses the ZIL's \lstinline{zil_replay} API when the filesystem is mounted (or the ZVOL opened) to recover the lost changes.
 The API contract is that the caller provides a callback that is invoked for exactly those log records that were lost, i.e., whose ITX's txg was $> precrash\_txg$.
 The callback is invoked in the order of the sequential on-disk log.
-Its job is to interpret the log record and to re-apply the change to the dataset in a (new) DMU transaction.
-The following figure provides an example for the algorithm above and the replay sequence for different $precrash\_txg$s.
+Its job is to interpret the log record and to re-apply the change to the dataset in a new DMU transaction.
+Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level} exemplifies the rather unintuitive behavior of \lstinline{zil_commit} and \lstinline{zil_replay}.
 
 \begin{figure}[H]
     \centering
@@ -737,12 +737,13 @@ The following figure provides an example for the algorithm above and the replay 
     \label{fig:zil_writepath_and_replay_sequence_logical_level}
 \end{figure}
 
-Note that the DMU transactions during replay only re-enact the logical changes to the dataset but do not restore the exact physical state of the dataset that would have been synced in the absence of a crash.
+Note that replay only re-enacts the logical changes to the dataset but does not necessarily restore the exact physical state of the dataset that would have been synced in the absence of a crash.
 For example, changes that would have been spread across transaction groups 23, 24, and 25 at write time may land in transaction groups 42 and 43 during replay.
-Further, the system could crash again, during replay.
-For example, we could lose power so that txg 42 is the last-synced txg whereas 43 was still in \textit{syncing} state.
-Since the replay callbacks for the individual log records are not idempotent, the ZIL must ensure that, after a crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
-For example, the second replay attempt could apply the remaining set of changes in transaction group 83, but it may also be possible that they are spread over several txgs, e.g., 83 and 84.
+Further, the system could crash again during replay.
+For example, a power outage could cause txg 42 to be the last-synced txg whereas 43 was still in \textit{syncing} state.
+Since the replay callbacks for the individual log records are \underline{not idempotent}, the ZIL must ensure that, after a crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
+For example, the second replay attempt could apply the remaining set of changes in transaction group 83.
+(But it may also happen that they are spread over several txgs, e.g., 83 and 84).
 The consequence for any ZIL implementation is that it needs to persist the following data:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Precrash-txg] The \textit{precrash-txg} for open logs at the first time during pool import so that it can filter log records by that criterion, and
@@ -757,12 +758,11 @@ Each LWB contains a contiguous sequence of the variable-length log records.
 
 \begin{figure}[H]
     \centering
-    \includegraphics{fig/zil_lwb__physical_structure_overview}
+    % make it fit on this page...
+    \includegraphics[trim=0cm 0.3cm 0cm 0.3cm, clip]{fig/zil_lwb__physical_structure_overview}
     \caption{On-disk structure of ZIL-LWB as described in the previous paragraph.}
     \label{fig:zil_lwb__physical_structure_overview}
 \end{figure}
-
-\todo{shrink the figure irl}
 
 After \lstinline{zil_commit} has produced the commit list, it iterates over it and appends the log record representation of each ITXs to an in-DRAM buffer that will become the new tail LWB in the chain.
 Once this buffer is full, it is issued to disk in the background and the procedure continues with a new tail LWB.
