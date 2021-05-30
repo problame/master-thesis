@@ -3150,24 +3150,23 @@ In this chapter we evaluate whether ZIL-PMEM meets the project goals established
 Our high-level requirements for ZIL-PMEM were: simple administration, sharing of PMEM as a pool-wide resource, same crash consistency guarantees, and coexistence with the existing ZIL(-LWB).
 Our design meets all of these requirements:
 \begin{description}[noitemsep]
-    \item[Simple Administration] Our design foresees that activation of ZIL-PMEM will be completely transparent to the administrator, based on VDEV configuration (Section~\ref{sec:zilpmemzilkind:activation}).
-        In that case, there would be no user-visible change in ZFS's administrative tools.
-        However, due to time constraints, our current implementation does not yet supports changing the ZIL kind of the zpool after creation (Section~\ref{sec:zil_kinds:change}).
+    \item[Simple Administration] We have proposed a design where ZIL-PMEM is automatically activated if exactly one PMEM SLOG vdev is configured (Section~\ref{sec:zilpmemzilkind:activation}).
+        This would make ZIL-PMEM completely transparent to the administrator and not bring any user-visible change in ZFS's administrative tools.
+        However, our implementation does not yet support changing the ZIL kind of a zpool after its creation (Section~\ref{sec:zil_kinds:change}).
     \item[Pooled Storage] PRB wraps the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
-        (See Section~\ref{sec:zilpmem:prbconstruction} for details.)
     \item[Coexistence] The introduction of \textit{ZIL Kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
         The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure but enables coexistence of different persistence strategies.
-    \item[Same Guarantees] \lstinline{zilog_pmem_t} maintains the same crash consistency guarantees as ZIL-PMEM, courtesy of the shared logical structure and PRB/HDL's guarantees.
+    \item[Same Guarantees] ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB towards userspace, courtesy of the shared logical structure and PRB/HDL's guarantees.
 \end{description}
 
 \section{Correctness}
 
-We use unit tests and integration tests to validate\todo{better verb?} that our implementation.
+We use unit tests and integration tests to validate\todo{better verb?} our implementation.
 
 \subsection{Testing Strategy for PRB/HDL}\label{sec:eval:correctness:prb}
 
 We test PRB/HDL's functionality in user space which is possible because PRB/HDL is included in the \textit{libzpool} user-space library.
-\textit{libzpool} contains the majority of the ZFS kernel module's code --- it is used to by \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool (next section).
+\textit{libzpool} contains the majority of the ZFS kernel module's code --- it is used to by \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool.
 We implement our unit tests in Rust to leverage its expressive type and macro system, rich standard library, and built-in testing harness.
 We use the popular \textit{bindgen} crate to generate the bindings to \textit{libzpool} and implement a few idiomatic wrappers around PRB/HDL to reduce boilerplate code in our tests.
 
@@ -3197,7 +3196,7 @@ PRB/HDL assumes that there are only three unsynced txgs at any given time.
 This manifests in frequent use of the \lstinline{txg&3} indexing idiom that is common in ZFS.
 Whenever state needs to be kept for each of the unsynced txgs, a 4-ary array is used to represent it.
 The \lstinline{txg&3}'th element in the array then contains the state for \lstinline{txg}.
-The value of \lstinline{txg} is most often repeated within the per-txg state to detect when an array element is re-used.
+The value of \lstinline{txg} is repeated within the per-txg state to detect when an array element is re-used.
 
 In the context of PRB/HDL, it is critical for correctness that an entry $E_i$ for txg $E_i.txg$ is only written if it is either newer than $txg_{open}$ or one of $\{txg_{open}, txg_{open}-1, txg_{open}-2\}$ (dependency tracking, see Section~\ref{di:prb:deptrack}).
 We add tests that ensure that the \lstinline{prb_write_entry} API returns an error if entries are written that do not meet this criterion.
@@ -3205,17 +3204,18 @@ We also test the behavior of replay to ensure that, if the write path implementa
 
 \subsubsection{Replay Algorithm}
 We structure the PRB/HDL implementation such that it becomes possible to test the core replay logic that we described in Sections~\ref{di:prb:replayapproach},~\ref{di:prb:deptrack},~\ref{di:prb:modeldatacorruption} and ~\ref{di:prb:ccrecovery}:
-The idea is to isolate the core logic in a function \lstinline{replay_resume} that takes as input
+The idea is to isolate the core logic in a function \lstinline{replay_resume} that takes the following arguments as input:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[NodeSet] The set of entries, represented as \textit{replay nodes}, that were discovered for the HDL.
     \item[ReplayState] A pointer to the DRAM representation of replay state,
-    \item[Callback] The callback that receives the \textit{replay node} to be replayed and a pointer to the replay state that needs to be persisted to the ZIL header during replay.
+    \item[Callback] A callback that receives as arguments
+    a) the replay node and b) a pointer to the replay state that needs to be persisted to the ZIL header during replay.
 \end{description}
-\lstinline{replay_resume} then constructs the replay sequence from \textit{NodeSet} and invokes the \textit{Callback} for each entry that needs to be replayed.
-The \lstinline{prb_claim} API uses \lstinline{replay_resume} for ZIL headers in state \textit{logging} to determine $E_{seal}$, and for a dry-run of replay for headers in state \textit{replaying} to detect missing entries early (see Section~\ref{di:prb:ccrecovery}, Step~\ref{ccReplay:claimscan}).
-It provides its own \textit{Callback} (\lstinline{prb_claim_cb}) which only checks that all replay nodes' bodies can be read without error using \lstinline{prb_replay_read_replay_node}.
+\lstinline{replay_resume} constructs the replay sequence from \textit{NodeSet} and then invokes the \textit{Callback} for each entry that needs to be replayed.
+The \lstinline{prb_claim} API uses \lstinline{replay_resume} for ZIL headers in state \textit{logging} to determine $E_{seal}$, and for a dry-run of replay for headers in state \textit{replaying} to detect missing entries early during pool import (see Section~\ref{di:prb:ccrecovery}, Step~\ref{ccReplay:claimscan}).
+It provides its own \textit{Callback} (\lstinline{prb_claim_cb}) which checks that all replay nodes' bodies can be read without error, using the \lstinline{prb_replay_read_replay_node} API that the actual replay callback is going to use as well.
 The \lstinline{prb_replay} API uses \lstinline{replay_resume} for actual replay.
-Its \textit{Callback} (\lstinline{prb_replay_cb}) serializes \textit{ReplayState} to the representation stored in the ZIL header, builds the ZIL header update, and invokes the user-provided callback.
+Its \textit{Callback} (\lstinline{prb_replay_cb}) serializes \textit{ReplayState} to the representation stored in the ZIL header, builds the ZIL header update, and invokes the user-provided replay callback.
 Figure~\ref{fig:eval:prb_replay_resume_architecture} visualizes this architecture.
 
 \begin{figure}[H]
@@ -3225,21 +3225,21 @@ Figure~\ref{fig:eval:prb_replay_resume_architecture} visualizes this architectur
     \label{fig:eval:prb_replay_resume_architecture}
 \end{figure}
 
-This factorization of responsibilities provides maximum flexibility for testing because it decouples the storage substrate (PRB \& chunks) from the per-HDL logical log structure.
-\begin{description}[noitemsep]
+This factorization of responsibilities provides maximum flexibility for testing because it decouples the storage substrate (PRB \& chunks) from the per-HDL logical log structure:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Independence of PRB \& Chunks]
-        The testing code does not need to mock chunks or parts of PRB that would have to be scanned.
-        It also do not need to allocate the actual entries.
+        The testing code does not need to mock chunks or PRB.
+        It also does not need to allocate the actual entries.
         Instead, it is sufficient to allocate arbitrary \textit{replay nodes} and to put them into the \textit{EntrySet}.
     \item[Independence of ZIL-PMEM]
-        It is not necessary to mock or subsititute for any behavior implemented in ZIL-PMEM.
+        It is not necessary to mock or subsititute any behavior implemented in ZIL-PMEM.
     \item[Crash Consistency Testing]
         To test crash consistency and correctness for resumed replay, the testing code can simply forge an arbitrary replay state in DRAM and invoke \lstinline{replay_resume} with it.
 \end{description}
 
 We leverage Rust's macro system to define test cases in a concise and expressive manner.
 Our goal is to minimize the mental step from the two-dimensional grid visualization to a test case (ex. Figure~\ref{fig:prb_hdl_log_structure_example}).
-The following code snippet is an excerpt from the test suite.
+The following code snippet is an excerpt from the test suite:
 
 \begin{lstlisting}[style=figurepseudocode]
 TestSet {
@@ -3281,7 +3281,7 @@ Our tests check the following properties of the replay code:
     \item[Claim Txg] We ensure that log entries for txgs $\le precrash\_txg$ are not replayed because their effect is already part of the dataset's state.
         In the code base, it is more common to refer to $claim\_txg = precrash\_txg + 1$.
     \item[Missing Entry Handling] We test the handling of missing entries in both the already replayed and the still to-be-replayed parts of the replay sequence, as well as the special cases for missing entries in the last generation.
-    \item[Resumability] We test resumability of \lstinline{replay_resume} for the cases for the cases of missing entries, re-appearing entries, and no change of \textit{EntrySet} between resume attempts.
+    \item[Resumability] We test resumability of \lstinline{replay_resume} for the cases of missing entries, re-appearing entries, and no change of \textit{EntrySet} between resume attempts.
     \item[Entry Reappearance] We test that re-appearing entries ordered \textit{before} the last-replayed entry are ignored, and re-appearing entries in the \textit{unreplayed} part are discovered and replayed.
 \end{description}
 
@@ -3312,7 +3312,7 @@ The OpenZFS project has the following existing facilities for testing:
     \item[ZFS Test Suite (ZTS)] The ZFS Test Suite is a set of automated integration tests that assert behavior of the kernel module and CLI tools.
         ZTS is implemented in shell and provides a significant amount functional test that exercise both the data path and administrative layer of ZFS.
     \item[ztest] The \textit{ztest} tool is a user-space binary that links against \textit{libzpool} and stress-tests core components of ZFS that are shared among all supported platforms.
-        It define routines that imitate the kernel module's use the core component's APIs.
+        It define routines that imitate the kernel module's use the core components' APIs.
         The stress-testing aspect comes from\todo{language} repeatedly dispatching these routines to a pool of threads.
         Additionally, IO failures are injected through ZFS's fault injection facilities (ref. Section~\ref{sec:rel_work:fault_injection}), and system crashes are simulated by randomly killing the \textit{ztest} process.
         \textit{ztest} is particularly useful for exposing race conditions in the administrative layer that would not be discovered by the mostly sequential usage in the ZTS.
@@ -3322,7 +3322,7 @@ We identify three major challenges in adapting OpenZFS's testing infrastructure 
 \begin{description}[noitemsep]
     \item[Dimensionality] ZIL kinds add a new dimension in the configuration space that has not been anticipated by the designers of ZTS and ztest.
         Since all ZIL kinds should be functionally equivalent, the ideal testing strategy would execute all existing tests for each ZIL kind.
-        However, the testing harnesses for ZTS and ztest do not have the infrastructure for this task.
+        However, the testing harnesses for ZTS does not have the infrastructure for this task.
 
     \item[File VDEVs] Both ZTS and ztest rely heavily on the \textit{file} VDEV type.
         \textit{File} VDEVs are plain files that can be used in lieu of block devices when constructing a zpool.
@@ -3332,10 +3332,10 @@ We identify three major challenges in adapting OpenZFS's testing infrastructure 
         For crash consistency, the memory mapping would further need to map directly to PMEM, i.e., be located on a Linux filesystem mounted with the \textit{dax} mount option.\todo{ref pmem in linux section}
 
     \item[VDEV Management]
-        A significant number of tests in ZTS and ztest deals with\todo{language} mutations of the pool's VDEV config, e.g., adding, removing, growing, offlining devices.
+        A significant number of tests in ZTS and ztest deals with\todo{language} mutations of the pool's VDEV config, e.g., adding, removing, growing, and offlining devices.
         This is related to ZIL-PMEM because our design goal is to transparently switch ZIL kinds based on the absence or presence of exactly one PMEM SLOG vdev.
         However, the current state of our implementation does not yet support changing ZIL kinds after pool creation and prevents changes to the SLOG VDEV config to ensure that the PMEM SLOG vdev is always present (Section~\ref{sec:zil_kinds:change}).
-        Thus, many tests that would work correctly in the final implementation currently fail when attempting to change the VDEV config.
+        Thus, many tests that should work correctly in the final implementation currently fail when attempting to change the VDEV config.
 \end{description}
 
 We modify \textit{ztest} as follows:
@@ -3347,11 +3347,11 @@ We modify \textit{ztest} as follows:
     \item[Configurable ZIL Kinds] We add a command line switch to \textit{ztest} to configure the default ZIL kind that is used for the test pool.
         This is equivalent to the \lstinline{zil_default_kind} kernel module parameter (Section~\ref{sec:zil_kinds:change}).
     \item[VDEV Management] There are several \textit{ztest} routines that randomly add and remove VDEVs, inlcuding SLOG devices.
-        We change the function that selects the target VDEV such that it never returns SLOG device if the pool's ZIL kind is ZIL-PMEM.
+        We change the function that selects the target VDEV such that it never returns a SLOG device if the pool's ZIL kind is ZIL-PMEM.
 \end{description}
-We have not added any ZIL-PMEM specific assertions or additional PMEM SLOG related test routines to \textit{ztest}.
+We have not added any ZIL-PMEM specific assertions or additional test routines to \textit{ztest}.
 To get coverage for ZIL-PMEM and ZIL-LWB, it is required to run ztest twice with the respective values for the command line flag.
-Future work should extend the \textit{zloop.sh} script which already provides infrastructure to run \textit{ztest} with different combinations of parameters (i.e., CLI flags).
+% Future work should extend the \textit{zloop.sh} script which already provides infrastructure to run \textit{ztest} with different combinations of parameters (i.e., CLI flags).
 
 Regarding the ZTS, the following tests are relevant for the ZIL:
 \begin{lstlisting}[style=figurepseudocode]
@@ -3395,11 +3395,11 @@ The \lstinline{slog_replay_*} tests exercise the replay code path as follows:
     \item Use the \textit{diff} utility to compare the archived state, including metadata such as \textit{mtime} and extended attributes, against the replayed state of the filesystem.
         The test passes if no differences are found.
 \end{enumerate}
-The \lstinline|slog_replay_fs_00{1,2}| tests use ZFS filesystem.
-The \lstinline|slog_replay_volume| test exercises the ZVOL code paths by instantiating a platform-native file system on top of the ZVOL (ext4 on Linux, UFS2 on FreeBSD).
+The \lstinline|slog_replay_fs_00{1,2}| work directly on ZPL filesystems whereas \lstinline|slog_replay_volume| exercises the ZVOL code paths by instantiating a platform-native file system on top of the ZVOL (ext4 on Linux, UFS2 on FreeBSD).
+
 We modify ZTS as follows:
 \begin{enumerate}[noitemsep]
-    \item Add a mechanism to skip tests based on the current value of the the \lstinline{zil_default_kind} module parameter (Section~\ref{sec:zil_kinds:change}).
+    \item Add a mechanism to skip tests based on the value of the \lstinline{zil_default_kind} module parameter (Section~\ref{sec:zil_kinds:change}).
     \item Skip all \lstinline|slog_*_{pos,neg}.ksh| tests for ZIL-PMEM.
     \item Add a new ZIL-PMEM specific test to assert the behavior of our current implementation.
         The test ensures that ``ZIL-PMEM does not allow device removal, addition, replacing, offlining or pool splitting''.
@@ -3418,14 +3418,15 @@ To achieve full coverage, the ZTS must be run twice, once for ZIL-LWB and once f
 
 Our user-space tests for PRB/HDL enabled fast iteration on the implementation with high confidence in its correctness.
 The majority of test cases are the collection of edge-cases that we discovered while designing the PRB/HDL data structure.
-We have addressed all of these edge cases in the design and implementation, and thus all of our PRB/HDL tests pass.
+Naturally, we have addressed all of these edge cases in the design and implementation.
+Thus, thus all of our PRB/HDL tests pass.
 
-\textit{Ztest} helped us find many implementation errors in the integration code (\textit{zil\_pmem.c}).
-Again, the fast\todo{high?} iteration speed and ease of debugging in user space proved beneficial.
+\textit{Ztest} helped us find many implementation errors in the integration code.
+Again, the high iteration speed and ease of debugging in user space proved very beneficial.
 We have run the \textit{zloop.sh} script for X\todo{value} minutes for each ZIL kind and did not encounter any crashes.
 
-The \lstinline{ZTS} tests listed above pass (or are marked for skipping) for both ZIL-LWB and ZIL-PMEM.
-However, they exposed significantly less implementation issues than \textit{ztest}.
+After our changes to the ZIL-related \lstinline{ZTS} tests, all of them pass (or are skipped) for both ZIL-LWB and ZIL-PMEM.
+They exposed significantly less implementation issues than \textit{ztest}.
 (We used ZTS during initial development and only adopted \textit{ztest} later in the process, hence we were able to experience the difference.)
 
 We use the code coverage analysis tools included in the OpenZFS and Linux kernel build system to get some quantitative results.
