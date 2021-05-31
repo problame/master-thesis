@@ -542,24 +542,139 @@ Most of the semantics are tied to ZFS’s \lstinline{zbookmark} and \lstinline{b
 Since ZIL-PMEM's existing unit tests already cover many scenarios for lost log entries at a higher level, we do not see an immediate for ZIO Fault Injection in this thesis.
 However, a fault injection tool or ``editor'' utility with an understanding of ZIL-PMEM's persistent data structures could be useful for end-to-end testing in the future, in particular in comparison to \textit{ndctl-inject-error}.
 
-\section{Persistent Memory in Linux}
+\section{Persistent Memory}
+Persistent memory (PMEM), also known as storage-class memory (SCM) or non-volatile main memory (NVMM), is a novel type of storage technology that is positioned between DRAM and flash in the storage media hierarchy.
+It is memory-mapped, byte-addressable, and accessible through regular CPU instructions, but, in contrast do DRAM, provides durability and significantly larger capacities.
+In this section we provide the technical background on persistent memory that is required to understand the design and implementation of ZIL-PMEM.
+We recommend \cite{rudoffPersistentMemoryProgramming2017} and \cite{Scargall2020} for a more comprehensive introduction.
 
-%Data corruption, MCE, memcpy_mcsafe
-%-> NOVA Fortis paper
-%-> https://software.intel.com/content/www/us/en/develop/articles/error-recovery-in-persistent-memory-applications.html
-%-> https://software.intel.com/content/www/us/en/develop/articles/pmem-RAS.html
-%ent of a \textit{machine check exceptions} (MCE) triggered by a PMEM hardware error.
-%The behavior for MCE with PMEM is similar to that with ECC.
-%If the MCE happens in userspace\todo{review userspace vs user-space vs user space}, Linux converts it into SIGBUS signals.
-%In the kernel, an MCE triggers a panic unless the \lstinline{memcpy_mcsafe()} API is used which returns an error value if an MCE occurred.
-%The code that called \lstinline{memcpy_mcsafe()} can thus treat read errors as IO errors.
-%The value that \lstinline{memcpy_mcsafe()} provides to ZIL-PMEM is very limited because it only handles read errors.
-%ZIL-PMEM does not use could use \lstinline{memcpy_mcsafe()} 
-%The value of MCEs and \lstinline{memcpy_mcsafe()} is very limited in the context of ZIL-PMEM because it only reads PMEM during pool import and replay.
-%At this point, errors from memcpy_mcsafe() are handled the same way that corrupted log entries are handled.
-%A mechanism to handle write failures to PMEM would be very useful
-%Also: \cite{PersistentmemoryErrorHandling}
-%The problem there is that store operations are not usually synchronous, so there will be no immediate indication of an error. Paranoid software can [Jeff Moyer] do a flush and a load after every store to ensure that the data has been stored properly; there does not seem to be any better way.
+\subsubsection{Hardware: Intel Optane DC Persistent Memory}
+The hardware form factor for Optane PMEM is that of a regular (volatile) DIMM that is installed into the same type of slot on the motherboard.
+Whereas supercapacitor-backed non-volatile DIMMs (NVDIMM-N) have, they are generally not comparable to PMEM:
+NVDIMM-N devices use on-DIMM DRAM as the primary data store, and only persists it to on-DIMM flash in case of power loss.
+In contrast, Optane PMEM uses the 3D-Xpoint non-volatile memory techonolgy as the primary data store, although on-DIMM DRAM may be used for caching \cite{yangEmpiricalGuideBehavior2020}.
+% NVDIMM-P whose electrical and mechanical interface has recently been standardized as NVDIMM-P \cite{JEDECNVDIMM_P} ....
+
+The performance of DRAM(/NVDIMM-N) and Optane PMEM differs significantly.
+We summarize the insights of \citeauthor{yangEmpiricalGuideBehavior2020}\cite{yangEmpiricalGuideBehavior2020}.
+For our purposes, the most relevant figures in the paper are ``Figure 4: Bandwidth vs. thread count'', ``Figure 5: Bandwidth over access size'', and ``Figure 7: Read latency''.
+\begin{description}[noitemsep]
+    \item[Latency] The authors report 100~ns of random read latency (load instructions) for NUMA-local DRAM and ca 300~ns read latency for Intel Optane PMEM.
+        For writes (store + cache flush), they report marginal differences in latency (both approximately 100~ns).
+    \item[Maximum Bandwidth] The maximum achievable bandwidth to a single Optane DIMM is ca. 6.5 GiB/s for reads and 2 GiB/s for writes.
+        Through \textit{interleaving} of multiple Optane DIMMs, almost linear scaling in maximum bandwidth with no severe latency cost is possible.
+        However, even with six interleaved Optane DIMMs, the peak write bandwidth is ca. 13 GiB/s for PMEM and at least 30 GiB/s for DRAM (6 DRAM DIMMs per socket on their system).
+    \item[Scalability] PMEM and DRAM exhibit very different scalability with regards to access from multiple threads.
+        Whereas DRAM bandwidth scales linearly and eventually plateaus, the Optane DIMM configurations' bandwidth declines after its peak.
+        This is particularly noticable for the single-DIMM configuration where write bandwidth decreases to less than 1 GiB/s after a peak of ca. 2 GiB/s.
+    \item[Access Granularity] Access size also severely affects the maximum achievable bandwidth for both reads and writes.
+        In particular, for a single Optane DIMM, access sizes of 64 and 128 bytes only achieve ca. 30\% and 50\% of the maximum read and write bandwidth.
+\end{description}
+The authors give the follwoing recommendations for systems that build on top Intel Optane hardware:
+\begin{displayquote}
+    ``
+    1. Avoid random accesses smaller than 256 B.
+    2. Use non-temporal stores when possible for large transfers, and control cache evictions.
+    3. Limit the number of concurrent threads accessing an Optane DIMM.
+    4. Avoid NUMA accesses (especially read-modify-write sequences).
+    ''\cite{yangEmpiricalGuideBehavior2020}
+\end{displayquote}
+We could confirm the authors' observations on our evaluation system and follow their recommendations for ZIL-PMEM.
+
+\subsection{PMEM Configuration}
+
+The Optane DIMMs in a system must be provisioned from BIOS or the \textit{ipmctl} utility.
+Optane supports two major modes of operation:
+in \textit{Memory Mode}, Optane acts as volatile main memory that uses the DRAM modules as a cache. Memory Mode is not relevant for this thesis.
+In \textit{App Direct} mode, Optane appears as a physical memory \textit{region} (aka 'interleave set') that is separate from DRAM. % aka: https://docs.pmem.io/ndctl-user-guide/concepts/nvdimm-namespaces
+Regions must also be provisioned by the administrator.
+It is possible to make each Optane DIMM appear as a separate region (\textit{AppDirectNotInterleaved}), or to interleave multiple Optane DIMMs into a single region.
+As suggested by the name, the addresses in an interleaved region map to alternating DIMMs, thereby improving performance.
+
+The space of a region can be further split up into so-called \textit{namespaces}.
+To quote the specification:
+``A	namespace	defines	a	contiguously­‐addressed	range	of	Non-­‐Volatile	Memory	  similar	 to	 a	 SCSI	 Logical	 Unit	 (LUN)	 or	 an	 NVM	 Express	 namespace.
+[A] Persistent Memory namespace [\dots] provides	 a	 byte­‐addressable	 range	 of	 Persistent	 Memory	 in	 the	 system	 physical	 address	 space
+''\cite{NVDIMMNamespaceSpecification2015}.
+We recommend \cite{PmemIoConcepts} and \cite{NVDIMMNamespaceSpecification2015} for more technical details.
+
+In Linux, namespaces are managed using the \textit{ndctl} utility.
+A namespace can have one of the following types \cite{PmemIoConceptsNamespaces}:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[devdax] The namespace appears as a /dev/daxX.Y \textbf{character device} in the Linux devfs.
+    \item[fsdax] The namespace appears as a /dev/pmemX.Y \textbf{block device} in the Linux devfs.
+    \item[sector] Not relevant for this thesis.
+    \item[raw] Not relevant for this thesis.
+\end{description}
+
+The intention behind the \textit{devdax} device is to allow \textit{direct memory-mapping} of the entire namespace in userspace via \lstinline{mmap}.
+Such a mapping's page table entries point directly to the respective PMEM pages.
+The primary use case is for this feature is virtualization, e.g., using \lstinline{qemu}~\cite{PmemIoUsingQemuVirtualization}.
+However, we use it in Section~\ref{ch:lwb_analysis} to evaluate raw device performance from userspace using \textit{fio}.
+
+The \textit{fsdax} namespace is intended for \textit{\textbf{d}irect-\textbf{ac}cess} (DAX) capable Linux filesystems.
+The Linux kernel provides a set of APIs to check whether a \lstinline[style=figurepseudocode]{struct block_device} is DAX-capable, i.e., an \textit{fsdax} namespace.
+For such devices, the \lstinline{dax_direct_access} API allows for translation of a range of sectors (\lstinline{sector_t}) to a virtual address range.
+A block device consumer that is DAX-aware can thereby conditionally enable PMEM-specific optimizations.
+For example, both Ext4 and XFS provide the \textit{dax} mount option that enables bypass of the block layer for writing data (albeit not yet for journaling / logging).
+% PMEM-only in-kernel filesystems such as NOVA (ref. Section~\ref{sec:in_kernel_pmem_filesystems}) also use an \textit{fsdax} namespace and \lstinline{dax_direct_access} to get access to PMEM.
+Apart from internal optimizations, Ext4 and XFS in DAX mode support direct \lstinline{mmap}ping of individual files to PMEM.
+This is possible because both filesystems overwrite data in-place --- supporting direct \lstinline{mmap} to PMEM is roughly equivalent to pre-allocating the mapped range's data ``blocks'' (=pages) on /dev/pmem and establishing a userspace-accessible memory mapping.
+However, for ZIL-PMEM, only the kernel-internal use of the \lstinline{dax_direct_access} is relevant.
+
+% \textit{Storage Networking Industry Association} (SNIA) has published the \textit{NVM Programming Model} \cite{NVMProgrammingModel2017} describes different \textit{modes} for through which software can take advantage of persistent memory.
+% For PMEM-aware filesystems, the \textit{NVM.PM.FILE} and the \textit{NVM.PM.VOLUME} modes are the most relevant.
+% In the context of this thesis, only the \textit{NVM.PM.VOLUME} is important, which describes how kernel components such as file systems get access to persistent memory.
+
+\subsection{PMEM Programming Model}
+
+Programming for Persistent Memory comes with a set of challenges that do not arise when interfacing with block devices.
+The reason is that the CPU microarchitecture effectively becomes a semi-transparent IO stack:
+
+\begin{description}
+    \item[Smaller Atomaticity Granularity] Instead of block-level atomicity, Intel platforms currently only guarantee atomicity for 8 byte sized and aligned stores.
+        Unaligned writes or larger writes can be ``torn'' on power loss.
+        In contrast, block devices such as NVMe drives provide more coarse-grained atomicity (e.g., one block) which can simplify the implementation of some data structures.
+        \cite{rudoffPersistentMemoryProgramming2017}
+
+    \item[Durability] Stores to PMEM are not durable until they reach the system's \textit{persistence domain}.
+        On current Intel platforms, this persistence domain does not include the processor caches.
+        Until CPU caches become part of the persistence domain in future hardware revisions, it is thus necessary to flush CPU caches after issuing stores, or to use non-temporal store instructions, to achieve durability.
+        \cite{rudoffPersistentMemoryProgramming2017}
+
+    \item[Ordering] Due to pipelined, our-of-order, or speculative execution\todo{forgot sth?}, the program order of stores does not necessarily correspond to the order observed from outside the thread that issues them.
+        This a well-known problem in the context of synchronization between CPU cores, but it applies to Persistent Memory as well.
+        To guarantee that stores reach PMEM in a certain order, it is necessary to insert an store barrier instruction (\lstinline{SFENCE}) between them.
+        Hence, for durability and ordering, the program must perform either issue \lstinline{store+cacheflush+sfence} or \lstinline{nontemporal_store + sfence} instructions.
+
+    \item[Error Handling] The error handling story for PMEM is largely unsatisfactory.\todo{too harsh?}
+        On the read path, PMEM can detect data corruption through ECC.
+        It surfaces such problems and potentially other errors to the CPU which raises a \textit{machine check exception (MCE)}, which is the same mechanism that is used by DRAM to indicate ECC errors.
+        The operating system can handle such exceptions by ``poisoning'' the affected memory ranges, i.e., unmapping the page and preventing re-use (``bad block list'').
+        If the affected range is a userspace mapping, Linux notifies the application via SIGBUS.
+        If the MCE is raised due to a kernel memory access, the default Linux behavior is to panic.
+        However, the kernel provides the \lstinline{memcpy_mcsafe} function to handle MCEs more gracefully when copying from PMEM.
+        Instead of panicking, the function returns an error if an MCE occurs.~\cite{ReliabilityAvailabilityServiceability,PersistentmemoryErrorHandling,xuNOVAFortisFaulttolerantNonvolatile2017}
+
+        There is no mechanism to detect write errors since, even after a cache flush, the data may not have actually been written to the non-volatile media.
+        It is only guaranteed to have reached the \textit{persistence domain} which may just be a volatile buffer in the memory controller.
+        There is no mechanism to wait for persistence to the non-volatile media.
+        Thus, if the asynchronous attempt to persist that buffer's content fails, the software has already proceeded under the assumption that the store succeeded.
+        The mitigation that Intel recommends against this problem is to perform memory scrubbing using a hardware engine (``patrol scrub'').
+        The idea is to detect the corruption through hardware ECC.
+        \cite{ReliabilityAvailabilityServiceability}
+
+    \item[CPU Efficiency] Wait-time for PMEM I/O is spent on-CPU.
+        The inherent assumption is that at PMEM-level latencies, it is less overhead to stall the CPU than to context-switch to another application.
+        This assumption holds until the bandwidth limits of PMEM are exceeded.
+        In that case, as with any other storage device, queuing effects come into effect and per-IOP latency and hence stall duration grows.
+        However, from the OS thread scheduler's perspective, the thread appears CPU-bound, even though it is effectively waiting for IO.
+        This poses an efficiency problem if there is other work in the system that is actually CPU-bound.
+
+        To our awareness\todo{that doesn't seem to be a common phrase?}, we are the first to identify the above as a systematic issue, at least in the context of system services such as filesystems.\todo{qualifier yay nay?}
+        For the Optane hardware in particular, the performance drop at with increasing concurrent access further amplifies the problem.
+        We implement a mitigation in ZIL-PMEM and evaluate it in Section~\ref{sec:eval:ncommitters_scalability}.
+\end{description}
 
 \section{OpenZFS Background}\label{sec:openzfs_background}
 
@@ -3977,7 +4092,7 @@ Performance:
     \item[Evaluation of Chunk Size] 
     \item[Fuzzing] 
     \item[ZTS]  run entire ZTS, not just ZIL-related tests
-
+    \item[] The Dirty Shutdown Handling guide describes the (hopefully rare) error case where flushes to persistent memory did not go as expected on power failure or system crash.  The guide describes how this failure is detected, and how it is communicated to applications via the dirty shutdown count.
 \end{description}
 
 \backmatter
