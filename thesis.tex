@@ -178,14 +178,14 @@ Our solution, \mbox{ZIL-PMEM}, is then presented Chapters \ref{ch:designoverview
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the design.
 Our main contribution, the \textit{PRB/HDL} the data structure, is then presented in detail in Chapter~\ref{ch:prbhdl}.
 The integration of PRB/HDL into ZFS is then described in Chapter~\ref{ch:zilpmem}.
-We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a summary of our work in Chapter~\ref{ch:summary}.
+We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a conclusion of our work in Chapter~\ref{ch:conclusion}.
 
 \chapter{Literature Review \& Technical Background}\label{ch:litreviewandbackground}
 In this chapter we present prior work in the field of persistent memory and its application in various storage systems developed in research and industry.
 The last two sections on Persistent Memory and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB and the design of ZIL-PMEM in the subsequent chapters.
 
 \section{Literature Review}
-We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash-consistency models, PMEM-specific crash-consistency checkers and general methods to determine filesystem robustness in the presence of hardware failures.
+We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash-consistency models, checkers for the PMEM programming model, and general methods to determine filesystem robustness in the presence of hardware failures.
 
 \subsection{PMEM Filesystems}
 In this subsection we present research filesystems that were explicitly designed for persistent memory.
@@ -278,15 +278,6 @@ Cross-media storage systems combine the advantages of multiple storage devices f
 Historically, these kinds of systems strive to exploit hard disk for high capacity at low cost and more expensive flash storage for low latency random access IO.
 With persistent memory, a new class of storage has become available whose role in cross-media systems is still to be determined.
 In the context of this thesis we find it most useful to compare the overall system architecture.
-
-\citerelwork{ZFS: ZIL Performance Improvements For Fast Media}{openzfsZILPerformanceImprovements2020}
-\todo{move this somewhere else, it doesn't make sense since we moved the section on allocation classes to technical background}
-At the OpenZFS 2020 Developer summit, Saji Nair of storage vendor Nutanix presented a ZIL prototype that handles fast block devices more efficiently.
-The prototype avoids unnecessary sequential ordering of I/O operations when writing ZIL LWBs\todo{check that LWBs have been introduced by now}.
-It also avoids using the ZIO pipeline due to context switching overheads, issuing block I/O directly from the application thread instead.
-The evaluation is limited to a single benchmark: a fio 8k (\!) sync write workload, spread across four zpools in identical configuration, achieves 75k IOPS at four threads, which is a 4x speedup over the upstream implementation.
-With 16 threads, the system achieves its peak IOPS at approx. 125k IOPS, which is a speedup of 2.5x.
-The source code for the prototype has not been published and the design is incomplete with regards to replay.
 
 \citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media research filesystem.
 “Closest to the application, Strata’s user library synchronously logs process-private updates in NVM while reading from shared, read-optimized, kernel-maintained data and metadata.
@@ -441,7 +432,7 @@ However, it is our understanding that the resulting model is rather a larger reg
 Such regression tests would be useful as a starting point for a formal model, e.g., as initial litmus tests for use with FERRITE.
 We do not believe that we can apply the presented approach to ZFS with and without ZIL-PMEM with reasonable effort.
 
-\subsection{PMEM-specific Crash-Consistency Checkers}
+\subsection{PMEM-specific Tools}\label{sec:rel_work:pmemspecifictools}
 A growing body of work introduces tools that check whether code that manipulates persistent memory actually issues the architectually required instructions for persistence.
 However, most systems only target userspace code and are thus inapplicable to ZIL-PMEM which is implemented in the ZFS kernel module.
 Whereas ZIL-PMEM can be compiled for user-space as part of the \textit{libzpool} library, the large amount of conditional compilation involved in the libzpool build process diminishes the significance of user space tests.
@@ -648,7 +639,6 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         \citeauthor{Scargall2020} outlines an application-level approach to detect if data was lost.
 
         In ZIL-PMEM, we only handle read errors using \lstinline{memcpy_mcsafe}, and treat them equally to software checksum errors.
-        We present potential software-level approaches to detect write errors in ZIL-PMEM  in the Section~\ref{sec:futurework} on future work.
 
     \item[CPU Efficiency] Wait-time for PMEM I/O is spent on-CPU.
         The inherent assumption is that at PMEM-level latencies, it is less overhead to stall the CPU than to context-switch to another application.
@@ -3604,7 +3594,7 @@ The slight decline to 346k IOPS at eight threads correlates with a similar decli
 \begin{figure}[H]
     \centering
     \includegraphics{fig/evaluation/fio4k__zilpmem_results}
-    \caption{Mean IOPS and latency measured by \textit{fio} for our 4k synchronous random write workload, by number of writer threads (``\lstinline{numjobs}'').}
+    \caption{Mean IOPS and latency measured by \textit{fio} for our 4k synchronous random write workload, by number of writer threads (\lstinline{numjobs}).}
     \label{fig:eval:fio4k:metrics}
 \end{figure}
 
@@ -3796,6 +3786,7 @@ What follows is a description of the benchmarks:
     \centering
     \includegraphics{fig/evaluation/appbench__zilpmem_vs_lwb.pdf}
     \caption{App Benchmarks: ZIL-PMEM vs. ZIL-LWB. The number on each bar indicates the speedup over \textit{zfs-lwb}.}
+    \label{fig:eval:appbenchmarks:zilpmem_vs_zilllwb}
 \end{figure}
 
 We first compare the speedup of ZIL-PMEM over ZIL-LWB.
@@ -4051,46 +4042,110 @@ We draw the following conclusions from our observations made above:
         \end{itemize}
 \end{itemize}
 
-\section{Discussion}
+\chapter{Conclusion}\label{ch:conclusion}
 
-Storage stacks that we investigated but showed subpar perf:
+We have shown that the current implementation of the ZFS Intent Log (ZIL) is unable to leverage the low latency and high throughput of Persistent Memory (PMEM) when used as a \textit{separate log device} (SLOG).
+Our analysis shows that the ZIL's on-disk structure (LWBs) as well as the mechanism to persist it (ZIO pipeline) are the main contributors of latency overhead.
+This observation motivated the development of ZIL-PMEM, our new ZIL implementation that exclusively targets PMEM.
 
-\begin{itemize}
-    \item xfs with separate log
-    \item ext4 with separate log
-\end{itemize}
+Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG and exposes the abstraction of per-dataset virtual, persistent, and garbage logs (HDLs).
+PRB/HDL scales to many concurrent writers, is specifically optimized for Intel Optane PMEM's performance characteristics, and features an innovative mechanism to avoid excessive on-CPU waiting for PMEM I/O.
+To our knowledge, we are the first to identify and address this problem in the domain of PMEM-aware filesystems.
+Our data structure design allows for efficient, crash-consistent insertion of log entries, ensures data integrity through checksums, and can represent logical dependencies between log entries.
+The recovery procedure is crash-consistent as well, handles lost entries correctly and gracefully, and handles \textit{machine check exceptions} (MCEs) via \lstinline{memcpy_mcsafe}.
 
-Future work:
+We integrate PRB/HDL into ZFS such that the old ZIL implementation (ZIL-LWB) and ZIL-PMEM can coexist at runtime.
+Our design approach for coexistence (\textit{ZIL kinds}) shares code and data structures that define ZFS's crash consistency guarantees towards userspace, but allows for sufficient flexibility in the persistent representation while minimizing code duplication and thus (hopefully) maintenance cost.
+Whereas there are still open issues related to dynamic changing of ZIL kinds after pool creation, and the overall degree to which ZIL kinds should be exposed to the user, we were able to successfully evaluate our implementation.
 
-Correctness:
-\begin{itemize}
-    \item ensure + regression testing for PMEM memory model
-    \item fault injection in ztest, equivalent to zio fault injection, should be easy
-    \item fault injection through ndctl-inject for kernel module \& ZTS: Although we force the replay callback to use the \lstinline{prb_replay_read_replay_node} function which handles \textit{machine check exceptions (MCE)} through \lstinline{memcpy_mcsafe()}, we should somehow ensure that such errors are actually handled.
-\end{itemize}
+We have validated correctness through extensive unit testing as well as existing ZIL tests in the ZFS Test Suite and the \textit{ztest} stress testing tool.
+We achieve X\% code coverage for our userspace tests, and Y\% code coverage for the kernel module whose code coverage is measured by the ZFS test suite.\todo{code coverage results}
+Regarding performance, we were able to demonstrate high speedups over ZIL-LWB in micro- and application benchmarks.
+The best microbenchmark result is the 8x (4k synchronous random writes), and the best application benchmark result is a speedup of 5.8x in RocksDB.
+The speedup for the same workloads on XFS on top of ZVOLs is, with a few exceptions, at least 2x.
+In comparison to other block-oriented systems that were adapted to PMEM (Ext4 \& XFS, on PMEM \& dm-writecache), ZFS with ZIL-PMEM performs exceptionally well for small synchronous operations (Redis, RocksDB), presumably due to lower write amplification.
+However, in particular in particular on pure PMEM and enabled DAX mode, the performance advantage of the Linux filesystems is still significant.
+Our experimental ITXG bypass with which we sought to demonstrate the benefits of a ``less'' sequential log structure for ZVOLs showed some benefit in the microbenchmark, but not in the application benchmarks.
+Our \textit{commit slot} mechanism to avoid excessive on-CPU waiting was shown to be effective for a single non-interleaved Optane DIMM but not necessary with four interleaved DIMMs (all on a single CPU socket).
 
-Performance:
-\begin{itemize}
-    \item proof our write amplification claims (measure number of bytes of PMEM written as well as pmem write time, for all configurations. Needs instrumentation of pmem block device emulation.)
-    \item ext4/xfs data journaling mode (ext4 has it, xfs not sure)
-    \item xfs pmem-aware log (Christoph Hellwig has patches...)
-    \item Scalability comparison of ZIL-LWB and ZIL-PMEM within the same dataset.
-        Expectation: ZIL-PMEM's mutex eventually becomes the bottleneck, but likely still better than ZIL-LWB due to massive latency headroom.
-\end{itemize}
-
-\chapter{Summary}\label{ch:summary}
+\todo{refer to literature review}
 
 \section{Future Work}\label{sec:futurework}
 
-\begin{description}
-    \item[Evaluation Of Replay Performance]
-    \item[Evaluation of Chunk Size] 
-    \item[Fuzzing] 
-    \item[ZTS]  run entire ZTS, not just ZIL-related tests
-    \item[] The Dirty Shutdown Handling guide describes the (hopefully rare) error case where flushes to persistent memory did not go as expected on power failure or system crash.  The guide describes how this failure is detected, and how it is communicated to applications via the dirty shutdown count.
-        - read garbage-collected chunks
-        - read immediately after writing
+We would like to systematically \textbf{verify the speculation on write amplification} that we made in the performance evaluation.
+For this purpose, we would need to instrument all storage stacks used in the evaluation.
+The minimum required metrics are the sum of application data that were written at the VFS level, and the number of bytes written to PMEM.
+Histograms for the distribution of the size could also be useful to determine the degree to which merging of IO operations takes place.
+Whereas eBPF could be used for this purpose, the measurement overhead at the level of PMEM access is not neglibile.
+Statically compiled, low overhead, per-CPU counters are likely preferrable.
+
+ZIL-PMEM's \textbf{multi-core scalability if the dataset is shared between threads} is significantly worse than with dedicated datasets.
+This can be observed by comparing the IOPS achieved by ZIL-PMEM in Figure~\ref{fig:eval:fio4k:metrics} (per-thread datasets) to \textit{fio-growing} in Figure~\ref{fig:eval:appbenchmarks:zilpmem_vs_zilllwb} (shared dataset).
+Whereas single-threaded IOPS are the same, \textit{fio-growing} only achieves approximately 50\% of the IOPS at scaling factors (=numjobs) 4 and 8.
+For \lstinline{numjobs=4}, we believe that this difference is due to the lack of parallelism when writing to the HDL (Section~\ref{sec:zilpmem:zilog}).
+This effect does not grow further for \lstinline{numjobs=8} because we know that we are already limited by PMEM bandwidth at \lstinline{numjobs=4}.
+Whereas we are fairly confident about these assumptions, a dedicated experiment to confirm them would be valuable.
+
+Our evaluation does not address the \textbf{performance of the recovery path}.
+We expect the relevant factors to be a) the number of dataset in the pool, b) the chunk size, and c) the number of chunks.
+The important metrics for recovery are a) pool import time, b) replay time, and c) DRAM usage by the HDL's holds on chunks.
+
+Also, the \textbf{influence of chunk size} has not yet been evaluated.
+We chose a large chunk size (128 MiB) for our evaluation to avoid contention on the PRB-wide mutex that must be held to aquire new chunks.
+% For example, the 128 MiB chunk size allows for $\frac{128 * 2^20}{256 + 192 + 4*2^10 + (256 - 192)} \sim 30840$ 4k log entries per chunk.
+% Consequently, only every ${30840^\text{th}}$ log entry would need to aquire the PRB-global mutex to get a new chunk.
+Since aquisition of new chunks has not been a relevant contributor to latency in any of our experiments, such a large chunk size is probably not required in practice.
+Further, it increases the number of lost log entries if an entry header in the chunk is corrupted.
+
+We explicitly ignored \textbf{space efficiency} as a concern for ZIL-PMEM because of the high capacity of Intel Optane PMEM.
+However, determining and potentially reducing the per-entry space overhead of ZIL-PMEM could be useful to reduce reduce media wear-out.
+Users with NVDIMM-N devices, which are usable with ZIL-PMEM in principle but have DRAM-level capacities and significantly higher prices, could benefit as well.
+Possible approaches to reduce space overhead are:
+\begin{itemize}[noitemsep]
+    \item Batching of multiple small log records into a single PRB entry (e.g., directory operations, file metadata).
+    \item Reduction or omission of padding in the in-PMEM structure.
+        Whereas padding to 256 byte multiples delivers the best performance on Optane PMEM, it is presumably unnecessary on DRAM \cite{yangEmpiricalGuideBehavior2020}.
+\end{itemize}
+
+We would like to extend our performance evaluation with the following storage stacks:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[ZIL ZIO Bypass By Saji Nair]
+    At the OpenZFS 2020 Developer summit, Saji Nair of storage vendor Nutanix presented a proof-of-concept for handling fast block devices more efficiently when configured as SLOGs.
+    The prototype avoids unnecessary sequential ordering of I/O operations when writing LWB.
+    It also avoids using the ZIO pipeline due to context switching overheads, issuing block I/O directly from the application thread instead.
+    The evaluation is limited to a single benchmark: a fio 8k (\!) sync write workload, spread across four zpools in identical configuration, achieves 75k IOPS at four threads, which is a 4x speedup over the upstream implementation.
+    With 16 threads, the system achieves its peak IOPS at approx. 125k IOPS, which is a speedup of 2.5x.
+    The source code for the prototype has not been published and the design is incomplete with regards to replay.~\cite{openzfsZILPerformanceImprovements2020}
+
+    \item[Ext4 journal\_dev / XFS logdev] Both XFS and Ext4 provide an option to configure dedicated journaling / write-ahead logging devices.
+        The comparison with ZIL-PMEM is thus naturally interesting.
+        However, performance during manual experimentation with this feature was unexpectedly low for both filesystems.
+        Since both configurations seem rather exotic, we used the configurations presented in the configuration instead.
+
+    \item[XFS DAX Log Patch] XFS developer Christoph Hellwig has published an unfinished patch that adds DAX support for the code in XFS that write its write-ahead log \cite{LKMLChristophHellwig}.
+        Our understanding of the patch is that it bypasses the block IO layer but leaves the persistent structure unchanged.
+        The experiment would be particularly interesting in combination with a (properly tuned) dedicated logdev configuration for XFS.
 \end{description}
+
+Regarding \textbf{correctness and robustness} of our implementation, we would like to explore the following topics in the future:
+\begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
+    \item[PMEM Programming Model Checkers] In Section~\ref{sec:rel_work:pmemspecifictools}, we have surveyed tools that automatically check whether the software under test issues the architectually required instructions for persistence.
+        Most were either inapplicable to kernel code or not publicly available.
+        However, the \textit{PMTest} tool has limited support for kernel code and could be used to validate our implementation.
+    \item[Fault Injection for PMEM Access] Whereas we are careful to always use \lstinline{memcpy_mcsafe} when accessing PMEM, we do not have tests that verify the error handling path.
+        As described in our literature review (Section~\ref{sec:rel_work:fault_injection}), fault injection is the tool of choice for such tests.
+        Either \textit{ndctl-inject} or an extension of ZFS's existing fault injection infrastructure that cover's PRB's PMEM access could be used.
+    \item[Fuzzing] Fuzzing could potentially be used harden PRB/HDL against unexpected state in PRB.
+        This is particularly relevant if support for OpenZFS Native Encryption is added in the future.
+        Our software engineering efforts to facilitate testing of PRB/HDL enable fuzzing at the data structure level.
+\end{description}
+
+Our implementation does not yet attempt to \textbf{detect write errors or unsafe shutdowns} (ref. Section~\ref{sec:background:pmemprogrammingmodel}).
+The PRB garbage collection procedure presents an opportunity to eagerly detect media errors by traversing a chunk's content before garbage-collecting it.
+If the PMEM hardware detects an error, the problem will be surfaced via an MCE and can be reported to the user.
+For end-to-end checking, PRB could also store some form of checksum of a chunk's content in the chunk's DRAM representation that could be validated during garbage collection.
+Regarding unsafe shutdowns, it would be useful to have integration with the \lstinline{zpool status} command to detect the problem and potentially prevent import of the pool to make the user aware of this ``very rare event''\cite[Chapter 17]{Scargall2020}.
+However, we believe that ZIL-PMEM's existing measures to detect data corruption should be able to discover problems on the fly.
 
 \backmatter
 
