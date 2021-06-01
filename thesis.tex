@@ -1250,8 +1250,8 @@ We introduce the concept of \textit{ZIL kinds} to ZFS.
 The ZIL kind is a pool-scoped variable that determines the pool's strategy for persisting ZIL entries.
 A zpool's ZIL kind is determined by the following rule:
 if the pool has exactly one SLOG and that SLOG is PMEM, the ZIL kind is ZIL-PMEM. Otherwise, it is ZIL-LWB.
-As explained in Section~\ref{ch:openzfs_background:zillwb_persistence}, ZIL-LWB uses ZFS's metaslab allocator to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
-In contrast, ZIL-PMEM disables metaslab allocation for the PMEM SLOG device and uses the PMEM space directly.
+As explained in Section~\ref{ch:openzfs_background:zillwb_persistence}, ZIL-LWB uses the SPA to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
+In contrast, ZIL-PMEM disables exempts the PMEM SLOG device from the SPA and uses the PMEM space directly.
 
 We partition the PMEM SLOG's space into fixed-size contiguous segments called \textit{chunks}.
 We develop a data structure called \textit{PRB} that consumes these chunks and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
@@ -2804,7 +2804,7 @@ The ZIL API provides the \lstinline{zil_suspend} and \lstinline{zil_resume} func
 \lstinline{zil_resume} reverts the state to normal operation.
 Compatibility code for versions of ZFS prior to the \textit{fast snapshots} rely on ZIL suspend \& resume for taking snapshots.
 For newer pool versions, the only consumer is \lstinline{spa_reset_logs}: when removing a SLOG from the pool, the ZIL is temporarily suspended to ensure that the SLOG does not contain valid log entries.
-After the SLOG is removed, the ZIL is resumed and the metaslab allocator uses the remaining SLOGs or the main pool devices to allocated LWBs.
+After the SLOG is removed, the ZIL is resumed and the SPA uses the remaining SLOGs or the main pool devices to allocate LWBs.
 
 With regard to ZIL kinds, only the \lstinline{spa_reset_logs} use case is relevant since ZIL kinds require a more recent pool version than the \textit{fast snapshots} feature.
 Our design for changing ZIL kinds (Section~\ref{sec:zil_kinds:change}) requires suspension of all ZIL activity and thus subsumes the ZIL-LWB specific \lstinline{zil_suspend} and \lstinline{zil_resume}.
