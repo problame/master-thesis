@@ -99,8 +99,8 @@
 \thesistype{ma}
 \primaryreviewer{Prof.\ Dr.\ Frank Bellosa}
 \advisor{Lukas Werling, M.Sc.}{}
-\thesisbegindate{TODO}
-\thesisenddate{TODO}
+\thesisbegindate{7 December 2020}
+\thesisenddate{7 June 2021}
 \maketitle
 
 \input{kit_style/declaration}
@@ -111,9 +111,9 @@ We first analyze the sub-par performance of the existing ZIL implementation (ZIL
 We observe that block-device oriented abstractions and data structures account for the vast majority of wall clock time spent per synchronous I/O operation.
 We propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets PMEM to take advantage of its remarkable performance characteristics.
 We refactor ZFS to support different \textit{ZIL kinds} at runtime, enabling coexistence of ZIL-LWB and ZIL-PMEM.
-ZIL-PMEM maintains the same crash consistency guarantees as the old ZIL towards userspace and use the same checksum to ensure data integrity of the ZIL content.
-We validate our core data structure through extensive unit testing and exercise our integration into ZFS using the upstream test suite and stress testing tools.
-Our performance evaluation shows a speedup of up to 8x on the same Intel Optane PMEM hardware.
+ZIL-PMEM maintains the same crash consistency guarantees towards userspace as ZIL-PMEM and uses the same checksum to ensure data integrity.
+We validate our core data structure through extensive unit testing as well as the upstream test suite and stress testing tool.
+Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a single-threaded 4k synchronous random write workload on the same storage hardware.
 
 \mainmatter
 \cleardoublepage
