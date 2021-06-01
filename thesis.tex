@@ -1463,9 +1463,20 @@ Given two entries $E_a$, $E_b \in S$ for the same HDL, the replay order is a tot
 \end{align*}
 For our example in Figure~\ref{fig:prb_hdl_log_structure_example}, this results in the following replay sequences, depending on the value of $precrash\_txg$.
 
+
 \begin{figure}[H]
+    % https://www.tablesgenerator.com/#
+    % fig_src/static/prb_hdl_log_structure_example__replay.tgn
     \centering
-    \includegraphics[height=4cm]{fig/prb_hdl_log_structure_example__replay}
+        \begin{tabular}{r|l|l|l|l|l|l|l|l|l|}
+        \multicolumn{1}{l|}{}              & \multicolumn{9}{c|}{Replay Sequence} \\
+        \multicolumn{1}{c|}{precrash\_txg} & A  & B  & C  & D & E & F & G & H & I \\ \hline
+        3                                  & x  & x  & x  & x & x & x & x & x & x \\
+        4                                  &    &    & x  & x & x & x & x & x & x \\
+        5                                  &    &    &    & x &   & x &   & x & x \\
+        6                                  &    &    &    &   &   & x &   &   & x \\
+        7                                  &    &    &    &   &   &   &   &   &   \\ \cline{2-10} 
+    \end{tabular}
     \caption{Replay sequences for the log depicted in Figure~\ref{fig:prb_hdl_log_structure_example}, by $precrash\_txg$. }
     \label{fig:prb_hdl_log_structure_example__replay}
 \end{figure}
