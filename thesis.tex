@@ -1109,7 +1109,7 @@ Our observations lead us to the following conclusions:
 The reason is that there is an inherent conflict of goals for ZIO:
 whereas the ZIL is strictly latency-oriented, all other consumers (\textit{txg sync}, \textit{scrubbing}, \textit{zfs send/recv}) are throughput-oriented.
 The pipeline-oriented, parallelized architecture of ZIO is important for throughput and provides great flexibility, but increases latency through context switches.
-This problem is well known in the ZFS community, see \cite{openzfsZILPerformanceImprovements2020}.\todo{more quotes, find gh issues, etc}
+This problem is well known in the ZFS community, see \cite{openzfsZILPerformanceImprovements2020,ZFSSubredditRichardYaoCommentsOnPoorSynchronousWritePerformance,OpenZFSGithubIssueNVMeReadPerformanceZioPipeliningOverheadTimChaseComment}.
 
 \textbf{Second, the persistent representation of the ZIL as a chain of LWBs poses a severe and unnecessary overhead on PMEM.}
 For one, the latency amortization provided by LWBs and the timeout mechanism is unnecessary at PMEM-level latencies where it is cheaper to persist the log records on an individual basis than batching them in LWBs and coordinating with other threads on the matter.
@@ -1242,7 +1242,7 @@ Our justification is twofold.
 First, PMEM capacities are significantly higher than DRAM.
 For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128~GiB.
 Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{ref background section? this sentence should remain, though}
-For ZIL-LWB, small SLOG devices of \SI{16} to 32~GiB are sufficient in practice.
+For ZIL-LWB, small SLOG devices of \SI{16} to 32~GiB are sufficient in practice \cite{OpenZFSDocsWorkloadTuningSynchronousIO}.
 Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
 \section{Design Overview}\label{sec:designoverview}
@@ -1706,7 +1706,7 @@ If for some reason $(42,2)$ becomes visible again, and we start replaying, then 
 And if $(42,2)$ were to replace $(42,1)$ or $(42,3)$, we would not even notice the counter mismatch when arriving at $E_{seal}$.
 This behavior seems desirable in the sense that replay recovers as much committed data as possible.
 However, in combination with WR\_INDIRECT ZIL log records, it can lead to pool corruption.
-ZIL-PMEM does not currently support WR\_INDIRECT records due to this problem as well as another WR\_INDIRECT-related issue that affects ZIL-LWB.\todo{link github issue on leaking allocated blocks}
+ZIL-PMEM does not currently support WR\_INDIRECT records due to this problem as well as another WR\_INDIRECT-related issue that also affects ZIL-LWB \cite{OpenZFSGithubIssueZilLeaksClaimedBlocksInSeveralEdgeCases}.
 Our proposed solution in the OpenZFS issue tracker could be used by ZIL-PMEM to properly detect changes to the last generation after claiming, and to support WR\_INDIRECT if desired.
 
 \section{PRB: DRAM Data Structure}\label{di:prb:dramdatastructure}
@@ -2843,7 +2843,7 @@ It is our impression that traversal of the ZIL-LWB chain for the purpose of data
 The reason is that ZIL-LWB cannot distinguish data corruption from the end of the LWB chain because it relies on invalid checksums to detect the end of the chain.
 It is conceivable that, for claimed-but-not-replayed ZILs, lost LWBs could be detected and surfaces as errors to the user.
 However, the current ZIL implementation suggests that this case has never been a top priority of the ZIL design.
-For example, losing a claimed-but-not-replayed log entry can leak space in the main pool or cause a crash during pool import.\todo{github issues + what I asked on slack today 2021-05-05}
+For example, losing a claimed-but-not-replayed log entry can leak space in the main pool or cause a crash during pool import \cite{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords,OpenZFSGithubIssueFailingDebugAssertionWhenLosingClaimedNotReplayedLWBs}.
 
 Other ZIL kinds or a future revision of ZIL-LWB might be able to detect the loss of log entries and handle such situations more gracefully.
 In that case, an abstract integrity check method on the vtable that operates only on the physical structure, not runtime state, might be advisable.
@@ -3049,7 +3049,7 @@ The following cases required additional code to adapt between the two domains:
         The second pass (\lstinline{zil_claim}) does ZIL-LWB's version of claiming and records the maximum claimed log record in the ZIL header.
         It discards traversal errors because it assumes that no online log corruption happend since the first pass.
         (Note that \lstinline{zil_claim} does have a return value, but only due to software-technical reasons. It must always return zero.)
-        ZIL-LWB's approach opens a window for time-of-check vs time-of-use bugs which we discovered and reported during development.\todo{ref}
+        ZIL-LWB's approach opens a window for time-of-check vs time-of-use bugs which we discovered and reported during development \cite{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords}.
         In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption during claiming and replay (see Section~\ref{di:prb:ccrecovery}).
 
         Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.

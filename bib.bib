@@ -801,6 +801,54 @@
   organization = {{GitHub}}
 }
 
+@online{OpenZFSDocsWorkloadTuningSynchronousIO,
+  title = {Workload {{Tuning}} — {{OpenZFS}} Documentation},
+  url = {https://openzfs.github.io/openzfs-docs/Performance%20and%20Tuning/Workload%20Tuning.html#synchronous-i-o},
+  urldate = {2021-06-02},
+  file = {/home/cs/Zotero/storage/ZJBZWQGA/Workload Tuning.html}
+}
+
+@online{OpenZFSGithubIssueFailingDebugAssertionWhenLosingClaimedNotReplayedLWBs,
+  title = {{{ZIL}}: {{Failing}} ({{Debug}}) {{Assertion When Losing Claimed}}-{{Not}}-{{Replayed LWBs}} · {{Issue}} \#12179 · Openzfs/Zfs},
+  shorttitle = {{{ZIL}}},
+  url = {https://github.com/openzfs/zfs/issues/12179},
+  urldate = {2021-06-02},
+  abstract = {If we lose log records in claimed-not-replayed logs, we fail an ASSERT during pool import. zfs/module/zfs/zil.c Lines 423 to 425 in 296a4a3 ASSERT(!claimed || !(zh-\&gt;zh\_flags \&amp; ZIL\_CLAIM\_LR\_S...},
+  file = {/home/cs/Zotero/storage/ZBKCFPAE/12179.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
+@online{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords,
+  title = {{{ZIL}}: {{Better}} / {{Noisier Handling Of Lost Claimed}}-{{Not}}-{{Replayed Log Records}} · {{Issue}} \#11364 · Openzfs/Zfs},
+  shorttitle = {{{ZIL}}},
+  url = {https://github.com/openzfs/zfs/issues/11364},
+  urldate = {2021-06-02},
+  abstract = {ZIL: Better / Noisier Handling Of Lost Claimed-Not-Replayed Log Records Problem 1: Pre-Import Bitflips In Claimed-Not-Replayed LWBs \$ zpool create tank /dev/sda1 log /dev/nvme0n1 \$ do some sync wri...},
+  file = {/home/cs/Zotero/storage/FWC4ZBEN/11364.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
+@online{OpenZFSGithubIssueNVMeReadPerformanceZioPipeliningOverheadTimChaseComment,
+  title = {{{NVMe Read Performance Issues}} with {{ZFS}} (Submit\_bio to Io\_schedule) · {{Issue}} \#8381 · Openzfs/Zfs},
+  url = {https://github.com/openzfs/zfs/issues/8381#issuecomment-475316726},
+  urldate = {2021-06-02},
+  file = {/home/cs/Zotero/storage/2NKS9BQ6/8381.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
+@online{OpenZFSGithubIssueZilLeaksClaimedBlocksInSeveralEdgeCases,
+  title = {{{ZIL Leaks Claimed Blocks In Several Edge}}-{{Cases}} · {{Issue}} \#11363 · Openzfs/Zfs},
+  url = {https://github.com/openzfs/zfs/issues/11363},
+  urldate = {2021-06-02},
+  abstract = {ZIL Leaks Claimed Blocks In Several Cases Problem 1: SPA\_LOG\_CLEAR leaks claimed WR\_INDIRECT data blocks zfs/module/zfs/zil.c Lines 859 to 872 in 61868bb if (spa\_get\_log\_state(zilog-\&gt;zl\_spa) == ...},
+  file = {/home/cs/Zotero/storage/MEZEUEU4/11363.html},
+  langid = {english},
+  organization = {{GitHub}}
+}
+
 @video{openzfsMattAhrensLecture2016,
   title = {Matt {{Ahrens}} - {{Lecture}} on {{OpenZFS}} Read and Write Code Paths},
   editor = {{OpenZFS}},
@@ -1293,6 +1341,18 @@
   eventtitle = {11th \{\vphantom\}{{USENIX}}\vphantom\{\} {{Workshop}} on {{Hot Topics}} in {{Storage}} and {{File Systems}} ({{HotStorage}} 19)},
   file = {/home/cs/Zotero/storage/W529PYG9/Yoshimura et al. - 2019 - EvFS User-level, Event-Driven File System for Non.pdf;/home/cs/Zotero/storage/KLYJJHQ2/yoshimura.html},
   langid = {english}
+}
+
+@online{ZFSSubredditRichardYaoCommentsOnPoorSynchronousWritePerformance,
+  title = {Synchronous {{IO}} Is Th…},
+  author = {{ryao}},
+  date = {2020-07-30T21:47:22},
+  url = {www.reddit.com/r/zfs/comments/i0u9zs/horrendous_zfs_performance_on_nvme/fzskjiz/},
+  urldate = {2021-06-02},
+  annotation = {Post URL: www.reddit.com/r/zfs/comments/i0u9zs/horrendous\_zfs\_performance\_on\_nvme/},
+  file = {/home/cs/Zotero/storage/ECYHRLXM/fzskjiz.html},
+  organization = {{r/zfs}},
+  type = {Reddit Comment}
 }
 
 @article{zhangChameleonDBKeyvalueStore2021,
