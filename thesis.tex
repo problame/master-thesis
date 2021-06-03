@@ -199,7 +199,6 @@ Hence we focus on techniques for crash consistency and data integrity that might
 
 \subsubsection{In-Kernel PMEM Filesystems}\label{sec:in_kernel_pmem_filesystems}
 The initial wave of publications around the use of PMEM in filesystems produced a set of systems that were implemented completely in the kernel.
-\todo{we don't yet compare these systems with ZIL-PMEM. should we? Maybe in a compact section after we presented the design?}
 
 \newcommand{\citerelwork}[2]{\textbf{#1~\cite{#2}}}
 
@@ -707,7 +706,7 @@ The ZFS term for the metadata about an individual object set that contains user 
 
 \subsection{On-Disk State}\label{sec:openzfs_background:ondiskstate}
 
-ZFS's on-disk structure is a tree of SPA-allocated blocks that link\todo{reference?} to their children through \textit{block pointers}.
+ZFS's on-disk structure is a tree of SPA-allocated blocks that link to their children through \textit{block pointers}.
 Block pointers are 128 byte sized structures that, among other metadata, contain the size, checksum and DVA of the pointee.
 % It is possible to specify multiple DVAs in a single block pointer where each DVA contains an identical copy of the pointee.
 % When a block pointer is ``dereferenced'', the pointee can be read through any of the DVAs stored in the block pointer.
@@ -971,9 +970,9 @@ We conclude that ZIL-LWB's structure and the ZIO pipeline as its persistence mec
 \section{Benchmark Setup}\label{ch:lwb_analysis:setup}
 Our main evaluation system has the following hardware configuration:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[CPU] 2 x Intel(R) Xeon(R) Silver 4215 CPU \@ 2.50GHz
-    \item[Mainboard] Supermicro X11DPi-N(T)/X11DPi-NT, BIOS 3.1a 10/16/2019
-    \item[DRAM] 16 x Micron 8GiB DDR4 2933MT/s (18ASF2G72PDZ-2G9E1), evenly distributed across sockets.
+    \item[CPU] 2 x Intel Xeon Silver 4215 CPU \@ 2.50GHz
+    \item[Mainboard] Supermicro X11DPi-NT, BIOS 3.1a 10/16/2019
+    \item[DRAM] 16 x Micron 8GiB DDR4 2933MT/s (\mbox{18ASF2G72PDZ-2G9E1}), evenly distributed across sockets.
     \item[NVMe] 3 x Micron PRO 960GB NVMe, 512 byte namespace format (MTFDHBA960TDF)
     \item[PMEM] 4 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), two per socket.
 \end{description}
@@ -981,9 +980,9 @@ We use the following software stack:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Kernel] Linux 5.9, Debian buster (5.9.0-0.bpo.5-amd64)
     \item[Userland] Debian GNU/Linux (buster)
-    \item[fio] fio-3.23-28-g7064
-    \item[bpftrace] bpftrace v0.12.0
-    \item[bcc] v0.16.0-11-ga74413b0
+    \item[fio - Flexible I/O Tester] Built from Git commit \mbox{fio-3.23-28-g7064}~\cite{fioGithubPage}.
+    \item[bpftrace - High-level Language for eBPF] Version v0.12.0~\cite{bpftraceGithubPage}.
+    \item[BPF Compiler Collection (BCC)] Library used by bpftrace, built from source. Git commit \mbox{v0.16.0-11-ga74413b0}~\cite{IovisorBccGithubPage}.
     \item[OpenZFS] Our tree of OpenZFS with support for \textit{ZIL kinds} (Section~\ref{ch:zilkinds}).
         For this experiment, we use the ZIL-LWB ZIL kind.
         Note that using our tree rather than upstream OpenZFS is (slightly) favorable to ZIL-LWB because our tree contains performance optimizations in the ITX code that are shared among all ZIL kinds.
@@ -1002,7 +1001,7 @@ We use the following system configuration:
     \item For all datasets, we configure \lstinline{recordsize=4k} to match the fio workload and set \lstinline{compression=off} to avoid CPU overhead in the ZIO pipeline during txg sync.
 \end{itemize}
 
-We use \textit{fio}\todo{ref} to generate a workload of random 4KiB writes (\lstinline{blocksize=4k} and \lstinline{rw=randwrite}).
+We use fio to generate a workload of random 4KiB writes (\lstinline{blocksize=4k} and \lstinline{rw=randwrite}).
 Each of 1--8 \lstinline{numjobs} threads performs random synchronous write system calls to a separate file per thread (\lstinline{ioengine=sync}, \lstinline{sync=1}, \lstinline{direct=0}, \lstinline{fsync=0}).
 Each file has a size of \lstinline{size=100MiB} which means that the written data volume grows with \lstinline{numjobs}, but the amount of dirty data (max.~800~MiB) remains well below the NVMe drive's bandwidth limits.
 To avoid scalability-bottlenecks in the ITX code, we place each thread's file onto a separate dataset using the option \lstinline{filename_format=/dut/ds$jobnum/fio_file}.
@@ -1054,7 +1053,7 @@ Figure~\ref{fig:lwbanalysis:zoomed_latency} shows the same latency data as Figur
 By comparing the numbers for \textit{async} and \textit{zil-lwb}, it is safe to assume that regardless of the value for \lstinline{numjobs}, ZIL-LWB adds at least 40~us of latency.
 We want to determine where this time is spent.
 
-We use dynamic instrumentation (eBPF via bpftrace\todo{ref}) to sum up the wall clock time spent in ZFS functions that are executed by the fio threads during a synchronous write operation.
+We use dynamic instrumentation (eBPF via bpftrace) to sum up the wall clock time spent in ZFS functions that are executed by the fio threads during a synchronous write operation.
 We then use the model in Figure~\ref{fig:lwbanalysis:breakdown_model} to compute the time spent in the asynchronous part of the write operation, the ITX layer, and ZIL-LWB-specific code.
 We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:breakdown_charts}.
 
@@ -1194,7 +1193,7 @@ We believe that our design can accommodate them without major changes.
 
 \csgoal{Support For OpenZFS Native Encryption}
 The ZIL-PMEM design presented in this section does not address OpenZFS native encryption.
-Intel Optane DC Persistent Memory supports transparent hardware encryption per DIMM at zero overhead\todo{cite spec}.
+Intel Optane DC Persistent Memory supports transparent hardware encryption per DIMM at zero overhead.
 In contrast, OpenZFS native encryption is per dataset and software-based.
 Given these significant differences in data and threat model, ZIL-PMEM cannot rely on Optane hardware encryption.
 Instead, ZIL-PMEM would need to invoke OpenZFS native encryption and decryption routines when writing or replaying log entries.
@@ -1237,7 +1236,7 @@ ZIL-PMEM is allowed to trade PMEM space for time and simplicity when presented w
 Our justification is twofold.
 First, PMEM capacities are significantly higher than DRAM.
 For example, the smallest Intel Optane DC Persistent Memory DIMM offered by Intel is 128~GiB.
-Second, the maximum amount of log entry space required from any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.\todo{ref background section? this sentence should remain, though}
+Second, the maximum amount of log records that need to be stored by any ZIL implementation is a function of the maximum amount of dirty data allowed in the zpool.
 For ZIL-LWB, small SLOG devices of \SI{16} to 32~GiB are sufficient in practice \cite{OpenZFSDocsWorkloadTuningSynchronousIO}.
 Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 
@@ -1816,7 +1815,7 @@ Its contents are as follows:
         \item Encoded Counters for dependency tracking.
     \end{itemize}
     \item[Body Length] We store the exact body length in bytes.
-    The zero padding in the chunk sequence is not considered part of the entry itself.\todo{fix that?}
+    The zero padding in the chunk sequence is not considered part of the entry itself.
     \item[Body Checksum] Fletcher checksum of the body data.
     \item[Header Checksum] Fletcher checksum of the header to ensure data integrity of the metadata.
     If the header checksum is corrupted then none of the other header fields can be trusted.
@@ -3740,7 +3739,7 @@ The system configuration is as follows:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[System] Supermicro SYS-1029U-TRT
     \item[Mainboard] Supermicro X11DPU, Version 1.10
-    \item[CPU] 2 x Intel(R) Xeon(R) Gold 5220 CPU \@ 2.20GHz \\
+    \item[CPU] 2 x Intel Xeon Gold 5220 CPU \@ 2.20GHz \\
         18 cores per socket, 2-way SMT per core
     \item[DRAM] 12 x 32GiB SK HYNIX DDR4-2666, HMA84GR7CJR4N-VK  % sudo dmidecode | grep -C8 DRAM | grep 'Part Number'
     \item[PMEM] 8 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), 4 per socket.
