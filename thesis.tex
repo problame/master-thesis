@@ -594,12 +594,19 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         The consequence is that software must detect the platform's properties at runtime, and dispatch to the implementation that ensures correctness and performance.
         \cite{rudoffPersistentMemoryProgramming2017}
 
-    \item[Ordering] Due to pipelined, out-of-order, or speculative execution, the program order of stores does not necessarily correspond to the order observed from outside the thread that issues them.
-        This is a well-known problem in the context of synchronization between CPU cores, but it applies to Persistent Memory as well.
-        To guarantee that stores reach PMEM in a certain order, it is necessary to insert a store barrier instruction (\lstinline{SFENCE}) between them.
-        For example, on our evaluation system, we must issue \lstinline{store+cacheflush+sfence} or \lstinline{nontemporal_store+sfence} instructions per store.
-        With regard to ZIL-PMEM, we cover this and the previous two aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.
-        \cite{rudoffPersistentMemoryProgramming2017}
+    \item[No Transactionality] Even if a platform only \textit{guarantees} persistence if CPU cashes are flushed, dirty cache lines may still be evicted and/or written back to PMEM at any time during program execution.
+        Which cache lines are affected by this, and the order in which write-back happens, is a dynamic implementation-defined property of the microarchitecture, e.g., the cache eviction policy.
+        Any modification that exceeds the atomicity guarantee must therefore be assumed to be partially written (``torn'') in PMEM until after caches are flushed.~\cite{Scargall2020}
+
+    \item[Ordering]
+        Due to out-of-order and/or speculative execution, the program order of instructions does not necessarily correspond to the granularity and order in which their effects become observable from outside the thread that issues them.
+        The degree to which such effects can happen depends on the CPU architecture's memory ordering model.
+        On x86\_64, the ordering guarantees are generally strong%
+        \footnote{x86\_64 guarantees sequential consistency for pages mapped as \textit{write-back cacheable} (WB), details see~\cite{braisSignificanceX86SFENCE2019}.}
+        but some of the more efficient cache flushing instructions (\lstinline{clflushopt}, \lstinline{clwb}) as well as non-temporal stores (``\lstinline{ntstore}'') are weakly ordered and could be reordered or combined.
+        To prevent such effects, it is necessary to insert a store barrier instruction (\lstinline{sfence}).
+        For example, on our evaluation system, we must use \lstinline{ntstore A + sfence + ntstore B} to ensure that B is written to PMEM after A.
+        With regard to ZIL-PMEM, we cover this and the previous three aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.~\cite{rudoffPersistentMemoryProgramming2017,braisSignificanceX86SFENCE2019}
 
     \item[Error Handling] The error handling story for PMEM suffers particularly from the implicitness of the PMEM IO model.
 
