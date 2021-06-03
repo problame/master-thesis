@@ -106,13 +106,13 @@
 \input{kit_style/declaration}
 
 \chapter{Abstract}
-PMEM is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
+Persistent memory (PMEM) is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
 OpenZFS is a storage system that combines volume management and filesystem services.
 The ZFS Intent Log (ZIL) is ZFS's mechanism for supporting synchronous IO semantics.
 The current ZIL implementation (ZIL-LWB) exhibits sub-par performance when configuring Linux's \mbox{/dev/pmem} pseudo block device as a separate log device (SLOG) for use by the ZIL.
 An analysis of the distribution of wall clock time among the ZFS components that are involved in synchronous writes reveals that block-device-oriented abstractions and data structures account for the vast majority of overall latency.
 
-Motivated by this observation, we propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets Persistent Memory to take advantage of its remarkable performance characteristics.
+Motivated by this observation, we propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets persistent memory to take advantage of its remarkable performance characteristics.
 We refactor ZFS to support different \textit{ZIL kinds} at runtime, enabling coexistence of ZIL-LWB and ZIL-PMEM.
 ZIL-PMEM maintains the same crash consistency guarantees towards userspace as ZIL-LWB and uses the same checksum to ensure data integrity.
 We validate our core data structure through extensive unit testing as well as the upstream test suite and stress testing tool.
@@ -156,7 +156,7 @@ A typical configuration today is to add a fast NVMe drive to an HDD-based zpool.
 Adding a fast SLOG accelerates LWB writes because LWBs are preferentially allocated from the SLOG.
 Note that the space required for a SLOG is small since LWBs are obsoleted as soon as txg sync writes out the dirty state that the log records persist.
 
-\textbf{Persistent Memory (PMEM)} is an emerging storage technology that provides low-latency memory-mapped byte-addressable persistent storage.
+\textbf{Persistent Memory (PMEM)} is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
 The Linux kernel can expose PMEM as a pseudo block device (/dev/pmem) whose sectors map directly to PMEM pages.
 Unmodified block device consumers can use it as a fast block device, albeit with the caveat of lacing sector atomicity guarantees.
 Block device consumers that are aware of PMEM can get \textbf{d}irect-\textbf{ac}cess (DAX) to \mbox{/dev/pmem}'s pages and bypass the block IO stack completely.
@@ -187,7 +187,7 @@ We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a conc
 
 \chapter{Literature Review \& Technical Background}\label{ch:litreviewandbackground}
 In this chapter we present prior work in the field of persistent memory and its application in various storage systems developed in research and industry.
-The last two sections on Persistent Memory and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB and the design of ZIL-PMEM in the subsequent chapters.
+The last two sections on persistent memory and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB and the design of ZIL-PMEM in the subsequent chapters.
 
 \section{Literature Review}
 We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash-consistency models, checkers for the PMEM programming model, and general methods to determine filesystem robustness in the presence of hardware failures.
@@ -497,11 +497,11 @@ However, a fault injection tool or ``editor'' utility with an understanding of Z
 \section{Persistent Memory}
 Persistent memory (PMEM), also known as storage-class memory (SCM) or non-volatile main memory (NVMM), is a novel type of storage technology that is positioned between DRAM and flash in the storage media hierarchy.
 It is memory-mapped, byte-addressable, and accessible through regular load/store instructions, but, in contrast to DRAM, provides durability and significantly larger capacities.
-In this section we cover the technical background on Persistent Memory that is required to understand the design and implementation of ZIL-PMEM.
+In this section we cover the technical background on persistent memory that is required to understand the design and implementation of ZIL-PMEM.
 We recommend \cite{rudoffPersistentMemoryProgramming2017} and \cite{Scargall2020} for a more comprehensive introduction.
 
 \subsubsection{Hardware: Intel Optane DC Persistent Memory}
-Intel Optane DC Persistent Memory is currently the only broadly available Persistent Memory product on the market.
+\textit{Intel Optane DC Persistent Memory} is currently the only broadly available persistent memory product on the market.
 The hardware form factor for Optane PMEM is that of a regular (volatile) DIMM that is installed into the same type of slot on the motherboard.
 Supercapacitor-backed non-volatile DIMMs (NVDIMM-N) have been available for a longer period of time but are generally not comparable to PMEM.
 NVDIMM-N devices use on-DIMM DRAM as the primary data store, and only persist it to on-DIMM flash in case of power loss.
@@ -578,7 +578,7 @@ However, for ZIL-PMEM, only the kernel-internal use of the \lstinline{dax_direct
 
 \subsection{PMEM Programming Model}\label{sec:background:pmemprogrammingmodel}
 
-Programming for Persistent Memory comes with a set of challenges that do not arise when interfacing with block devices.
+Programming for persistent memory comes with a set of challenges that do not arise when interfacing with block devices.
 The reason is that the CPU microarchitecture effectively becomes a semi-transparent IO stack:
 
 \begin{description}
@@ -1261,7 +1261,7 @@ Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 We add the concept of \textit{ZIL kinds} to ZFS.
 A zpool's ZIL kind is a pool-scoped variable that determines its strategy for persisting the ZIL to stable storage.
 The ZIL's record format, logical structure, and code that creates and replays log records remain shared among all ZIL kinds.
-The default ZIL kind is \textit{ZIL-LWB}, but if a zpool has exactly one SLOG and that SLOG is Persistent Memory, its ZIL kind is \textit{ZIL-PMEM}.
+The default ZIL kind is \textit{ZIL-LWB}, but if a zpool has exactly one SLOG and that SLOG is persistent memory (/dev/pmem), its ZIL kind is \textit{ZIL-PMEM}.
 ZIL-LWB uses the SPA to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices (ref. Section~\ref{ch:openzfs_background:zillwb_persistence}).
 For ZIL-PMEM, we exempt the PMEM SLOG's allocatable space from block allocation to use directly for \textit{PRB/HDL}, our PMEM-specific data structure.
 
@@ -4066,7 +4066,7 @@ We draw the following conclusions from our observations made above:
 
 \chapter{Conclusion}\label{ch:conclusion}
 
-We have demonstrated that the ZFS Intent Log~(ZIL), which is ZFS's mechanism for supporting synchronous IO semantics, is unable to take advantage of Persistent Memory (PMEM) as a \textit{separate log device} (SLOG).
+We have demonstrated that the ZFS Intent Log~(ZIL), which is ZFS's mechanism for supporting synchronous IO semantics, is unable to take advantage of persistent memory (PMEM) as a \textit{separate log device} (SLOG).
 Our analysis shows that the ZIL's block-device-oriented data structure (LWB chain), as well as ZFS's IO abstraction (ZIO pipeline), add considerable latency overhead.
 This observation motivated the development of ZIL-PMEM, our new ZIL implementation that exclusively targets PMEM.
 
