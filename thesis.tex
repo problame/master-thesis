@@ -2413,47 +2413,6 @@ Whenever \textit{txg sync} has finished syncing a txg $T$ to the main pool it mu
 Note that unlike writing or recovering an individual log, garbage collection is a PRB-level operation.
 Synchronization is handled internally.
 
-% \subsubsection{ZIL header}\label{di:prb:persistent:zilheader}
-% The ZIL header (\lstinline{zil_header_pmem_t}) is the persistent representation of the HDL state.
-% Not every aspect of the runtime state of HDL is reflected in it, but only the information needed for claiming and replay.
-% The ZIL header has the following states, some of which have associated data:
-% \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-%     \item[nozil] There is no log for this dataset. (No associated data.)
-%     \item[logging] The log has been created and entries might have been written to PMEM.
-%         Claiming has never been attempted or never been completed.
-%         The log remains in this state for the entire time until it is destroyed or the system crashes. Associated data: \textit{Log GUID}.
-%     \item[replaying] The log has been claimed and replay is ongoing. Associated data: \textit{Log GUID} and \textit{serialized replay algorithm state}.
-% \end{description}
-% The diagram in Figure~\ref{fig:prb_persistent_structure__header_states_plus_example} visualizes the state transitions that the ZIL header goes through as the log is created, written and recovered.
-
-% \begin{figure}
-%     \includegraphics[height=15cm]{fig/prb_persistent_structure__header_states_plus_example}
-%     \caption{
-%         The states of \lstinline{zil_header_pmem_t} and the events that cause state transitions.
-%         The grey annotations illustrates the path from log creation to finished recovery.}
-%     \label{fig:prb_persistent_structure__header_states_plus_example}
-% \end{figure}
-
-% We use the following C structure to encode the ZIL header state.
-% The \lstinline{zhpm_st} field is always valid and is one of \lstinline{ZHPM_ST_NOZIL}, \lstinline{ZHPM_ST_LOGGING}, or \lstinline{ZHPM_ST_REPLAYING}.
-% The \lstinline{zhpm_guid_} fields are only valid in states \lstinline{ZHPM_ST_LOGGING} and \lstinline{ZHPM_ST_REPLAYING}.
-% The \lstinline{zhpm_replay_state} is only valid in state \lstinline{ZHPM_ST_REPLAYING}.
-% Hence we will describe its contents in Section~\ref{di:prb:recovery}.
-% \begin{lstlisting}
-% typedef enum zil_header_pmem_state {
-%     ZHPM_ST_NOZIL,
-%     ZHPM_ST_LOGGING,
-%     ZHPM_ST_REPLAYING,
-% } zil_header_pmem_state_t;
-
-% typedef struct zil_header_pmem {
-%     uint64_t zhpm_st; /* zil_header_pmem_state_t */
-%     uint64_t zhpm_guid_1;
-%     uint64_t zhpm_guid_2;
-%     zilpmem_replay_state_phys_t zhpm_replay_state;
-% } zil_header_pmem_t;
-% \end{lstlisting}
-
 
 \chapter{Integration into ZFS}\label{ch:zilpmem}
 In this chapter we describe how we integrate PRB/HDL into ZFS in three steps.
