@@ -1021,22 +1021,6 @@ We run this fio workload on the following storage configurations:
         In this configuration, fio mmaps the PMEM namespace directly and thereby bypasses the kernel completely.
 \end{description}
 
-% \begin{description}
-%     \item[ioengine] sync
-%     \item[end_fsync] 1
-%     \item[size] 100MiB
-%     \item[blocksize] 4k
-%     \item[rw] randwrite
-%     \item[time\_based] 1
-%     \item[runtime] 60 seconds
-%     \item[ramp\_time] 2 seconds
-%     \item[sync] 1
-%     \item[direct] 0
-%     \item[fsync] 0
-%     \item[numjobs] We vary this variable from 1 to 8.
-%     \item[group_reporting] 1
-% \end{description}
-
 \section{Results}\label{ch:lwb_analysis:results}
 
 The following graphs show the achieved IOPS and per-thread latency by \lstinline{numjobs}.
@@ -1483,12 +1467,6 @@ Overflows could be handled in software, e.g., by temporarily destroying the log 
 However, our implementation has no such provisions because even with the (absurdly) conservative value of 1~ns write time per log entry, the first overflow event would only occur in 584~years if $gen$ starts at~$1$.
 
 \section{HDL Replay: Dependency Tracking}\label{di:prb:deptrack}
-% \begin{description}
-    %     % \item[Garbage Collection] After a txg $t_{synced}$ has been synced, PRB garbage-collects all entries $\mathcal{E}_{gc} := { E : E.txg \le t_{synced}}$.
-    %     %     This does not interfere with replay because, if the system crashes, it is guaranteed that $precrash\_txg \le t_{synced}$ and hence $\mathcal{e}_{gc}$ would never be part of a replay sequence.
-    %     \item[Loss of Entries] If such a missing entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) and is for an unsynced txg ($E_d.txg > precrash\_txg$) must no longer be replayed.
-        % However, all entries $E_p$ that do not depend on $E_m$ ($E_p \le E_m$) and need replay ($E_p.txg > precrash\_txg$) should still be replayed.
-    % \end{description}
 Replay is complicated by the fact that the entries that were stored in the PRB can be lost.
 For example, bitflips in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
 If an entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) must no longer be replayed.
@@ -1815,14 +1793,6 @@ This design improves modularity and testability because it decouples the followi
 With regard to persistent data structure, this separation of concerns relieves PRB from the need to define structures to track the partitioning of PMEM space into chunks.
 It is the consumer's responsibility to provide the PRB with the same set of chunks every time the PRB is constructed.
 However, since we do not store absolute addresses, the mapping of each chunk in the virtual address space is allowed to change between PRB constructions.
-% Our implementation of ZIL-PMEM uses a simplistic partitioning scheme.
-% It uses a hard-coded chunk size of 128~MiB\todo{check} and partitions as an array the allocatable into contiguous segments of that size.
-% However, future work 
-% \todo{future work: dynamically add and remove chunks}
-
-% When the PRB is constructed, i.e., when the PMEM SLOG VDEV is added to the pool, the consumer initializes the PMEM structure in each chunk before passing them to PRB.
-% At all subsequent times when the PRB is constructed, the consumer must pass the same PMEM chunks to PRB's constructor function.
-% More precisely, the start addresses of the PMEM chunks are allowed to change but their effective PMEM address range must be the same every time the PRB is constructed.
 
 Entries are variable-length records and are stored within chunks in a contiguous sequence.
 Each entry is represented as a fixed-length 256 byte sized header and a variable-length body.
@@ -2228,16 +2198,6 @@ The following implementation details of the append operation are relevant for la
         \todo{we have no evaluation on impact of interrupt masking, future work}
 \end{itemize}
 
-%Note that a fully sequential chain of entries is sufficient for today's ZIL since the commit list assembled by the ITX code\todo{ref} is already sequential.
-%However, as pointed out by the example in the previous paragraph, full sequentiality is not always semantically necessary.
-%This observation has already led to a prototype design for ZIL-LWB that allows for more parallel IO if the entries in written LWBs are not interdependent~\cite{openzfsZILPerformanceImprovements2020}.
-%We interpret these findings as indicators that ZIL-PMEM --- and thus PRB --- should support parallelism on the write path in the form of diamond chains.
-%We present an application of diamond chains to ZVOLs in Section~\ref{sec:itxgbypass} and evaluate it in Section~\ref{ch:eval}\todo{precise}.
-
-%A generation is identified by its \textit{generation number} which is positive integer.
-%An entry is always associated with exactly one generation but a generation can contain many entries.
-%Entries within the same generation are identified through an \textit{id field} which is a positive integer.
-%Given entries $a$ and $b$, $a \text{depends on} b \Leftrightarrow a.gen > b.gen$ where $x.gen$ denotes the generation of entry $x$.
 
 \section{API Overview}\label{di:prb:api}
 In this section, we briefly discuss the API of PRB/HDL that is consumed by the ZIL-PMEM ZIL kind.
