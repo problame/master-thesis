@@ -178,7 +178,7 @@ in Chapter~\ref{ch:litreviewandbackground} we
  review prior work in the field of persistent memory related to filesystems and
  provide background knowledge on PMEM, as well as
  a detailed introduction to the components of ZFS that are relevant for this thesis.
-Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB's sub-par performance on the /dev/pmem SLOG.
+Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB's sub-par performance on a /dev/pmem SLOG.
 Our solution, \mbox{ZIL-PMEM}, is then presented Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the design.
 Our main contribution, the \textit{PRB/HDL} the data structure, is then presented in detail in Chapter~\ref{ch:prbhdl}.
@@ -1232,7 +1232,7 @@ We do not account for this behavior in the design and do not evaluate ZIL-PMEM i
 ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.\todo{future work}
 
 \csgoal{Only Works With SLOGs}
-Our approach to integrate ZIL-PMEM into ZFS is only applicable to PMEM SLOGs and does not work for a zpool that uses PMEM as main pool VDEVs.
+Our approach to integrate ZIL-PMEM into ZFS is only applicable to PMEM SLOGs and does not work for a zpool that uses PMEM as main VDEVs.
 Such pools continue to use ZIL-LWB.
 
 \csgoal{No Software Striping}
@@ -1809,7 +1809,7 @@ However, PRB only consumes the chunks, it does not create them.
 Chunk allocation is the responsibility of the PRB consumer, i.e., ZIL-PMEM.
 This design improves modularity and testability because it decouples the following two concerns:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Resource Acquisition] The PRB consumer is responsible for integrating PMEM SLOG VDEV into the zpool, discovering its memory mapping, and partitioning the PMEM space into chunks.
+    \item[Resource Acquisition] The PRB consumer is responsible for integrating the PMEM SLOG into the zpool, discovering its memory mapping, and partitioning the PMEM space into chunks.
     \item[PMEM Data Structure] PRB implements the persistent data structure that actually stores entries inside the chunks.
 \end{description}
 With regard to persistent data structure, this separation of concerns relieves PRB from the need to define structures to track the partitioning of PMEM space into chunks.
@@ -2620,8 +2620,8 @@ Synchronization is handled internally.
 \chapter{Integration into ZFS}\label{ch:zilpmem}
 In this chapter we describe how we integrate PRB/HDL into ZFS in three steps.
 First, in Section~\ref{ch:zilkinds}, we describe how we re-architect ZFS to support different ZIL implementations (\textit{ZIL Kinds)} at runtime (Section~\ref{ch:zilkinds}).
-Then, in Section~\ref{sec:pmemspavdev}, we present our approach to make ZFS's device management layer (VDEV) aware of persistent memory devices.
-Finally, in Section~\ref{sec:zilpmemzilkind}, we describe how we combine PRB/HDL and PMEM SLOG VDEVs into the new \textit{ZIL-PMEM} ZIL kind.
+Then, in Section~\ref{sec:pmemspavdev}, we present our approach to make ZFS's device management layer (VDEV) aware of persistent memory SLOG devices.
+Finally, in Section~\ref{sec:zilpmemzilkind}, we describe how we combine PRB/HDL and PMEM SLOGs into the new \textit{ZIL-PMEM} ZIL kind.
 
 \section{ZIL Kinds}\label{ch:zilkinds}
 Coexistence with the existing ZIL and preservation of ZFS's crash consistency guarantees are two requirements for ZIL-PMEM (see Section~\ref{sec:requirements}).
@@ -2907,9 +2907,9 @@ However, some design questions (see \ref{sec:zil_kinds:change} and \ref{sec:zil_
 Prior to the work presented in this thesis, ZFS had no concept of persistent memory.
 Fortunately, the requirements of ZIL-PMEM are very limited:
 \begin{itemize}[noitemsep]
-    \item \texttt{/dev/pmem} SLOGs must be recognized as such when they are added to the pool so that the ZIL-PMEM can be activated.
+    \item \texttt{/dev/pmem} SLOGs must be recognized as such (``\textit{PMEM SLOG}'') when they are added to the pool so that the ZIL-PMEM can be activated.
     \item The PMEM SLOG's allocatable space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, etc., see Section~\ref{sec:background:pmemprogrammingmodel}).
-        If direct access is not possible, the PMEM SLOG VDEV must be considered faulty and pool import must be refused.
+        If direct access is not possible, the PMEM SLOG must be considered faulty and pool import must be refused.
         We assume that direct access cannot be lost once it has been established.\todo{future work: memory hotplug}
 \end{itemize}
 
@@ -2956,7 +2956,7 @@ Any changes to the zpool topology (\lstinline{zpool add}, \lstinline{remove}, \l
 
 \subsection{PMEM Space Reservation \& PRB Construction}\label{sec:zilpmemzilkind:spacereservation}
 
-If the pool's ZIL kind is ZIL-PMEM, we reserve all of the allocatable space on the PMEM SLOG VDEV for PRB.
+If the pool's ZIL kind is ZIL-PMEM, we reserve all of the allocatable space on the PMEM SLOG for PRB.
 To accomplish this, we introduce a new allocation class called \lstinline{exempt} that is, by convention, never used for SPA allocations.
 In our current implementation, the \lstinline{zpool} command assigns this allocation class automatically to \lstinline{is_dax} SLOG VDEVs, instead of the \lstinline{log} allocation class.
 Note that the VDEV labels, which attribute the VDEV to the zpool and store parts of the zpool config, are located outside the allocatable space.
@@ -2975,12 +2975,12 @@ We use a simplistic partitioning scheme to divide the PMEM space into chunks.
 The main advantage of the scheme is that it does not need to persist any metadata:
 \begin{itemize}[noitemsep]
     \item Chunks have a hard-coded size of 128~MiB.
-    \item We partition the PMEM SLOG VDEV's allocatable space as a contiguous array of 128~MiB segments, starting at offset zero.
+    \item We partition the PMEM SLOG's allocatable space as a contiguous array of 128~MiB segments, starting at offset zero.
     \item Assuming $A$~bytes of space, this yields \lstinline{nchunks := A>>27} chunks and less than 128~MiB of wasted space at the end of the allocated space.
-    \item We do not store \lstinline{nchunks} anywhere. Instead, we prohibit online resizing of the PMEM SLOG VDEV which allows us to deterministically re-compute the value.
+    \item We do not store \lstinline{nchunks} anywhere. Instead, we prohibit online resizing of the PMEM SLOG which allows us to deterministically re-compute the value.
 \end{itemize}
 
-\textbf{Note:} Over the course of implementing and testing ZIL-PMEM, we observed that instead of attempting to exempt the PMEM SLOG VDEV's space from regular allocation, it is probably preferable to pre-allocate all the PMEM space on the SLOG VDEV from the SPA.
+\textbf{Note:} Over the course of implementing and testing ZIL-PMEM, we observed that instead of attempting to exempt the PMEM SLOG's space from regular allocation, it is probably preferable to pre-allocate all the PMEM space on the SLOG VDEV from the SPA.
 The reason is that some lesser-known components of ZFS expect that unallcoated SPA space can be overwritten in the background (e.g., the code that supports TRIM or the \textit{VDEV initialize} functionality).
 Also, there is existing infrastructure to prevent removal of SLOGs with existing SPA allocations, for which we currently require a ZIL-PMEM-specific special case.
 
@@ -3235,10 +3235,10 @@ In this chapter we evaluate whether ZIL-PMEM meets the project goals established
 
 Our high-level requirements for ZIL-PMEM were: simple administration, sharing of PMEM as a pool-wide resource, coexistence with the existing ZIL(-LWB), and conservation of the same crash consistency guarantees towards userspace.
 \begin{description}[noitemsep]
-    \item[Simple Administration] We have proposed a design where ZIL-PMEM is automatically activated if exactly one PMEM SLOG VDEV is configured (Section~\ref{sec:zilpmemzilkind:activation}).
+    \item[Simple Administration] We have proposed a design where ZIL-PMEM is automatically activated if exactly one PMEM SLOG is configured (Section~\ref{sec:zilpmemzilkind:activation}).
         This would make ZIL-PMEM completely transparent to the administrator and not bring any user-visible change in ZFS's administrative tools.
         However, our implementation does not yet support changing the ZIL kind of a zpool after its creation (Section~\ref{sec:zil_kinds:change}).
-    \item[Pooled Storage] PRB wraps the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
+    \item[Pooled Storage] PRB abstracts the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
     \item[Coexistence] The introduction of \textit{ZIL Kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
         The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure but enables coexistence of different persistence strategies.
     \item[Same Guarantees] ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB towards userspace, courtesy of the shared logical structure and PRB/HDL's guarantees.
@@ -3430,8 +3430,8 @@ We identify three major challenges in adapting OpenZFS's testing infrastructure 
 
     \item[VDEV Management]
         A significant number of tests in ZTS and ztest address the different ways to change the pool's VDEV config, e.g., addition, removal, growing, and offlining of VDEVs.
-        This is related to ZIL-PMEM because our design goal is to transparently switch ZIL kinds based on the absence or presence of exactly one PMEM SLOG VDEV.
-        However, the current state of our implementation does not yet support changing ZIL kinds after pool creation and prevents changes to the SLOG VDEV config to ensure that the PMEM SLOG VDEV is always present (Section~\ref{sec:zil_kinds:change}).
+        This is related to ZIL-PMEM because our design goal is to transparently switch ZIL kinds based on the absence or presence of exactly one PMEM SLOG.
+        However, the current state of our implementation does not yet support changing ZIL kinds after pool creation and prevents changes to the SLOG section of the VDEV config to ensure that the same PMEM SLOG always remains part of the pool (Section~\ref{sec:zil_kinds:change}).
         Thus, many tests that should work correctly in the final implementation currently fail when attempting to change the VDEV config.
 \end{description}
 
