@@ -119,12 +119,13 @@ We validate our core data structure through extensive unit testing as well as th
 Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a single-threaded 4k synchronous random write workload on the same storage hardware.
 
 \mainmatter
+\listoftodos
+
 \cleardoublepage
 \phantomsection
 \addcontentsline{toc}{chapter}{Contents}
 \tableofcontents
 
-\listoftodos
 
 \chapter{Introduction}
 The task of a filesystem is to provide non-volatile storage to applications in the form of the \textit{file} abstraction.
@@ -1209,10 +1210,10 @@ More experimentation and experience with ZIL-PMEM will be necessary to determine
 
 \csgoal{No NUMA Awareness}
 \citeauthor{yangEmpiricalGuideBehavior2020} recommend to ``avoid mixed or multi-threaded accesses to remote NUMA nodes. [...]  For writes, remote Optane’s latency is 2.53x (ntstore) and 1.68x higher compared to local"~\cite{yangEmpiricalGuideBehavior2020}.
-We do not account for this behavior in the design and do not evaluate ZIL-PMEM in a NUMA configuration.\todo{future work}
+We do not account for this behavior in the design and do not evaluate ZIL-PMEM in a NUMA configuration.
 
 \csgoal{No Data Redundancy}
-ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.\todo{future work}
+ZIL-PMEM provides data integrity protections but does not provide a mechanism for data redundancy.
 
 \csgoal{Only Works With SLOGs}
 Our approach to integrate ZIL-PMEM into ZFS is only applicable to PMEM SLOGs and does not work for a zpool that uses PMEM as main VDEVs.
@@ -1494,12 +1495,11 @@ If we used a single sequence counter to check for missing entries, we would be u
 It is sufficient to include only those counters $E.C_{txg_i}$ in the entry metadata whose transaction groups $txg_i$ had not yet been synced at the time that $E.gen$ started.
 The reason is that a) the replay sequence only contains entries in unsynced txgs and b) $E$ only depends on entries $D$ with $D.gen < E.gen$.
 Since there are only three possible unsynced txgs at any time (\textit{open}, \textit{quiescing}, \textit{syncing}), we only need to store three $(txg_i, C_{txg_i})$ tuples per log entry.
-In fact, since txgs never skip a number, we only store the value of $txg_{open}$ and recompute
+In fact, since txgs never skip a number, we only need to store the value of $txg_{open}$ and recompute
 \begin{align*}
     txg_{quiescing} & = txg_{open} - 1 \\
     txg_{sycing} & = txg_{open} - 2
 \end{align*}
-\todo{compact encoding is just an idea, not in impl yet}
 
 We use the same algorithm to compute the counters on both the write and recovery path.
 This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
@@ -1540,6 +1540,7 @@ Hence, we compute them from the \textit{last table} once and cache the results u
 
 Figure~\ref{fig:prb_counters_table__computation_and_encoding} contains an illustration of the process that converts the \textit{last table} into the counters table.
 We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
+Note that our implementation does not yet use the compact encoding of the counters table.
 
 \begin{figure}[H]
     \centering
@@ -1670,7 +1671,6 @@ If \mbox{$E_m.txg \le precrash\_txg$}, the loss of the entry is unnoticed becaus
 If $E_m$ is skipped by step~\ref{ccReplay:skipreplayed}, the loss of the entry might be worth reporting but does not affect replay because it has already been replayed.
 Otherwise, dependency tracking will eventually detect that $E_m$ is missing if, and only if, any other entry depends on it.
 $E_{seal}$ is an artificial dependency to ensure that lost entries in the last generation are detected.
-\todo{this is not yet implemented}
 
 We handle online data corruption as follows.
 Claiming and replay only operate on DRAM-buffered copies of the entry metadata called \textit{replay node}.
@@ -1687,7 +1687,11 @@ And if $(42,2)$ were to replace $(42,1)$ or $(42,3)$, we would not even notice t
 This behavior seems desirable in the sense that replay recovers as much committed data as possible.
 However, in combination with WR\_INDIRECT ZIL log records, it can lead to pool corruption.
 ZIL-PMEM does not currently support WR\_INDIRECT records due to this problem as well as another WR\_INDIRECT-related issue that also affects ZIL-LWB which we discovered during this thesis~\cite{OpenZFSGithubIssueZilLeaksClaimedBlocksInSeveralEdgeCases}.
-Our proposed solution in the \mbox{OpenZFS} issue tracker could be used by ZIL-PMEM to properly detect changes to the last generation after claiming, and to support WR\_INDIRECT if desired.
+The solution that we proposed in the upstream issue tracker could also be used by ZIL-PMEM to properly detect entries that appeared after claiming.
+Specifically, it would provide infrastructure to store a variable amount of data in the main pool during claiming.
+ZIL-PMEM could use this facility to record the identity of all claimed WR\_INDIRECT entries in the main pool.
+Before replaying an entry, it would then check whether the entry had been claimed, and treat it as absent if that is not the case.
+Since this solution would be superior to $E_{seal}$, we have \textbf{not yet implemented handling of $E_{seal}$}.
 
 \section{PRB: DRAM Data Structure}\label{di:prb:dramdatastructure}
 After the description of HDL in the previous sections, we now move down to the level of PRB.
@@ -1955,7 +1959,6 @@ After \textit{txg sync} has written out that \textit{max txg}, it triggers garba
 
 We remove all entries in a chunk in $O(1)$ time by zeroing the first entry header in the chunk (location: offset zero).
 This is sufficient to prevent any farther traversal of the chunk by the algorithm presented in the previous section because a zero log GUID is defined as a sequence terminator.
-\todo{need explicitly impl log guid 0}
 
 \section{The Write Path}\label{di:prb:write}
 A thread that writes an entry to a HDL needs to perform the following tasks:
@@ -2194,7 +2197,6 @@ The following implementation details of the append operation are relevant for la
         PRB is written directly from the task that calls \lstinline{zil_commit} and thus incurs this overhead.
         We refactor ZFS's FPU state management abstraction so that FPU context is only saved once for both checksum computation and writing to PMEM.
         The time that is spent in this suboptimal state is bounded by the maximum log entry size.
-        \todo{we have no evaluation on impact of interrupt masking, future work}
 \end{itemize}
 
 
@@ -2234,7 +2236,7 @@ void prb_teardown_hdl(hdl_t *hdl,
 \end{lstlisting}
 
 HDLs recover their DRAM state from the ZIL header (\lstinline{zil_header_pmem_t}).
-The setup \lstinline{prb_setup_hdl} function takes a constant pointer to the last-synced header.\todo{update impl}
+The setup \lstinline{prb_setup_hdl} function takes a constant pointer to the last-synced header.
 The pointer is not internalized in HDL --- the pointee's lifetime may be as short as the function call.
 The PRB consumer instantiates all dataset's HDLs during pool import or whenever a new dataset is created.
 For new datasets, the initial value for the ZIL header (state \textit{nozil}) is set by \lstinline{zil_header_pmem_init}.
@@ -2266,7 +2268,6 @@ It can either abort pool import or choose to abandon the log.
 To abaondon the log, the API consumer must first tear down the HDL using \lstinline{prb_teardown_hdl(..., abandon_claim=true, ...)} to release claims made during \lstinline{prb_claim}.
 Then, the API consumer can reset the ZIL header content using \lstinline{zil_header_pmem_init} and re-instantiate the HDL using \lstinline{prb_setup_hdl}.
 The re-instantiated HDL is in state \textit{nozil}.
-\todo{need third option to retry with an override flag that discards the unreplayable part of the log}
 
 After all HDLs have been claimed the pool import procedure starts \textit{txg sync} which writes out the header updates made by claiming in the \lstinline{pool_first_txg}.
 From that point on there is no need to coordinate HDL operations between different datasets.
@@ -2323,7 +2324,7 @@ The function forces the API consumer to do DRAM buffering and protects against o
 
 \lstinline{prb_replay} can fail either due to an error returned by the callback, due to an error in the scanning phase, or due to log corruption.
 If the error is due to missing log entries, the struct returned by the API contains the \textit{witness} log entry (see Section~\ref{di:prb:deptrack}).
-The caller decides whether to retry replay or abandon the remaining unreplayable part of the log\todo{retry with an override flag that discards the unreplayable part of the log}.
+The caller decides whether to retry replay or abandon the remaining unreplayable part of the log.
 End of replay must be acknowledged explicitly by calling \lstinline{prb_replay_done}.
 Abandoning the log is done using \lstinline{prb_destroy_log} (next section).
 
@@ -2350,7 +2351,7 @@ The caller distinguishes the cases based on the function's return value.
 
 Log writers use the \lstinline{prb_write_entry} function to write log records to the HDL.
 The log record is treated as an opaque blob.
-PRB does not provide facilities to version different version of the encoding.\todo{should we? future work}
+PRB does not provide facilities to version different version of the encoding.
 In addition to the body (\lstinline{body_dram}, \lstinline{body_len}), the log writer must provide two pieces of metadata:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[txg] The transaction group $T_{i_{txg}}$ of the DMU transaction $T_i$ whose changes $C_i$ are encoded in the log entry.
@@ -2666,7 +2667,7 @@ Fortunately, the requirements of ZIL-PMEM are very limited:
     \item \texttt{/dev/pmem} SLOGs must be recognized as such (``\textit{PMEM SLOG}'') when they are added to the pool so that the ZIL-PMEM can be activated.
     \item The PMEM SLOG's allocatable space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, etc., see Section~\ref{sec:background:pmemprogrammingmodel}).
         If direct access is not possible, the PMEM SLOG must be considered faulty and pool import must be refused.
-        We assume that direct access cannot be lost once it has been established.\todo{future work: memory hotplug}
+        We assume that direct access cannot be lost once it has been established.
 \end{itemize}
 
 We add a new boolean attribute \lstinline{is_dax} for \lstinline{disk} VDEVs in the zpool config format.
@@ -2724,7 +2725,7 @@ ZIL-PMEM uses \lstinline{dax_direct_access} API (ref. Section~\ref{sec:backgroun
 When the pool is exported, the \lstinline{spa_unload} procedure frees the \lstinline{prb_t}.
 The \lstinline{prb_t}'s lifetime is thus a contiguous sub-span of the lifetime of \lstinline{spa_t}.
 \item  Immediately after allocating the PRB, pool import sets up the chunk objects and adds them to the PRB.
-If the pool is being created, we reset the chunks to a known PMEM state (\lstinline{prb_chunk_initialize_pmem}) before adding them to PRB.\todo{impl is a little different, doesn't matter?}
+If the pool is being created, we reset the chunks to a known PMEM state (\lstinline{prb_chunk_initialize_pmem}) before adding them to PRB.
 \end{enumerate}
 
 We use a simplistic partitioning scheme to divide the PMEM space into chunks.
@@ -2797,10 +2798,17 @@ The following cases required additional code to adapt between the two domains:
         It discards traversal errors because it assumes that no online log corruption happend since the first pass.
         (Note that \lstinline{zil_claim} does have a return value, but only due to software-technical reasons. It must always return zero.)
         ZIL-LWB's approach opens a window for time-of-check vs time-of-use bugs which we discovered and reported during development \cite{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords}.
-        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption during claiming and replay (see Section~\ref{di:prb:ccrecovery}).
+        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption (see Section~\ref{di:prb:ccrecovery}).
 
         Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.
         Until that shortcoming of our implementation is addressed, we trigger a kernel panic if \lstinline{prb_claim} returns an error.
+
+    \item[Error Handling During Replay]
+        Analogous to claiming, ZIL-LWB does not assume that the log will be corrupted between pool import (\lstinline{zil_check_log_chain}) and replay (\lstinline{zil_replay})~\cite{OpenZFSGithubIssueFailingDebugAssertionWhenLosingClaimedNotReplayedLWBs}.
+        However, ZIL-PMEM detects online corruption and returns an error from \lstinline{prb_replay} (see Section~\ref{di:prb:ccrecovery}).
+
+        Again, due to time constraints, we have not yet refactored the consumers of the ZIL to enable handling of replay errors.
+        Until this shortcoming has been addressed, ZIL-PMEM triggers a kernel panic if \lstinline{prb_replay} returns an error.
 
     \item[ZIL Header Updates]
         Remember from Section~\ref{di:prb:api:hdl} on the PRB/HDL API that the responsibility of \textit{persisting} the ZIL-PMEM header is split:
@@ -3858,6 +3866,10 @@ Our \textit{commit slot} mechanism for avoidance of excessive on-CPU waiting whe
 
 \section{Future Work}\label{sec:futurework}
 
+NUMA
+
+we have no evaluation on impact of interrupt masking, future work~\ref{di:prb:write:crashconsistency}
+
 We would like to systematically \textbf{validate the speculations about write amplification} that we made in the evaluation.
 This requires instrumentation of all benchmarked storage stacks.
 The minimum required metrics are the sum of application data that were written at the VFS level, and the number of bytes written to PMEM.
@@ -3941,6 +3953,10 @@ For the \textbf{integration into ZFS}, we anticipate the following future work i
 
     \item[ZIL Kinds User Experience] The goal to make ZIL-PMEM, or ZIL kinds in general, fully transparent to the administrator should be reconsidered.
         (See Section~\ref{sec:zilpmemzilkind:activation} for our rationale.)
+
+    \item[Handling Of Claiming And Replay Errors] PRB/HDL detects and reports online log corruption but ZIL-PMEM currently does not propagate these errors and panics instead.
+        As described in Section~\ref{sec:zilpmem:zilog}, this is due to shortcomings in the upstream error handling model claiming and replay errors.
+        We would like to refactor the pool import code so that users are better informed about log corruption and can specify the action that the respective ZIL implementation should take in that case.
 
     \item[Support for Native Encryption] The threat model for supporting \mbox{OpenZFS} Native Encryption in ZIL-PMEM must be the same as for ZIL-LWB.
         The entry header and body need to be authenticated and the entry body needs to be encrypted.
