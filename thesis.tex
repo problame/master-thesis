@@ -3527,9 +3527,32 @@ After our changes to the ZIL-related \lstinline{ZTS} tests, all of them pass (or
 They exposed significantly less implementation issues than \textit{ztest}.
 (We used ZTS during initial development and only adopted \textit{ztest} later in the process, hence we were able to experience the difference.)
 
-We use the code coverage analysis tools included in the OpenZFS and Linux kernel build system to get some quantitative results.
-The following table compares the code coverage by $\{\text{Upstream}, \text{Our Tree}\} \times  \{\text{ztest + PRB/HDL tests}), \text{ZTS with kernel module}\}$.
-\todo{todo}
+We use the \lstinline{gcov} code coverage analysis tool that is supported in the OpenZFS and Linux kernel build system to get some quantitative results.
+The table in Figure~\ref{fig:eval:correctness_line_coverage} compares the line coverage for the userspace tests (\textit{ztest} and PRB/HDL tests) and kernel module tests (ZTS SLOG tests listed above) between our tree of OpenZFS and the merge-base commit of our tree with the upstream \lstinline{master} branch.
+\todo{final results}
+
+\newcommand{\cssubheader}[1]{\multicolumn{1}{c}{ \rotatebox[origin=c]{90}{#1} } }
+
+\begin{figure}[H]
+    \centering
+    \begin{tabular}{ll|rrr|rrr}
+                                                                                                                                                                                                                                                                                                                                          \toprule
+                                                            &                                               & \multicolumn{3}{c}{\textbf{Upstream}}                                                                                    & \multicolumn{3}{c}{\textbf{Our Tree}}                                                                                       \\
+                                                            &                                               & \cssubheader{\#Covered}                      & \cssubheader{\#Lines}             & \cssubheader{Coverage}                & \cssubheader{\#Covered}               & \cssubheader{\#Lines}                          & \cssubheader{Coverage}             \\ \midrule
+    \multirow{5}{*}{\rotatebox[origin=c]{90}{Kernel}}       & zil.c                                         & 1120                                         & 1383                              & 80.98\%                               & 375                                   & 514                                            & 72.96\%                            \\
+                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1060                                  & 1211                                           & 87.53\%                            \\
+                                                            & zil\_pmem.c                                   &                                              &                                   & 0.00\%                                & 601                                   & 838                                            & 71.72\%                            \\
+                                                            & PRB/HDL                                       &                                              &                                   & 0.00\%                                & 872                                   & 1227                                           & 71.07\%                            \\
+                                                            & \textbf{Total}                                & \textbf{1120}                                & \textbf{1383}                     & \textbf{80.98\%}                      & \textbf{2908}                         & \textbf{3790}                                  & \textbf{76.73\%}                   \\ \hline
+    \multirow{5}{*}{\rotatebox[origin=c]{90}{Userspace}}    & zil.c                                         & 1219                                         & 1379                              & 88.40\%                               & 351                                   & 501                                            & 70.06\%                            \\
+                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1083                                  & 1204                                           & 89.95\%                            \\
+                                                            & zil\_pmem.c                                   &                                              &                                   & 0.00\%                                & 649                                   & 806                                            & 80.52\%                            \\
+                                                            & PRB/HDL                                       &                                              &                                   & 0.00\%                                & 1031                                  & 1183                                           & 87.15\%                            \\
+                                                            & \textbf{Total}                                & \textbf{1219}                                & \textbf{1379}                     & \textbf{88.40\%}                      & \textbf{3114}                         & \textbf{3694}                                  & \textbf{84.30\%}                   \\  \bottomrule
+    \end{tabular}
+    \caption{Line Coverage measured by \lstinline{gcov}.}
+    \label{fig:eval:correctness_line_coverage}
+\end{figure}
 
 \clearpage
 
