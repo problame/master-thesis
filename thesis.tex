@@ -2629,7 +2629,7 @@ Our solution to both of these problems is to re-architect ZFS to support differe
 In order to make the integration of ZIL-PMEM seamless to the end user (goal: simple administration), the persistence strategy is the same for all datasets in a pool.
 The variable that determines the pool's persistence strategy is its \textit{ZIL kind}.
 The following sub-sections present how we refactor ZFS to support ZIL kinds.
-The existing ZIL, which uses LWBs for persistence (cf. Section~\ref{ch:openzfs_background:zillwb_persistence}) becomes the first ZIL kind called \textit{ZIL-LWB}.
+The existing ZIL, which uses LWBs for persistence (see Section~\ref{ch:openzfs_background:zillwb_persistence}) becomes the first ZIL kind called \textit{ZIL-LWB}.
 Note that some listings and figures in this section already mention ZIL-PMEM.
 However, in our implementation, all refactoring steps presented in this section are separate commits that precede the introduction of the ZIL-PMEM ZIL kind.
 
@@ -3426,7 +3426,7 @@ We identify three major challenges in adapting OpenZFS's testing infrastructure 
         They are problematic for ZIL-PMEM because we only added support for DAX block devices, not files.
         To support \textit{file} VDEVs for ZIL-PMEM, the ZFS kernel module would need to \lstinline{mmap} the file in the kernel.
         We are unaware of a kernel API that allows an external module, such as ZFS, to accomplish this.
-        For correctness, the memory mapping would further need to map directly to PMEM, i.e., be located on a Linux filesystem mounted with the \textit{dax} mount option (cf. Section~\ref{sec:background:pmemconfiguration}).
+        For correctness, the memory mapping would further need to map directly to PMEM, i.e., be located on a Linux filesystem mounted with the \textit{dax} mount option.
 
     \item[VDEV Management]
         A significant number of tests in ZTS and ztest address the different ways to change the pool's VDEV config, e.g., addition, removal, growing, and offlining of VDEVs.
