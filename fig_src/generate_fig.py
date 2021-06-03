@@ -28,6 +28,7 @@ names_in_page_order = [
         "prb_replay_resume_architecture",
         "zil_writepath_activity_diagram_write_fsync_sync",
         "itxg_bypass_viz",
+        "correctness_eval_example_I-_shape",
         ]
 
 def process_lucidchart_zip(zip_path, format, outdir, overwrite=False):

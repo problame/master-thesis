@@ -106,12 +106,15 @@
 \input{kit_style/declaration}
 
 \chapter{Abstract}
-We explore Persistent Memory (PMEM) as the storage medium for the ZFS Intent Log (ZIL) which is ZFS's mechanism for supporting synchronous I/O semantics.
-We first analyze the sub-par performance of the existing ZIL implementation (ZIL-LWB) when using Linux's /dev/pmem pseudo-block device as a separate log device for the ZIL.
-We observe that block-device oriented abstractions and data structures account for the vast majority of wall clock time spent per synchronous I/O operation.
-We propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets PMEM to take advantage of its remarkable performance characteristics.
+PMEM is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
+OpenZFS is a storage system that combines volume management and filesystem services.
+The ZFS Intent Log (ZIL) is ZFS's mechanism for supporting synchronous I/O semantics.
+The current ZIL implementation (ZIL-LWB) exhibits sub-par performance when configuring Linux's \mbox{/dev/pmem} pseudo block device as a separate log device (SLOG) for use by the ZIL.
+An analysis of the distribution of wall clock time among the ZFS components that are involved in synchronous writes reveals that block-device oriented abstractions and data structures account for the vast majority of overall latency.
+
+Motivated by this observation, we propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets Persistent Memory to take advantage of its remarkable performance characteristics.
 We refactor ZFS to support different \textit{ZIL kinds} at runtime, enabling coexistence of ZIL-LWB and ZIL-PMEM.
-ZIL-PMEM maintains the same crash consistency guarantees towards userspace as ZIL-PMEM and uses the same checksum to ensure data integrity.
+ZIL-PMEM maintains the same crash consistency guarantees towards userspace as ZIL-LWB and uses the same checksum to ensure data integrity.
 We validate our core data structure through extensive unit testing as well as the upstream test suite and stress testing tool.
 Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a single-threaded 4k synchronous random write workload on the same storage hardware.
 
@@ -132,7 +135,7 @@ Writeback of the buffer to persistent storage is deferred to an implementation-d
 However, many applications have stronger durability requirements.
 For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted to non-volatile storage before clearing the transaction.
 Otherwise, a system crash and recovery after clearing could result in the pre-purchase balance being restored, enabling double-spending by the account holder.
-These \textbf{synchronous I/O} semantics must be requested through APIs auch as \lstinline{fsync} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{OpenGroupFsync}.
+These \textbf{synchronous I/O} semantics must be requested through APIs such as \lstinline{fsync} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{OpenGroupFsync}.
 
 The \textbf{Zettabyte File System (ZFS)} combines volume management and filesystem services.
 It pools many block devices into a storage pool (\textit{zpool}) which can hold thousands of sparsely allocated filesystems.
@@ -493,15 +496,15 @@ However, a fault injection tool or ``editor'' utility with an understanding of Z
 
 \section{Persistent Memory}
 Persistent memory (PMEM), also known as storage-class memory (SCM) or non-volatile main memory (NVMM), is a novel type of storage technology that is positioned between DRAM and flash in the storage media hierarchy.
-It is memory-mapped, byte-addressable, and accessible through regular CPU instructions, but, in contrast to DRAM, provides durability and significantly larger capacities.
+It is memory-mapped, byte-addressable, and accessible through regular load/store instructions, but, in contrast to DRAM, provides durability and significantly larger capacities.
 In this section we cover the technical background on Persistent Memory that is required to understand the design and implementation of ZIL-PMEM.
 We recommend \cite{rudoffPersistentMemoryProgramming2017} and \cite{Scargall2020} for a more comprehensive introduction.
 
 \subsubsection{Hardware: Intel Optane DC Persistent Memory}
-Intel Optane DC Persistent Memory is currently the only broadly available Persistent Memory product on the market.\todo{need proof?}
+Intel Optane DC Persistent Memory is currently the only broadly available Persistent Memory product on the market.
 The hardware form factor for Optane PMEM is that of a regular (volatile) DIMM that is installed into the same type of slot on the motherboard.
-Whereas supercapacitor-backed non-volatile DIMMs (NVDIMM-N) have, they are generally not comparable to PMEM:
-NVDIMM-N devices use on-DIMM DRAM as the primary data store, and only persists it to on-DIMM flash in case of power loss.
+Supercapacitor-backed non-volatile DIMMs (NVDIMM-N) have been available for a longer period of time but are generally not comparable to PMEM.
+NVDIMM-N devices use on-DIMM DRAM as the primary data store, and only persist it to on-DIMM flash in case of power loss.
 In contrast, Optane PMEM uses the 3D-Xpoint non-volatile memory technology as the primary data store, although a smaller amount of on-DIMM DRAM is used for caching \cite{yangEmpiricalGuideBehavior2020}.
 % NVDIMM-P whose electrical and mechanical interface has recently been standardized as NVDIMM-P \cite{JEDECNVDIMM_P} ....
 
@@ -509,14 +512,14 @@ The performance of DRAM and NVDIMM-N differs significantly from Optane PMEM.
 We summarize the insights of \citeauthor{yangEmpiricalGuideBehavior2020} published in \cite{yangEmpiricalGuideBehavior2020}.
 For our purposes, the most relevant figures in the paper are ``Figure 4: Bandwidth vs. thread count'', ``Figure 5: Bandwidth over access size'', and ``Figure 7: Read latency''.
 \begin{description}[noitemsep]
-    \item[Latency] The authors report 100~ns of random read latency (load instructions) for NUMA-local DRAM and ca 300~ns Optane.
+    \item[Latency] The authors report 100~ns of random read latency (load instructions) for NUMA-local DRAM and ca. 300~ns for Optane.
         For writes (store + cache flush), they report marginal differences in latency (both approximately 100~ns).
     \item[Maximum Bandwidth] The maximum achievable bandwidth to a single Optane DIMM is ca. 6.5 GiB/s for reads and 2 GiB/s for writes.
         Through \textit{interleaving} of multiple Optane DIMMs, almost linear scaling in maximum bandwidth with no severe latency cost is possible.
         However, even with six interleaved Optane DIMMs, the peak write bandwidth is ca. 13 GiB/s for PMEM and at least 30 GiB/s for DRAM (6 DRAM DIMMs per socket on their system).
     \item[Scalability] PMEM and DRAM exhibit very different scalability with regard to access from multiple threads.
         Whereas DRAM bandwidth scales linearly before it eventually reaches a plateau, the Optane DIMM configurations' bandwidth declines after its peak.
-        This is particularly noticable for the single-DIMM configuration where write bandwidth decreases to less than 1 GiB/s after a peak of ca. 2 GiB/s.
+        This is particularly noticeable for the single-DIMM configuration where write bandwidth decreases to less than 1 GiB/s after a peak of ca. 2 GiB/s.
     \item[Access Granularity] Access size also severely affects the maximum achievable bandwidth for both reads and writes.
         In particular, for a single Optane DIMM, access sizes of 64 and 128 bytes only achieve ca. 30\% and 50\% of the maximum read and write bandwidth.
 \end{description}
@@ -532,16 +535,17 @@ We could confirm the authors' observations on our evaluation system and follow t
 The Optane DIMMs in a system must be provisioned from BIOS or the \textit{ipmctl} utility.
 Optane supports two major modes of operation:
 in \textit{Memory Mode}, Optane acts as volatile main memory that uses the DRAM modules as a cache. Memory Mode is not relevant for this thesis.
-In \textit{App Direct} mode, Optane appears as a physical memory \textit{region} (aka 'interleave set') that is separate from DRAM. % aka: https://docs.pmem.io/ndctl-user-guide/concepts/nvdimm-namespaces
+In \textit{App Direct} mode, Optane appears as a physical memory \textit{region} (aka ``interleave set'') that is separate from DRAM. % aka: https://docs.pmem.io/ndctl-user-guide/concepts/nvdimm-namespaces
 Regions must also be provisioned by the administrator.
 It is possible to make each Optane DIMM appear as a separate region (\textit{AppDirectNotInterleaved}), or to interleave multiple Optane DIMMs into a single region.
 As suggested by the name, the addresses in an interleaved region map to alternating DIMMs, thereby improving performance.
 
 The space of a region can be further split up into so-called \textit{namespaces}.
 To quote the specification:
+\begin{displayquote}
 ``A	namespace defines a contiguously­‐addressed range of Non-­Volatile Memory similar to a SCSI Logical Unit (LUN) or an NVM Express \mbox{namespace}.
-[...] [A] Persistent Memory namespace [...] provides a byte­‐addressable range of Persistent Memory in the system physical address space
-''\cite{NVDIMMNamespaceSpecification2015}.
+[...] [A] Persistent Memory namespace [...] provides a byte­‐addressable range of Persistent Memory in the system physical address space.''~\cite{NVDIMMNamespaceSpecification2015}
+\end{displayquote}
 We recommend \cite{PmemIoConcepts} and \cite{NVDIMMNamespaceSpecification2015} for more technical details.
 
 In Linux, namespaces are managed using the \textit{ndctl} utility.
@@ -578,7 +582,7 @@ Programming for Persistent Memory comes with a set of challenges that do not ari
 The reason is that the CPU microarchitecture effectively becomes a semi-transparent IO stack:
 
 \begin{description}
-    \item[Smaller Atomaticity Granularity] The currently available PMEM-capable Intel platforms only guarantee atomicity for 8 byte sized and aligned stores.
+    \item[Smaller Atomicity Granularity] The currently available PMEM-capable Intel platforms only guarantee atomicity for 8 byte sized and aligned stores.
         Unaligned writes or larger writes can be ``torn'' on power loss.
         In contrast, block device protocols such as SCSI or NVMe provide options for more coarse-grained atomicity (e.g., at the sector level) which can potentially simplify the implementation of some data structures.
         \cite{rudoffPersistentMemoryProgramming2017,AreDiskSectorWritesAtomic}
@@ -590,11 +594,11 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         The consequence is that software must detect the platform's properties at runtime, and dispatch to the implementation that ensures correctness and performance.
         \cite{rudoffPersistentMemoryProgramming2017}
 
-    \item[Ordering] Due to pipelined, our-of-order, or speculative execution\todo{forgot sth?}, the program order of stores does not necessarily correspond to the order observed from outside the thread that issues them.
+    \item[Ordering] Due to pipelined, out-of-order, or speculative execution, the program order of stores does not necessarily correspond to the order observed from outside the thread that issues them.
         This is a well-known problem in the context of synchronization between CPU cores, but it applies to Persistent Memory as well.
         To guarantee that stores reach PMEM in a certain order, it is necessary to insert a store barrier instruction (\lstinline{SFENCE}) between them.
         For example, on our evaluation system, we must issue \lstinline{store+cacheflush+sfence} or \lstinline{nontemporal_store+sfence} instructions per store.
-        With regard to ZIL-PMEM, we cover this and the previous two\todo{check number} aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.
+        With regard to ZIL-PMEM, we cover this and the previous two aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.
         \cite{rudoffPersistentMemoryProgramming2017}
 
     \item[Error Handling] The error handling story for PMEM suffers particularly from the implicitness of the PMEM IO model.
@@ -602,7 +606,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         On the read path, PMEM can detect data corruption through ECC.
         It communicates such problems and potentially other errors to the CPU which surfaces them to the operating system via \textit{machine check exceptions} (MCE).
         (MCE is an established mechanism to make the OS aware of errors detected by ECC DRAM.)
-        Linux handle MCEs for PMEM by putting the affected page on a ``bad block list''.
+        Linux handles MCEs for PMEM by putting the affected page on a ``bad block list''.
         If the affected range is a userspace mapping, Linux notifies the application via SIGBUS, giving application developers a chance to handle the error somewhat gracefully.
         If the MCE is raised due to a kernel memory access, the default behavior is to trigger a kernel panic.
         However, the \lstinline{memcpy_mcsafe} function provides a more graceful way to handle MCEs when explicitly copying data from PMEM, e.g., into a DRAM buffer.
@@ -614,7 +618,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         Thus, if the asynchronous attempt to persist that buffer's content fails, the software has already proceeded under the assumption that the store succeeded.
         The recommended mitigations are all based on the idea to read all PMEM content in the background, either using a hardware engine (``patrol scrub'') or an ACPI device-specific method (``address range scrub'').
         The idea is that write errors will be discovered through the PMEM's ECC mechanisms and surfaced to the operating system.
-        (\cite{ReliabilityAvailabilityServiceability} and \cite[Chapter 17]{Scargall2020}.
+        (See \cite{ReliabilityAvailabilityServiceability}; \cite[Chapter 17]{Scargall2020})
 
         A special condition that arises from the asynchronous nature of the PMEM write path is the \textit{Unsafe Shutdown}:
         ``An unsafe or dirty shutdown on persistent memory means that the persistent memory
@@ -627,21 +631,20 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         of the incomplete power-down sequence. It can only detect if a series of events occurred
         in which data may have been lost. In the best-case scenario, there might not have been
         any applications that were in the process of writing data when the dirty shutdown
-        occurred.
-        ''\cite[Chapter 17]{Scargall2020}.
-        \citeauthor{Scargall2020} outlines an application-level approach to detect if data was lost.
+        occurred.''~\cite[Chapter 17]{Scargall2020}.
+        \citeauthor{Scargall2020}\cite{Scargall2020} outlines an application-level approach to detect if data was lost.
 
         In ZIL-PMEM, we only handle read errors using \lstinline{memcpy_mcsafe}, and treat them equally to software checksum errors.
 
     \item[CPU Efficiency] Wait-time for PMEM I/O is spent on-CPU.
         The inherent assumption is that at PMEM-level latencies, it is less overhead to stall the CPU than to context-switch to another application.
         This assumption holds until the bandwidth limits of PMEM are exceeded.
-        In that case, as with any other storage device, queuing effects come into effect and per-IOP latency and hence stall duration grows.
-        However, from the OS thread scheduler's perspective, the thread appears CPU-bound, even though it is effectively waiting for IO.
+        In that case, as with any other storage device, queuing effects come into play and per-IOP latency and hence stall duration grows.
+        However, from the OS thread scheduler's perspective, the thread appears CPU-bound, even though it is effectively waiting for I/O.
         This poses an efficiency problem if there is other work in the system that is actually CPU-bound.
 
-        To our awareness\todo{that doesn't seem to be a common phrase?}, we are the first to identify the above as a systematic issue, at least in the context of system services such as filesystems.\todo{qualifier yay nay?}
-        For the Optane hardware in particular, the performance drop at with increasing concurrent access further amplifies the problem.
+        To our knowledge, we are the first to identify the above as a systematic issue, at least in the context of system services such as filesystems.
+        For the Optane hardware in particular, the performance drop with increasing concurrent access further amplifies the problem.
         We implement a mitigation in ZIL-PMEM and evaluate it in Section~\ref{sec:eval:ncommitters_scalability}.
 \end{description}
 
@@ -674,7 +677,7 @@ DMU transactions are always part of a \textit{transaction group} (txg).
 The DMU accumulates the changes to all object sets and objects on a per-\textit{txg} basis in DRAM, as so-called \textit{dirty state}.
 Once a txg's dirty data exceeds a threshold or a periodic timer triggers, the DMU atomically updates the on-disk state (more on this later).
 
-The DMU is used by the \textit{ZFS Posix Layer} (ZPL) to implement a POSIX-compliant filesystem, and by the \textit{ZVOL} layer to implements virtual block devices, e.g. for storage virtualization via iSCSI.
+The DMU is used by the \textit{ZFS Posix Layer} (ZPL) to implement a POSIX-compliant filesystem, and by the \textit{ZVOL} layer to implement virtual block devices, e.g. for storage virtualization via iSCSI.
 ZVOLs register as a block device driver in the kernel and map block-level read, write, and discard operations (\lstinline[style=figurepseudocode]{struct bio}) to the corresponding DMU operations of a single DMU object.
 In contrast, a ZPL filesystem (just ``filesystem'' from now on) uses multiple DMU objects to implement filesystem abstractions such as directories and files.
 Both the data structures that represent the filesystem metadata and the actual file data are stored in DMU objects.
@@ -685,7 +688,7 @@ Its name is the \textit{dataset layer} (DSL) and it provides the following servi
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Creation \& Destruction Of Object Sets] The DSL provides APIs to create and destroy the object sets for filesystems and ZVOLs.
     \item[Naming \& Hierarchical Organization Of Object Sets] The DSL assigns names to object sets and organizes them in a tree structure.
-        For example, a zpool named \lstinline{tank} has a root ZPL filesystem object set \lstinline{tank} and possibly three child filesystems \lstinline{tank/a} \lstinline{tank/b} and \lstinline{tank/b/c}, each with their own objset set.
+        For example, a zpool named \lstinline{tank} has a root ZPL filesystem object set \lstinline{tank} and possibly three child filesystems \lstinline{tank/a} \lstinline{tank/b} and \lstinline{tank/b/c}, each with their own object set.
     \item[Properties \& Inheritance] Per-object-set configuration options, e.g., on-the-fly compression, can be inherited along the tree hierarchy to aid administration of large pools.
         % It is also possible to automatically infer mountpoints from the hierachy, e.g., if \lstinline{mountpoint=/mp} is configured for \textit{tank/b}, then \lstinline{tank/b/c}'s default mountpoint is \lstinline{tank/b/c}.
         % However, this mountpoint inheritance is not mandatory, i.e., it would be possible to override \lstinline{tank/b/c}'s mountpoint to be \lstinline{/mnt}.
@@ -707,7 +710,7 @@ The root of the tree structure is located in the \textit{uberblock}.
 The uberblock points, with a block pointer, to an \lstinline{objset_phys_t} structure.
 \lstinline{objset_phys_t} is the root of an object set's persistent representation that itself is a tree of SPA-allocated blocks linked by block pointers.
 However, in the interest of brevity, we will view \lstinline{objset_phys_t} as an opaque structure for now.
-Regarding the uberblock, the specific \lstinline{objset_phys_t} structure that it points to is that of the MOS whose object's contains the DSL's metadata about all datasets.
+Regarding the uberblock, the specific \lstinline{objset_phys_t} structure that it points to is that of the MOS whose objects contain the DSL's metadata about all datasets.
 The most important piece of per-dataset metdata is a block pointer (\lstinline{dsl_dataset_phys_t::ds_bp}) that points to a block that contains the root of the dataset's object set, i.e., an \lstinline{objset_phys_t} structure.
 The interpretation of that \lstinline{objset_phys_t}'s content depends on the dataset type, i.e., whether it is a filesystem or ZVOL.
 
@@ -731,13 +734,15 @@ It is the txg that is currently being written out to disk by the procedure outli
 The \textit{open} txg is the youngest unwritten txg.
 It is the txg that is used for any newly started DMU transactions.
 Between syncing and open txg sits the \textit{quiescing} txg.
-It is not used for any new DMU transactions, but some DMU transactions assigned to it may not yet have completed.\todo{may not have yet?}
+It is not used for any new DMU transactions, but some DMU transactions assigned to it may not have completed yet.
 However, once that has happened, it is guaranteed that the accumulated dirty state for the quiescing txg is not going to change and is ready to be written out by \textit{txg sync}.
 Thus, as soon as the syncing txg has been fully written, the quiescing txg becomes the new syncing txg, the open txg becomes the new syncing txg, and a new open txg is born.
 
-It is of crucial importance that the completion of a DMU transaction, indicated by a call to the \lstinline{dmu_tx_commit} function, does \underline{not} guarantee persistence.
+It is of crucial importance that the completion of a DMU transaction, indicated by a call to the \lstinline{dmu_tx_commit} function, does \underline{\smash{not}} guarantee persistence.
 DMU transactions merely scope modifications on the DMU level to a txg; more specifically, the txg that was the \textit{open txg} at the time the transaction was started.
 If the system crashes before that txg has finished \textit{syncing}, the in-flight txgs' modifications are lost.
+
+% \clearpage % so that the figures in this subsectio land on semantically sensible pages
 
 \subsection{ZFS Intent Log (ZIL)}\label{openzfs:the_zil_api}
 
@@ -759,15 +764,15 @@ The ZPL's VFS operation for this system call performs the following steps:
     \item complete the DMU transaction with \lstinline{dmu_tx_commit}, and
     \item \label{vfswrite:step:zilcommit} call \lstinline{zil_commit(file_object_number)} before returning to userspace.
 \end{enumerate}
-Instead of \lstinline{O_SYNC}, many applications use \lstinline{fsync} or \lstinline{fdatasync}.
-Their VFS operations in the ZPL map directly to the \lstinline{zil_commit} call in Step~\ref{vfswrite:step:zilcommit}.
+The VFS operations \lstinline{fsync} and \lstinline{fdatasync} map directly to \lstinline{zil_commit}.
 The \lstinline{sync} system call, which requests flushing of the state of all files in a filesystem, uses the special parameter zero (\lstinline{zil_commit(0)}).
+Figure~\ref{fig:zil_api_syscall_activity_diagrams} visualizes these procedures.
 
 \begin{figure}[H]
     \centering
-    \includegraphics{fig/zil_writepath_activity_diagram_write_fsync_sync.pdf}
+    \includegraphics[trim=0cm 0.3cm 0cm 0.3cm,clip]{fig/zil_writepath_activity_diagram_write_fsync_sync.pdf}
     \caption{
-        ZIL usage on the write path in by example of the \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()} system calls.
+        ZIL usage on the write path by example of \lstinline{write()}, \lstinline{fsync()}, and \lstinline{sync()}.
     }
     \label{fig:zil_api_syscall_activity_diagrams}
 \end{figure}
@@ -781,24 +786,21 @@ However, ITXs that only affect a particular file are placed into the \textit{asy
 For example, an ITX that logs the creation of a file is added to the \textit{sync list} whereas an ITX that logs a write within an existing file is added to the \textit{async tree}.
 \lstinline{zil_commit} uses the \lstinline{itxg}s to determine the list of ITXs that need to be appended to the on-disk log so that successful recovery is possible.
 The following pseudo-code illustrates how \lstinline{zil_commit} constructs this so-called \textit{\textbf{commit list}}, and how the records on the commit list are encoded as so-called \textit{\textbf{log records}} and appended to the log.
+Figure~\ref{} provides an example.
 
 \begin{lstlisting}[style=figurepseudocode]
 zil_commit(object_id)
-    commit_list := []
-    for each unsynced transaction group 'txg':
-        itxg <- the itxg for txg
-        if object_id == 0:
-            move all itxs in itxg.async to itxg.sync
-        else:
-            move only the itxs in
-                itxg.async[object_id] to itxg.sync
-        append itxg.sync to commit_list
-
-    for each itx in commit_list:
-        log_record := encode itx as log record
-        append log record to a persistent log structure
-
-    return
+  commit_list := []
+  for each unsynced transaction group 'txg':
+    itxg <- the itxg for txg
+    if object_id == 0:
+        move all itxs in itxg.async to itxg.sync
+    else:
+        move only the itxs in itxg.async[object_id] to itxg.sync
+      append itxg.sync to commit_list
+  for each itx in commit_list:
+    log_record := encode itx as log record
+    append log record to a persistent log structure
 \end{lstlisting}
 
 After a system crash, the zpool is in the state of the last synced transaction group which we call $precrash\_txg$.
@@ -811,12 +813,12 @@ Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level} exemplifies the
 
 \begin{figure}[H]
     \centering
-    \includegraphics{fig/zil_writepath_and_replay_sequence_logical_level}
+    \includegraphics[trim=0cm 0.42cm 0cm 0.42cm]{fig/zil_writepath_and_replay_sequence_logical_level.pdf}
     \caption{
-        Example for the log structure that results from the VFS operations in the upper left column, and for the replay callback invocations for different values of $precrash\_txg$.
+        Example log structure resulting from a series of VFS operations, and the corresponding replay callback invocations for different values of $precrash\_txg$.
         Note that \lstinline{fsync /A} not only logs \lstinline{create /A} and \lstinline{write to /A} but also \lstinline{create /B} since file creation is always placed on the itxg's \textit{sync list}.
         Second, note how records 1 and 2 are skipped during replay if $precrash\_txg = 4$.
-        If they were not skipped, the replay callback would fail to create file /A when replaying entry \#1 because /A already exists in the on-disk state of txg 4.
+        If they were not skipped, the replay callback would fail to create file /A when replaying record 1 because /A already exists in the on-disk state of txg 4.
     }
     \label{fig:zil_writepath_and_replay_sequence_logical_level}
 \end{figure}
@@ -825,7 +827,7 @@ Note that replay only re-enacts the logical changes to the dataset but does not 
 For example, changes that would have been spread across transaction groups 23, 24, and 25 at write time may land in transaction groups 42 and 43 during replay.
 Further, the system could crash again during replay.
 For example, a power outage could cause txg 42 to be the last-synced txg whereas 43 was still in \textit{syncing} state.
-Since the replay callbacks for the individual log records are \underline{not idempotent}, the ZIL must ensure that, after a crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
+Since the replay callbacks for the individual log records are \underline{\smash{not idempotent}}, the ZIL must ensure that, after a crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
 For example, the second replay attempt could apply the remaining set of changes in transaction group 83.
 (But it may also happen that they are spread over several txgs, e.g., 83 and 84).
 The consequence for any ZIL implementation is that it needs to persist the following data:
@@ -839,6 +841,7 @@ The consequence for any ZIL implementation is that it needs to persist the follo
 The upstream ZIL implementation uses a singly-linked list of so-called \textit{log-write blocks} (LWBs) to represent the on-disk log structure.
 The block pointer to the first LWB is stored in the \textit{ZIL header} structure of the filesystem's or ZVOL's object set.
 Each LWB contains a contiguous sequence of the variable-length log records.
+The basic structure is depicted in Figure~\ref{fig:zil_lwb__physical_structure_overview}.
 
 \begin{figure}[H]
     \centering
@@ -848,7 +851,7 @@ Each LWB contains a contiguous sequence of the variable-length log records.
     \label{fig:zil_lwb__physical_structure_overview}
 \end{figure}
 
-After \lstinline{zil_commit} has produced the commit list, it iterates over it and appends the log record representation of each ITXs to an in-DRAM buffer that will become the new tail LWB in the chain.
+After \lstinline{zil_commit} has produced the commit list, it iterates over it and appends the log record representation of each ITX to an in-DRAM buffer that will become the new tail LWB in the chain.
 Once this buffer is full, it is issued to disk in the background and the procedure continues with a new tail LWB.
 The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs has been advantageous in the past:
 \begin{description}[noitemsep]
@@ -864,7 +867,7 @@ The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs
         If no thread other threads picks up $L_n$, a timeout wakes up $A$ so that it can issue the IO operation itself.
 
         Without this mechanism, thread $B$ would need to wait for the last LWB of $A$ to be persisted, \textit{and} for its own LWBs to be persisted because $B$'s first LWB is pointed to by $A$'s last LWB.
-        By sharing the last LWB of $A$ and $B$, up to $1 * lat_{disk}$ of waiting time can be avoided.\todo{review this}
+        By sharing the last LWB of $A$ and $B$, up to $1 * lat_{disk}$ of waiting time can be avoided.
         Note that whereas ZFS refers to this mechanism as \textit{LWB timeout}, the technique is well-established in disk-oriented databases under the name \textit{group commit} or \textit{commit group}.
 
     \item[Space Efficiency]
@@ -880,7 +883,7 @@ The solution is to pre-allocate LWBs such that the first LWB's block pointer is 
 The first LWB's content and any subsequent LWBs in the chain are written and allocated by the ZIL.
 However, this represents a special case for the on-disk structure because, unlike all blocks written by \textit{txg sync}, an LWB's content and checksum is not known at the time that the block pointer is written to the ZIL header or the ancestor LWB in the chain.
 Thus, instead of storing the checksum in the block pointer, it is stored in the LWB itself --- LWBs are \textit{self-checksumming}.
-The full procedure for adding an LWB to the chain thus consists of the following steps:
+The full procedure for appending an LWB to the chain thus consists of the following steps:
 \begin{enumerate}[noitemsep]
     \item Wait until the LWB is filled or the timeout triggers the LWB to be issued.
     \item Predict the best size for the next LWB based on a simple heuristic.
@@ -895,10 +898,12 @@ And even in the case where no crash occurs, ZIL-LWB relies on an invalid checksu
 (It is assumed unlikely for an unwritten but allocated LWB to be mistaken for an already written LWB because of additional metadata repeated in each LWB that must match for all LWBs in a chain.)
 For OpenZFS native encryption, the LWBs are not checksummed but encrypted and authenticated using an AEAD algorithm such as \lstinline{aes-256-gcm}.
 
-LWB's that only contain obsolete entries (their maximum txg $\le$ last synced txg) are garbage-collected by \textit{txg sync}.
+LWB that only contain obsolete entries (their maximum txg $\le$ last synced txg) are garbage-collected by \textit{txg sync}.
 Every time \textit{txg sync} visits the object set to construct the new version of the on-disk structure, it unlinks LWBs from the head of the chain whose maximum txg is $\le syncing\_txg$ until it reaches an LWB that contains at least one log record for a txg $> syncing\_txg$.
 The unlinking updates the chain's head block pointer in the ZIL header but, due to the atomic nature of txg sync, the update only becomes visible on disk if $syncing\_txg$ successfully finishes syncing.
 In that case, $syncing\_txg$ becomes the new $precrash\_txg$ txg and thus all entries in the freed LWBs are by definition obsolete.
+
+We visualize both the append and garbage-collection operations in Figure~\ref{fig:zil_lwb__physical_structure_append}.
 
 \begin{figure}[H]
     \centering
@@ -979,13 +984,13 @@ We use the following software stack:
 We use the following system configuration:
 \begin{itemize}[noitemsep]
     \item We leave SMT enabled, resulting in 16 hardware threads per socket.
-    \item We disable the entire second CPU in software using the \lstinline{isolcpus=8-15,24-31} kernel command line parameter.
+    \item To rule out NUMA effects, we disable the entire second CPU in software using the \lstinline{isolcpus=8-15,24-31} kernel command line parameter.
     \item We configure all Optane DIMMs in \textit{AppDirectNotInterleaved} mode.
     \item We create a 40~GiB-sized \textit{fsdax} namespace on the region of the first DIMM on the first socket.
     \item We create a 40~GiB-sized \textit{devdax} namespace on the region of the first DIMM on the first socket.
     \item We partition each of the 3 NVMe drives into 10 equal-sized partitions each.
     \item We create a zpool called \texttt{dut} with the 30 partitions as top-level vdevs, and the \textit{fsdax} namespace's /dev/pmem device as a SLOG.
-        The reason for the large number of partitions is that we observed slightly improved txg sync performance, presumably due to a higher degree oif parallelism towards the NVMe drives.
+        The reason for the large number of partitions is that we observed slightly improved txg sync performance, presumably due to a higher degree of parallelism towards the NVMe drives.
     \item We create 8 datasets in the zpool, named \lstinline{dut/ds$i}, mounted at \lstinline{/dut/ds$i}.
     \item For all datasets, we configure \lstinline{recordsize=4k} to match the fio workload and set \lstinline{compression=off} to avoid CPU overhead in the ZIO pipeline during txg sync.
 \end{itemize}
@@ -1053,12 +1058,10 @@ Figure~\ref{fig:lwbanalysis:zoomed_latency} shows the same latency data as Figur
     \label{fig:lwbanalysis:zoomed_latency}
 \end{figure}
 
-\section{Analysis}
+\section{Analysis}\label{ch:lwb_analysis:breakdown}
 
 By comparing the numbers for \textit{async} and \textit{zil-lwb}, it is safe to assume that regardless of the value for \lstinline{numjobs}, ZIL-LWB adds at least 40~us of latency.
 We want to determine where this time is spent.
-
-\subsection{Analysis}\label{ch:lwb_analysis:breakdown}
 
 We use dynamic instrumentation (eBPF via bpftrace\todo{ref}) to sum up the wall clock time spent in ZFS functions that are executed by the fio threads during a synchronous write operation.
 We then use the model in Figure~\ref{fig:lwbanalysis:breakdown_model} to compute the time spent in the asynchronous part of the write operation, the ITX layer, and ZIL-LWB specific code.
@@ -1068,12 +1071,12 @@ We visualize the results as stacked bar charts in Figure~\ref{fig:lwbanalysis:br
     \centering
     \includegraphics{fig/zil_lwb_latency_analysis__breakdown}
     \caption{Our model of the time spent in ZFS by a fio thread that performs a write system call.
-    The different columns represent the different levels of the dynamic call graph
+    The different columns represent the different levels of the dynamic call graph.
     The nodes in each column describe all activity that happens at this level of the call graph.
-    Activities with black text color are instrumented using eBPF.
-    Gray text color indicates that the value was computed in post-processing by subtracting the sum of the columns instrumented time from the instrumented time of the parent in the column to the left.
-    For example, to compute \textit{async}, we compute \lstinline{zfs_write - (zil_commit + zfs_log_write)}.
-    The border style of the node visualizes the subsystem to which we attribute the time spent in the activity represented by the node.
+    The wall clock time spent in activities with a solid border style is measured using eBPF instrumentation.
+    A dashed border style indicates that the value was computed in post-processing by subtracting the sum of the column's instrumented activities from the parent's value in the column to the left.
+    For example, to compute \textit{async}, we compute \lstinline{zfs_write_vnode_op - (zil_commit + zfs_log_write)}.
+    The color indicates the subsystem to which we attribute the respective activity.
     }
     \label{fig:lwbanalysis:breakdown_model}
 \end{figure}
@@ -3153,7 +3156,7 @@ We will refer to this tunable in the Section~\ref{sec:eval:zvols_ad_itxg_bypass}
 \subsubsection{ITXG Bypass}
 
 We observe that the ZIL's fully sequential structure is unnecessary for ZVOLs because block device consumers must already account for device-internal caching.
-If a block device consumer actually requires consistency at a given point in time, it already \underline{explicitly} indicates this to the block layer.
+If a block device consumer actually requires consistency at a given point in time, it already \underline{\smash{explicitly}} indicates this to the block layer.
 In Linux, this indication is either given by the \lstinline{bio} operation's type (\lstinline{REQ_OP_FLUSH}) or the pre-flush or post-flush flags (\lstinline{REQ_PREFLUSH}, \lstinline{REQ_FLUSH}).
 
 We leverage this observation as follows.
@@ -3242,7 +3245,7 @@ We use unit tests and integration tests to validate our implementation.
 
 We are able to test PRB/HDL in userspace since it is part of \textit{libzpool}.
 \textit{libzpool} is a shared library that contains the majority of ZFS's kernel code, compiled for userspace.
-It is used to by \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool.
+It is used by \textit{zdb} (the ZFS debugger) and the \textit{ztest} stress testing tool.
 We implement our unit tests in Rust to leverage its expressive type and macro system, rich standard library, and built-in testing harness.
 We use the popular \textit{bindgen} crate to generate the bindings to \textit{libzpool} and implement a small set of idiomatic wrappers around PRB/HDL to reduce boilerplate code in our tests.
 
@@ -3254,14 +3257,14 @@ We codify the walkthrough of the PRB/HDL API that we presented in Section~\ref{d
     \item Construct PRB and add the chunk to it.
     \item Setup a HDL.
     \item Create a log for the HDL.
-    \item Write two entries for $txg=2$ body values $23$ and $42$ to the HDL.
+    \item Write two entries for $txg=2$ with body values $23$ and $42$ to the HDL.
     \item Teardown the object set.
     \item Destroy the PRB with \lstinline{free_chunks=false}. This moves ownership of the chunk moves back from PRB to us.
     \item Construct a new PRB instance with the same chunk.
     \item Setup a HDL from the ZIL header.
     \item Trigger claiming.
     \item Trigger replay, and record the replay callback invocations.
-        For each invocation, we read the body length and content, assert that no read error occurred.
+        For each invocation, we read the body length and content, and assert that no read error occurred.
         We record body content and the ZIL header update as records in a list.
         We report successful replay for every callback invocation.
     \item After replay is complete, we compare the recorded list's contents to the expected replay order.
@@ -3311,7 +3314,7 @@ This factorization of responsibilities provides maximum flexibility for testing 
 
     \item[Independence of ZIL-PMEM]
         The integration logic in ZIL-PMEM is not involved in testing PRB/HDL.
-        This means that PRB/HDL's replay's behavior can be validated in isolation.
+        This means that PRB/HDL's replays behavior can be validated in isolation.
         It also simplifies the testing code because there no need to mock the environment that ZIL-PMEM expects, e.g. SPA, DMU, and VDEVs.
 
     \item[Crash Consistency Testing]
@@ -3357,8 +3360,14 @@ TestSet {
 
 Our tests check the following properties of the replay code:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Shapes] We test replay for different ``shapes'' in the 2-D grid.
-        For example, a ``V''-shape with entries for txgs, or an ``I-'' shape as in snippet above.
+    \begin{minipage}{0.59\textwidth}
+    \item[Shapes]
+            We test replay for different ``shapes'' in the 2-D grid.
+            For example, an ``I-'' as described the snippet above and depicted to the right.
+        \end{minipage}
+        \begin{minipage}[c]{0.3\textwidth}
+            \includegraphics[trim=0cm 0.42cm 0cm 0.42cm,clip]{fig/correctness_eval_example_I-_shape.pdf}
+        \end{minipage}
     \item[Claim Txg] We ensure that log entries for txgs $\le precrash\_txg$ are not replayed because their effect is already part of the dataset's state.
         In the code base, it is more common to refer to $claim\_txg = precrash\_txg + 1$.
     \item[Missing Entry Handling] We test the handling of missing entries in both the already replayed and the still-to-be-replayed parts of the replay sequence, as well as the special cases for missing entries in the last generation.
@@ -3391,7 +3400,7 @@ Our changes to ZFS have less coverage than PRB/HDL.
 The OpenZFS project has the following existing facilities for testing:
 \begin{description}[noitemsep]
     \item[ZFS Test Suite (ZTS)] The ZFS Test Suite is a set of automated integration tests that assert behavior of the kernel module and CLI tools.
-        ZTS is implemented in shell and provides a significant amount functional test that exercise both the data path and administrative layer of ZFS.
+        ZTS is implemented in shell and provides a significant amount of functional tests that exercise both the data path and administrative layer of ZFS.
     \item[ztest] The \textit{ztest} tool is a user-space binary that links against \textit{libzpool} and stress-tests core components of ZFS that are shared among all supported platforms.
         It define routines that imitate the kernel module's use the core components' APIs.
         The stress-testing aspect comes from repeatedly dispatching these routines to a pool of threads.
@@ -3614,7 +3623,7 @@ The \lstinline{zil_persistence} component supersedes the ZIL-LWB specific ones: 
 
 Whereas \lstinline{zil_persistence} is the dominant factor for latency in ZIL-LWB (80\% of average per-IOP latency, as observed in Section~\ref{ch:lwb_analysis:breakdown}), ZIL-PMEM only spends approximately 25\% on persistence to PMEM.
 For ZIL-PMEM, the dominant component with more than 50\% is the \textit{async} code, i.e, VFS-level work and modification of in-DRAM DMU objects.
-And in contrast to ZIL-LWB, the shared ITX code is a noticable component at 10\%.
+And in contrast to ZIL-LWB, the shared ITX code is a noticeable component at 10\%.
 The absolute \textit{async} overhead for ZIL-PMEM is lower than for ZIL-LWB, particularly for small \lstinline{numjobs} values.
 We have no satisfying explanation for this behavior.
 
@@ -3635,7 +3644,7 @@ We define a \textit{storage stack} as a configuration of storage hardware and so
 Executing a benchmark \textit{on top of} a storage stack means that the benchmark is configured to place all of its data within the filesystem mounted at $M$.
 We define the following storage stacks.
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[zfs-\{lwb,pmem,async\}] A \underline{single} ZFS dataset created on a zpool with the familiar hardware configuration (30 striped NVMe partitions and /dev/pmem0 as SLOG).
+    \item[zfs-\{lwb,pmem,async\}] A \underline{\smash{\smash{single}}} ZFS dataset created on a zpool with the familiar hardware configuration (30 striped NVMe partitions and /dev/pmem0 as SLOG).
         For \textit{zfs-lwb} and \textit{zfs-pmem}, we configure the corresponding ZIL kind.
         For \textit{zfs-async}, we configure the ZIL-LWB ZIL kind but set the \lstinline{sync=disabled} property.
         All variants use a \lstinline{recordsize=4k} and \lstinline{compression=off} on the dataset since most of our benchmarks are synchronous workloads with small write sizes.
@@ -3918,7 +3927,7 @@ Activation of the ITXG bypass does not appear to have a negative impact for XFS 
 For Ext4, we observed some performance degradatations in setups whether both ITXG bypass and \lstinline{zvol_request_sync} were enabled.
 
 In summary, ZIL-PMEM provides a signficant performance advantage for ZVOLs but is less effective than with ZFS filesystems (see Sections~\ref{sec:eval:4ksyncwrites} and \ref{sec:eval:zilpmemvslwb}).
-This is particularly noticable in the \textit{fio} workloads and \textit{RocksDB-fillsync}.
+This is particularly noticeable in the \textit{fio} workloads and \textit{RocksDB-fillsync}.
 Their speedup with ZIL-PMEM on XFS+ZVOL is only half the speedup of what we observed for ZFS at scaling factor~1.
 Write amplification cannot be responsible for this behavior because fio already writes at 4k block size.
 The most likely cause is latency overhead added by the filesystem that affects all workloads equally.
@@ -3929,7 +3938,7 @@ PRB's \textit{commit slot} mechanism limits the amount of parallel writers to PM
 The goal is to avoid wasteful on-CPU stall cycles which inevitably occur if the aggregate write bandwidth to PMEM exceeds the hardware capacity.
 (See Sections~\ref{sec:requirements} and \ref{di:prb:write} for a more detailed explanation.)
 
-To determine the mechanism's effectiveness, we use our 4k synchronous random write workload with \underline{separate} ZFS filesystems per fio thread.
+To determine the mechanism's effectiveness, we use our 4k synchronous random write workload with \underline{\smash{separate}} ZFS filesystems per fio thread.
 We add low-overhead per-CPU counters to ZIL-PMEM to sum up the total mount of time that is spent writing PMEM ($T_{pmem}$), as well as the number of write operations performed during the benchmark ($N_{ops}$).
 We then compute the \textit{average PMEM write time per IOP} $T_{pmem_{iop}} = \frac{T_{pmem}}{N_{ops}} [\frac{s}{op}]$.
 The most efficient value for \lstinline{ncommitters} for a given system depends on the workload and efficiency goals.
@@ -4059,7 +4068,7 @@ The speedup of the same workloads for ZVOLs with XFS mounted on top is, barring 
 In comparison to other block-oriented systems that were adapted to PMEM (Ext4 or XFS on PMEM or dm-writecache), ZFS with ZIL-PMEM performs exceptionally well for small synchronous operations (Redis, RocksDB), presumably due to lower write amplification.
 % However, in all-PMEM configurations, the performance advantage of the Linux filesystems is still significant.
 Our experimental \textit{ITXG bypass} for ZVOLs with which we sought to demonstrate the benefits of parallel logging to the same HDL showed some benefit in the micro-benchmark, but not in the application benchmarks.
-Our \textit{commit slot} mechanism for avoidance of excessive on-CPU waiting when the maximum PMEM write bandwidth is exceeded was shown to be effective for a single non-interleaved Optane DIMM but is not practically relevant with four interleaved DIMMs.
+Our \textit{commit slot} mechanism for avoidance of excessive on-CPU waiting when the maximum PMEM write bandwidth is exceeded was shown to be effective for a single non-interleaved Optane DIMM but is not practically relevant with four interleaved DIMMs at current CPU core counts.
 
 \section{Future Work}\label{sec:futurework}
 
@@ -4096,7 +4105,7 @@ Possible approaches to reduce space overhead are:
 \begin{itemize}[noitemsep]
     \item Batching of multiple small log records into a single PRB entry (e.g., directory operations, file metadata).
     \item Reduction or omission of padding in the in-PMEM structure.
-        Whereas padding to 256 byte multiples delivers the best performance on Optane PMEM, it is presumably unnecessary on DRAM \cite{yangEmpiricalGuideBehavior2020}.
+        Whereas padding to 256 byte multiples delivers the best performance on Optane PMEM, it is presumably unnecessary on DRAM/NVDIMM-N~\cite{yangEmpiricalGuideBehavior2020}.
 \end{itemize}
 
 We would like to \textbf{extend our performance evaluation} with the following storage stacks:
@@ -4113,7 +4122,7 @@ We would like to \textbf{extend our performance evaluation} with the following s
         However, performance during manual experimentation with this feature was unexpectedly low for both filesystems.
         Since both configurations seem rather exotic, we ultimately did not use them in the evaluation.
 
-    \item[XFS DAX Log Patch] XFS developer Christoph Hellwig has published an unfinished patch that adds DAX support for the code in XFS that write its write-ahead log \cite{LKMLChristophHellwig}.
+    \item[XFS DAX Log Patch] XFS developer Christoph Hellwig has published an unfinished patch that adds DAX support for the code in XFS that writes its write-ahead log~\cite{LKMLChristophHellwig}.
         Our understanding of the patch is that it bypasses the block IO layer but leaves the persistent structure unchanged.
         The experiment would be particularly interesting in combination with a (properly tuned) dedicated logdev configuration for XFS.
 \end{description}
@@ -4125,7 +4134,7 @@ Regarding \textbf{correctness and robustness} of our implementation, we would li
 
     \item[Fault Injection for PMEM Access] Whereas we are careful to always use \lstinline{memcpy_mcsafe} when accessing PMEM, we do not have tests that verify the error handling path.
         As described in our literature review (Section~\ref{sec:rel_work:fault_injection}), fault injection is the tool of choice for such tests.
-        Either \textit{ndctl-inject} or an extension of ZFS's existing fault injection infrastructure that cover's PRB's PMEM access could be used.
+        Either \textit{ndctl-inject} or an extension of ZFS's existing fault injection infrastructure that intercepts PRB's PMEM access could be used.
 
     \item[Fuzzing] Fuzzing could potentially be used harden our implementation against unexpected in-PMEM state.
         Our software engineering efforts to facilitate testing of PRB/HDL might enable the use of established userspace tooling with reasonable effort.
@@ -4134,7 +4143,7 @@ Regarding \textbf{correctness and robustness} of our implementation, we would li
 Our implementation does not yet attempt to \textbf{detect write errors or unsafe shutdowns} (ref. Section~\ref{sec:background:pmemprogrammingmodel}).
 The PRB garbage collection procedure presents is an opportune point for eager detection of media errors by traversing a chunk's content before garbage-collecting it.
 If the PMEM hardware detects an error, the problem will be surfaced via an MCE and can be reported to the user.
-As an end-to-end check, PRB further store a checksum of a chunk's content in its DRAM representation. This checksum could be validated against the readable PMEM content during garbage collection.
+As an end-to-end check, PRB further stores a checksum of a chunk's content in its DRAM representation. This checksum could be validated against the readable PMEM content during garbage collection.
 Regarding unsafe shutdowns, it would be a good extension of the user experience to detect the condition and to surface it to the user via \lstinline{zpool status} or during pool import.
 However, we believe that ZIL-PMEM's existing measures to detect data corruption should be able to correctly handle problems caused by unsafe shutdowns on the fly.
 
@@ -4144,10 +4153,10 @@ For the \textbf{integration into ZFS}, we anticipate the following future work i
         For example, the allocation interface could be extended such that it becomes possible to request DAX-capable blocks.
         Instead of our simplistic partitioning scheme for dividing the entire PMEM space into chunks (Section~\ref{sec:zilpmemzilkind:spacereservation}), ZIL-PMEM would pre-allocate chunks from the SPA and remember their DVA by storing them in the object set.
 
-    \item[ZIL Kinds UX] The goal to make ZIL-PMEM, or ZIL kinds in general, fully transparent to the administrator should be reconsidered.
-        (See Section~\ref{sec:zilpmemzilkind:activation}).
+    \item[ZIL Kinds User Experience] The goal to make ZIL-PMEM, or ZIL kinds in general, fully transparent to the administrator should be reconsidered.
+        (See Section~\ref{sec:zilpmemzilkind:activation} for our rationale.)
 
-    \item[Support for Native Encryption] The threat model for supporting OpenZFS Native Encrytpion in ZIL-PMEM must be the same as for ZIL-LWB.
+    \item[Support for Native Encryption] The threat model for supporting \mbox{OpenZFS} Native Encryption in ZIL-PMEM must be the same as for ZIL-LWB.
         The entry header and body need to be authenticated and the entry body needs to be encrypted.
         ZIL-PMEM's recovery path needs to be vetted to ensure that recorded entries cannot be injected into unintended replay sequences (replay attack).
 
