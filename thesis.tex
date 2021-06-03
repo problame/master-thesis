@@ -3995,7 +3995,7 @@ The system configuration is as follows:
 As with our main evaluation system (described in Section~\ref{ch:lwb_analysis:setup}), we leave SMT enabled.
 We disable the second socket in software using the \lstinline{isolcpus=18-35,54-71} kernel command line parameter.
 Since the system does not have NVMe devices available, we provision the disabled socket's Optane DIMMs in non-interleaved mode, i.e., one PMEM region and a single \lstinline{fsdax} namespace per DIMM.
-We use these namespaces as the zpool's main (non-SLOG) vdevs.
+We use these namespaces as the zpool's main (non-SLOG) VDEVs.
 % NOTE: we use \lstinline / ttt for ncommitters and math-mode for numjobs. 
 
 \begin{figure}
