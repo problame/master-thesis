@@ -2376,7 +2376,7 @@ Synchronization is handled internally.
 
 \chapter{Integration into ZFS}\label{ch:zilpmem}
 In this chapter we describe how we integrate PRB/HDL into ZFS in three steps.
-First, in Section~\ref{ch:zilkinds}, we describe how we re-architect ZFS to support different ZIL implementations (\textit{ZIL Kinds)} at runtime (Section~\ref{ch:zilkinds}).
+First, in Section~\ref{ch:zilkinds}, we describe how we re-architect ZFS to support different ZIL implementations (\textit{ZIL kinds)} at runtime (Section~\ref{ch:zilkinds}).
 Then, in Section~\ref{sec:pmemspavdev}, we present our approach to make ZFS's device management layer (VDEV) aware of persistent memory SLOG devices.
 Finally, in Section~\ref{sec:zilpmemzilkind}, we describe how we combine PRB/HDL and PMEM SLOGs into the new \textit{ZIL-PMEM} ZIL kind.
 
@@ -2996,7 +2996,7 @@ Our high-level requirements for ZIL-PMEM were: simple administration, sharing of
         This would make ZIL-PMEM completely transparent to the administrator and not bring any user-visible change in ZFS's administrative tools.
         However, our implementation does not yet support changing the ZIL kind of a zpool after its creation (Section~\ref{sec:zil_kinds:change}).
     \item[Pooled Storage] PRB abstracts the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
-    \item[Coexistence] The introduction of \textit{ZIL Kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
+    \item[Coexistence] The introduction of \textit{ZIL kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
         The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure but enables coexistence of different persistence strategies.
     \item[Same Guarantees] ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB towards userspace, courtesy of the shared logical structure and PRB/HDL's guarantees.
 \end{description}
