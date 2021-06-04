@@ -1646,9 +1646,8 @@ The crash-safe replay procedure performs the following steps:
                     \item In DRAM, append an artificial entry $E_{n+1}$ to $S_{tmp}$. \\
                         \mbox{$E_{n+1}.gen = E_{n}.gen + 1$}, \mbox{$E_{n+1}.gsid = 1$}, and \\
                         \mbox{$E_{n+1}.txg = E_{n}.txg$}.
-                    \item Iterate over $S_{tmp}$ and compute the counter tables.
-                        Validate the tables for $E_{1,\dots,n}$.
-                        When arriving at $E_{n+1}$, assign the expected table to $E_{seal}$.
+                    \item Iterate over $S_{tmp}$ to compute and validate the counters for $E_{1,\dots,n}$.
+                        When arriving at $E_{n+1}$, store the expected counter values in $E_{seal}$.
                 \end{enumerate}
             \end{itemize}
         \item If the HDL is already in state \textit{replaying}, the ZIL header is not modified.
@@ -1684,7 +1683,7 @@ If either the read from PRB fails (e.g., due to checksum errors) or if the metad
 
 Note that the last generation $E_{seal}.gen - 1$ of the log structure is not protected against re-appearing log entries.
 Assume that during initial claiming, entries $(42,1)$ and $(42,3)$ in generation $42$ are observed as the last entries of the replay sequence.
-Then $(E_{seal}.gen, E_{seal.gsid)}$ is $(43,1)$ and the counter table of $E_{seal}$ only accounts for these two entries, and all previous generation's entries.
+Then $(E_{seal}.gen, E_{seal.gsid)}$ is $(43,1)$ and the counters of $E_{seal}$ only account for these two entries, and all previous generation's entries.
 Now assume that another entry $(42,2)$ had been written but was temporarily invisible during initial claiming, e.g., due to temporary data corruption.
 If for some reason $(42,2)$ becomes visible again, and we start replaying, then $(42,2)$ will be replayed even though it was not visible during claiming.
 And if $(42,2)$ were to replace $(42,1)$ or $(42,3)$, we would not even notice the counter mismatch when arriving at $E_{seal}$.
@@ -2092,7 +2091,7 @@ Sharing the slots (and thus chunks) among all threads and HDLs in the PRB is of 
 \end{description}
 
 \subsection{HDL-Scoped Metadata}\label{di:prb:write:hdlscoped}
-We have already addressed the algorithm to compute the HDL-scoped entry metadata (Log GUID, txg, gen, gsid, Counters Table) in Section~\ref{di:prb:deptrack}.
+We have already addressed the algorithm to compute the HDL-scoped entry metadata (Log GUID, txg, gen, gsid, counters) in Section~\ref{di:prb:deptrack}.
 This subsection only addresses multi-threading and scalability concerns.
 
 HDL-scoped metadata does not pose a scalability concerns if entries are written sequentially.
