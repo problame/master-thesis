@@ -801,7 +801,7 @@ Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level} exemplifies the
 
 \begin{figure}[H]
 \begin{lstlisting}[style=figurepseudocode]
-zil_commit(object_id)
+zil_commit(object_id):
     commit_list := []
     for each unsynced transaction group 'txg':
     itxg <- the itxg for txg
@@ -1351,7 +1351,7 @@ We introduce the pool-wide \textit{PRB} object which abstracts a set of contiguo
 A log entry is a ZIL log record and associated metadata.
 More abstractly, a log entry encodes a logical change to a dataset that was applied in a single DMU transaction.
 PRB provides facilities for adding log entries to the set and for iterating over its contents.
-It automatically garbage-collects entries after they become obsolete after their transaction group has been synced out.
+It automatically garbage-collects obsolete entries whose transaction group has been synced out by \textit{txg sync}.
 
 Log entries are not written directly to PRB but instead to the \textit{HDL} object of the dataset that they affect.
 A HDL is a virtual log built on top of PRB that organizes the entries for a single dataset in a mostly sequential structure.
@@ -1362,14 +1362,16 @@ They are set up early during pool import and torn down late during export.
 If a dataset is created or destroyed, the corresponding HDL is set up or torn down as well.
 HDL is stateful.
 Its internal states represent the different phases that a dataset goes through with regard to the ZIL.
+They are depicted in Figure~\ref{fig:prb_hdl_runtime_states}.
 
 \begin{figure}[H]
     \centering
     \includegraphics[height=5cm]{fig/prb_hdl_runtime_states}
     \caption{The runtime states of a HDL.}
+    \label{fig:prb_hdl_runtime_states}
 \end{figure}
 
-When the HDL is created, it does not have a log and is in state \textit{nozil}.
+When a HDL is created, it does not have a log and is in state \textit{nozil}.
 When the dataset is mounted, the HDL allocates a \textit{log GUID} and persists it to the ZIL header.
 The log GUID uniquely identifies the log's entries in the PRB.
 The HDL is now in state \textit{logging} and threads can write entries to it.
