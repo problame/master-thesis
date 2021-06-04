@@ -1468,7 +1468,9 @@ However, our implementation has no such provisions because even with the (absurd
 
 \section{HDL Replay: Dependency Tracking}\label{di:prb:deptrack}
 Replay is complicated by the fact that the entries that were stored in the PRB can be lost.
-For example, bitflips in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
+For example, a bitflip in PMEM might corrupt the entry's log GUID or PRB-internal metadata.
+PRB uses checksums to detect such data corruption and hides corrupted entries when HDLs scan the PRB.
+
 If an entry $E_m$ with $E_m.txg > precrash\_txg$ is missing, any entry $E_d$ that logically depends on $E_m$ ($E_m < E_d$) must no longer be replayed.
 However, all entries $E_p$ that do not depend on $E_m$ and need replay should still be replayed (their $E_p \le E_m \wedge E_p.txg > precrash\_txg$).
 
@@ -1479,7 +1481,7 @@ For an entry $E$, the counter $E.C_{ctxg_i}$
 \end{gather*}
 stores the number of entries that were written to the log since its inception, for a DMU transaction with txg $ctxg_i$, until generation $E.gen$.
 During replay, we first construct the replay sequence (example in the previous section, Figure~\ref{fig:prb_hdl_log_structure_example__replay}).
-Then, we re-compute and compare the counters for each entry in the replay sequence.
+Then, we walk over the replay sequence, re-compute the counters as if we were writing each entry, and compare the counters.
 If an entry $E_m$ has been lost, the counters of any dependent entry $E_d$ (their $E_d.gen > E_m.gen$) will not match, causing replay to stop with $E_d$ as a \textit{witness}.
 Missing entries in the last generation (the ``tail'' of the log) cannot be detected with this scheme.
 
@@ -1492,20 +1494,18 @@ After a txg $t_{synced}$ has been synced, PRB garbage-collects all entries $\mat
 These entries no longer show up when the claiming or replay procedures scan the PRB for entries with the HDL's log GUID.
 If we used a single sequence counter to check for missing entries, we would be unable to discern garbage-collected entries from missing entries.
 
-It is sufficient to include only those counters $E.C_{txg_i}$ in the entry metadata whose transaction groups $txg_i$ had not yet been synced at the time that $E.gen$ started.
+It is sufficient to include only those counters $E.C_{ctxg_i}$ in the entry metadata whose transaction groups $ctxg_i$ had not yet been synced at the time that $E.gen$ started.
 The reason is that a) the replay sequence only contains entries in unsynced txgs and b) $E$ only depends on entries $D$ with $D.gen < E.gen$.
-Since there are only three possible unsynced txgs at any time (\textit{open}, \textit{quiescing}, \textit{syncing}), we only need to store three $(txg_i, C_{txg_i})$ tuples per log entry.
+Since there are only three possible unsynced txgs at any time (\textit{open}, \textit{quiescing}, \textit{syncing}), we only need to store three $(ctxg_i, C_{ctxg_i})$ tuples per log entry.
 In fact, since txgs never skip a number, we only need to store the value of $txg_{open}$ and recompute
 \begin{align*}
     txg_{quiescing} & = txg_{open} - 1 \\
     txg_{sycing} & = txg_{open} - 2
 \end{align*}
 
-We use the same algorithm to compute the counters on both the write and recovery path.
-This works because the write path must use monotonically increasing generation numbers, and the entries in the replay sequence are sorted in that order.
-The counters are stored in a table called \textit{live table}.
-It has four rows $R_i := (txg, ctr), i \in \{0,1,2,3\}$.
-When an entry $E$ is written or visited, it modifies the counter in the row with index $I_T := T \bmod 4$ where $T := E.txg$.
+We use the same algorithm to compute the counters on the write path, and to re-compute them from the replay sequence on the recovery path.
+It stores the counters in a table called \textit{live table} which has four rows \mbox{$R_i := (txg, ctr), i \in \{0,1,2,3\}$}.
+When an entry $E$ is written or replayed, it modifies the counter in the row with index $I_T := T \bmod 4$ where $T := E.txg$.
 We distinguish the following conditions:
 \begin{itemize}[noitemsep]
 \item If $R_{I_T}.txg = T$, we simply increment $R_{I_T}.ctr$ and are done.
@@ -1517,36 +1517,37 @@ Hence, the condition cannot occur during replay. If it does, the write path impl
 \end{itemize}
 Note that the use of 4-ary arrays allows the use of \textit{bitwise-and} for indexing, which is a common ZFS idiom (\lstinline{table[txg&3]}).
 
-To detect the start of a new generation, and support resumable replay after a crash (Section~\ref{di:prb:ccrecovery}), we maintain a separate variable $E_{last} := (gen, gsid)$.
-When an entry $E$ is written or visited, we compare it to $E_{last}$ using the following rules:
+We maintain a separate variable $E_{last} := (gen, gsid)$ to detect when a new generation is started, and to support resumable replay after a crash (Section~\ref{di:prb:ccrecovery}).
+When an entry $E$ is written or replayed, we compare it to $E_{last}$ using the following rules:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
 \item[$E < E_{last}$] This case is prohibited for writers because the API contract for log writers is that generation numbers must be monotonically increasing.
-  During replay, we skip all entries $\le_{replay} E_{last}$ because $E_{last}$ marks the last-replayed entry.
+  During replay, we skip all entries that are $\le_{replay} E_{last}$ because $E_{last}$ marks the last-replayed entry.
 \item[$E.gen = E_{last}.gen$] The writer did not start a new generation and we leave the \textit{last table} unmodified.
-\item[$E.gen > E_{last}.gen$] We create a copy of the \textit{live table}. We refer to this snapshot as \textit{last table}.
+\item[$E.gen > E_{last}.gen$] A new generation was started.
+    We create a copy of the \textit{live table} which we refer to as \textit{last table}.
+    It will be used to compute the counters stored in the entries of generation $E.gen$ (next paragraph).
 \end{description}
 Regardless of whether a new generation was started or not, we always update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph after evaluating the rules above.
 
-The counters $E.C_{txg_i}$ have the same value for all entries in generation $E.gen$  because, by definition, they only count entries written up to but not including $E.gen$.
-Hence, we compute them from the \textit{last table} once and cache the results until the next generation is started:
+The counters $E.C_{ctxg_i}$ have the same value for all entries in generation $E.gen$  because, by definition, they only count entries written up to but not including $E.gen$.
+We compute them from the \textit{last table} once and cache the results until the next generation is started:
 \begin{enumerate}[noitemsep]
-    \item Determine row index $i_{max} := \max_{i \in \{0,1,2,3\}} R_i.txg$ where $R_i \in \text{last table}$.
-    \item Invariant: $R_{i_{max}}.txg$ is the highest potentially unsynced txg in generations $< open\_gen$.
-        We make the most conservative assumption that $R_{i_{max}}.txg$ was the \textit{open txg} in generation $open\_gen - 1$.
+    \item Determine row index $i_{max} := \max_{i \in \{0,1,2,3\}} R_i.txg$ where $R_i$ is a row in the \text{last table}.
+    \item Invariant: $R_{i_{max}}.txg$ is the highest potentially unsynced txg from the perspective of this HDL.
+        We make the most conservative assumption that $R_{i_{max}}.txg$ might be the currently \textit{open txg}.
     \item Find the counters for \textit{quiescing} and \textit{syncing txg}.
         We scan the \textit{last table} twice to find counters for transaction groups $R_{i_{max}}.txg - 1$ and $R_{i_{max}}.txg - 2$.
         If the \textit{last table} does not contain those counters, we use a value of zero.
 \end{enumerate}
-
-Figure~\ref{fig:prb_counters_table__computation_and_encoding} contains an illustration of the process that converts the \textit{last table} into the counters table.
-We provide an extensive example in Figure~\ref{fig:prb_counters_table__example}.
-Note that our implementation does not yet use the compact encoding of the counters table.
+Figure~\ref{fig:prb_counters_table__computation_and_encoding} contains an illustration of the last paragraph.
+Figure~\ref{fig:prb_counters_table__example} provides an example for the entire counter computation algorithm.
 
 \begin{figure}[H]
     \centering
     \includegraphics{fig/prb_counters_table__computation_and_encoding}
     \caption{
-        Visualization of how the counters table is computed from the \textit{last table} structure.
+        Visualization of how the counters for one generation of entries are computed from the \textit{last table}.
+        Note that our implementation does not yet use the compact encoding (right table) but stores the content of the center table in each entry header.
     }
     \label{fig:prb_counters_table__computation_and_encoding}
 \end{figure}
@@ -1560,7 +1561,7 @@ Note that our implementation does not yet use the compact encoding of the counte
         A,B,C,D in generation 1; E,F in generation 2; G in generation 3; H in generation 4; J in generation 5.
         Note that their txgs differ sometimes but stay in a corridor of at most three txgs.
         The table at the bottom shows the counter values in the entry headers:
-        each row represents the counter table that is stored in the entry headers of one generation.
+        each row represents the counters that are stored in the entry headers of one generation.
         The table at the upper right shows the \textit{live table}'s content over time.
         Instead of counters, we show the entries that would cause the specific counter to be incremented.
         We visualize row-reuse by separating new row content with a ``\lstinline{|}" symbol in each cell of the reused row.
@@ -1570,7 +1571,7 @@ Note that our implementation does not yet use the compact encoding of the counte
 
 \section{HDL: Model For Data Corruption}\label{di:prb:modeldatacorruption}
 The use of counters to validate that no log entries are missing during replay relies on the assumption that random data corruption is incapable of ``forging'' new log entries.
-If this were possible, a forged entry could compensate a lost entry in the counter table.
+If this were possible, a forged entry could compensate a lost entry when re-computing the counters during replay.
 The loss of the entry would go unnoticed and the replay of the forged entry would likely corrupt the dataset.
 
 We believe that it is sufficiently unlikely for random data corruption to accidentally forge an entry.
