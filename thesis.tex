@@ -3279,41 +3279,44 @@ To achieve full coverage, the ZTS must be run twice, once for ZIL-LWB and once f
 
 \subsection{Results}
 
-Our user-space tests for PRB/HDL enabled fast iteration on the implementation with high confidence in its correctness.
-The majority of test cases are the collection of edge-cases that we discovered while designing the PRB/HDL data structure.
-Naturally, we have addressed all of these edge cases in the design and implementation.
-Thus, thus all of our PRB/HDL tests pass.
-
-\textit{Ztest} helped us find many implementation errors in the integration code.
-Again, the high iteration speed and ease of debugging in userspace proved very beneficial.
-We have run the \textit{zloop.sh} script for X\todo{value} minutes for each ZIL kind and did not encounter any crashes.
-
-After our changes to the ZIL-related \lstinline{ZTS} tests, all of them pass (or are skipped) for both ZIL-LWB and ZIL-PMEM.
+Our userspace \textit{tests for PRB/HDL} enabled fast iteration on the implementation with high confidence in its correctness.
+The majority of tests address edge-cases that we discovered while designing the PRB/HDL data structure.
+Naturally, the implementation handles all of these edge cases and thus all PRB/HDL tests pass.\\
+\textit{Ztest} exposed many implementation errors in the integration code.
+Again, the high iteration speed and ease of debugging in userspace proved beneficial.\\
+The \textit{ZTS tests} related to the ZIL pass (or are skipped) for both ZIL-LWB and ZIL-PMEM.
 They exposed significantly less implementation issues than \textit{ztest}.
 (We used ZTS during initial development and only adopted \textit{ztest} later in the process, hence we were able to experience the difference.)
 
 We use the \lstinline{gcov} code coverage analysis tool that is supported in the OpenZFS and Linux kernel build system to get some quantitative results.
-The table in Figure~\ref{fig:eval:correctness_line_coverage} compares the line coverage for the userspace tests (\textit{ztest} and PRB/HDL tests) and kernel module tests (ZTS SLOG tests listed above) between our tree of OpenZFS and the merge-base commit of our tree with the upstream \lstinline{master} branch.
-\todo{final results}
+We compare the line coverage in the ZIL code modules for the userspace tests (\textit{ztest} and PRB/HDL tests) and kernel module tests (ZTS SLOG tests listed above) between our tree of OpenZFS and the merge-base commit of our tree with the upstream \lstinline{master} branch.
+For userspace coverage, we executed the PRB/HDL tests once and the \textit{zloop.sh} script for 60 minutes for each ZIL kind.
+In the upstream tree, we only executed \textit{zloop.sh} once (60 minutes runtime).
+For kernel coverage, we executed the ZTS tests tagged as \textit{slog} (\lstinline{zfs-tests.sh -T slog}) which corresponds to the SLOG tests listed above.
+We present the results in Figure~\ref{fig:eval:correctness_line_coverage}.
 
-\newcommand{\cssubheader}[1]{\multicolumn{1}{c}{ \rotatebox[origin=c]{90}{#1} } }
+For our tree, \textit{zloop.sh} encountered 5 crashes (120 min runtime), two of which were in ZIL-PMEM code.
+For the upstream tree, it found 1 crash (60~min~runtime).
 
+\newcommand{\cssubheader}[1]{\multicolumn{1}{c}{ \rotatebox[origin=c]{0}{\scriptsize #1} } }
+
+%!!!!!!!!!!!!!!!!!!! Code coverage results are repeated in the conclusion, keep in sync !!!!!!!!!!!!!!!!!!!!!!!!!
 \begin{figure}[H]
     \centering
     \begin{tabular}{ll|rrr|rrr}
                                                                                                                                                                                                                                                                                                                                           \toprule
                                                             &                                               & \multicolumn{3}{c}{\textbf{Upstream}}                                                                                    & \multicolumn{3}{c}{\textbf{Our Tree}}                                                                                       \\
-                                                            &                                               & \cssubheader{\#Covered}                      & \cssubheader{\#Lines}             & \cssubheader{Coverage}                & \cssubheader{\#Covered}               & \cssubheader{\#Lines}                          & \cssubheader{Coverage}             \\ \midrule
-    \multirow{5}{*}{\rotatebox[origin=c]{90}{Kernel}}       & zil.c                                         & 1120                                         & 1383                              & 80.98\%                               & 375                                   & 514                                            & 72.96\%                            \\
-                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1060                                  & 1211                                           & 87.53\%                            \\
+                                                            &                                               & \cssubheader{\#Covered}                      & \cssubheader{\#Lines}             & \cssubheader{Cvg}                & \cssubheader{\#Covered}               & \cssubheader{\#Lines}                          & \cssubheader{Cvg}             \\ \midrule
+    \multirow{5}{*}{\rotatebox[origin=c]{90}{Kernel}}       & zil.c                                         & 1230                                         & 1383                              & 88.94\%                               & 375                                   & 514                                            & 72.96\%                            \\
+                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1085                                  & 1211                                           & 87.37\%                            \\
                                                             & zil\_pmem.c                                   &                                              &                                   & 0.00\%                                & 601                                   & 838                                            & 71.72\%                            \\
-                                                            & PRB/HDL                                       &                                              &                                   & 0.00\%                                & 872                                   & 1227                                           & 71.07\%                            \\
-                                                            & \textbf{Total}                                & \textbf{1120}                                & \textbf{1383}                     & \textbf{80.98\%}                      & \textbf{2908}                         & \textbf{3790}                                  & \textbf{76.73\%}                   \\ \hline
-    \multirow{5}{*}{\rotatebox[origin=c]{90}{Userspace}}    & zil.c                                         & 1219                                         & 1379                              & 88.40\%                               & 351                                   & 501                                            & 70.06\%                            \\
-                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1083                                  & 1204                                           & 89.95\%                            \\
+                                                            & PRB/HDL                                       &                                              &                                   & 0.00\%                                & 862                                   & 1227                                           & 70.25\%                            \\
+                                                            & \textbf{Total}                                & \textbf{1230}                                & \textbf{1383}                     & \textbf{88.94\%}                      & \textbf{2896}                         & \textbf{3790}                                  & \textbf{76.41\%}                   \\ \hline
+    \multirow{5}{*}{\rotatebox[origin=c]{90}{Userspace}}    & zil.c                                         & 1204                                         & 1379                              & 87.31\%                               & 351                                   & 501                                            & 70.06\%                            \\
+                                                            & zil\_lwb.c                                    &                                              &                                   & 0.00\%                                & 1063                                  & 1204                                           & 88.29\%                            \\
                                                             & zil\_pmem.c                                   &                                              &                                   & 0.00\%                                & 649                                   & 806                                            & 80.52\%                            \\
                                                             & PRB/HDL                                       &                                              &                                   & 0.00\%                                & 1031                                  & 1183                                           & 87.15\%                            \\
-                                                            & \textbf{Total}                                & \textbf{1219}                                & \textbf{1379}                     & \textbf{88.40\%}                      & \textbf{3114}                         & \textbf{3694}                                  & \textbf{84.30\%}                   \\  \bottomrule
+                                                            & \textbf{Total}                                & \textbf{1204}                                & \textbf{1379}                     & \textbf{87.31\%}                      & \textbf{3094}                         & \textbf{3694}                                  & \textbf{83.76\%}                   \\  \bottomrule
     \end{tabular}
     \caption{Line Coverage measured by \lstinline{gcov}.}
     \label{fig:eval:correctness_line_coverage}
@@ -3856,7 +3859,7 @@ Our approach shares the code and data structures that define the logical structu
 Whereas there are still open issues related to dynamic changing of ZIL kinds after pool creation, and the overall degree to which ZIL kinds should be exposed to the user, we were able to successfully evaluate our implementation.
 
 We have validated correctness through extensive unit testing as well as existing ZIL tests in the ZFS Test Suite and the \textit{ztest} stress testing tool.
-We achieve X\% code coverage for our userspace tests, and Y\% code coverage for the kernel module.\todo{code coverage results}
+We achieve 83.76\% code coverage with our userspace tests, and 76.41\% code coverage for the kernel module.
 Regarding performance, we were able to demonstrate high speedups over ZIL-LWB in micro- and application benchmarks.
 The highest achieved speedups are 8x (4k synchronous random write micro-benchmark) and 5.8x in a RocksDB workload.
 The speedup of the same workloads for ZVOLs with XFS mounted on top is, barring a few exceptions, at least~2x.
