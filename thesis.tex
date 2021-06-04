@@ -119,7 +119,6 @@ We validate our core data structure through extensive unit testing as well as th
 Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a single-threaded 4k synchronous random write workload on the same storage hardware.
 
 \mainmatter
-\listoftodos
 
 \cleardoublepage
 \phantomsection
@@ -3364,7 +3363,6 @@ It provides the following functionality:
         The objects use the hardware resource registry to discover the storage devices.
         This decoupling enables portability between the two evaluation systems.
     \item[Unified Benchmark Abstraction] We represent all benchmarks in this section as Python objects with a unified interface for benchmark execution.
-    \item[Pinned Software Versions] We build benchmarks from pinned source code versions (git submodules) or use pinned binary versions.\todo{Still need to do this}
     \item[Result Storage] For each benchmark invocation, we serialize a description of the storage stack, benchmark parameters, and results into JSON objects and store these objects as unique files in the filesystem.
         Results are grouped by a prefix for post-processing, e.g., files with prefix \lstinline{app_benchmarks__v4} contain the results of the fourth iteration of our application benchmark design.
 \end{description}
