@@ -1287,13 +1287,13 @@ PRB consumes chunks of PMEM and provides a scalable storage substrate for an arb
 In Chapter~\ref{ch:zilpmem}, we then present how we integrate PRB/HDL into ZFS as the ZIL-PMEM ZIL kind.
 
 We present the design and implementation of PRB in a top-down manner.
-In Section~\ref{di:prb:analysis} we isolate the requirements that ZIL-PMEM puts on PRB by recapitulating how the ZIL fits into ZFS's overall architecture.
+In Section~\ref{di:prb:analysis}, we isolate the requirements that ZIL-PMEM puts on PRB by recapitulating how the ZIL fits into ZFS's overall architecture.
 Afterward, in Section~\ref{di:prb:approach}, we give a high-level overview of our design.
 Section~\ref{di:prb:logstructure} presents the virtual log abstraction that is exposed by HDL and Section \ref{di:prb:replayapproach} describes the high-level approach for replay.
 Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash consistency is addressed by HDL.
 Subsequently, we describe PRB, which is the storage substrate that the HDLs use for persistence:
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use for PMEM space management and log entry storage.
-In Section~\ref{di:prb:traversal} we describe the algorithm that traverses the in-PMEM data structure during log recovery.
+In Section~\ref{di:prb:traversal}, we describe the algorithm that traverses the in-PMEM data structure during log recovery.
 Section~\ref{di:prb:gc} explains how garbage collection removes obsolete from PRB.
 The low-latency and CPU efficient design of the write path is then presented in Section~\ref{di:prb:write}.
 Finally, Section~\ref{di:prb:api} provides a walkthrough of the API that ZIL-PMEM consumes.
