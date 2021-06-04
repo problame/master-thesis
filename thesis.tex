@@ -110,7 +110,7 @@ Persistent memory (PMEM) is an emerging technology that provides low-latency mem
 OpenZFS is a storage system that combines volume management and filesystem services.
 The ZFS Intent Log (ZIL) is ZFS's mechanism for supporting synchronous IO semantics.
 The current ZIL implementation (ZIL-LWB) exhibits sub-par performance when configuring Linux's \mbox{/dev/pmem} pseudo block device as a separate log device (SLOG) for use by the ZIL.
-An analysis of the distribution of wall clock time among the ZFS components that are involved in synchronous writes reveals that block-device-oriented abstractions and data structures account for the vast majority of overall latency.
+An analysis of the distribution of wall clock time among the ZFS components that are involved in synchronous writes reveals that block-device-oriented abstractions and data structures account for the vast majority of the overall latency of synchronous writes.
 
 Motivated by this observation, we propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets persistent memory to take advantage of its remarkable performance characteristics.
 We refactor ZFS to support different \textit{ZIL kinds} at runtime, enabling coexistence of ZIL-LWB and ZIL-PMEM.
@@ -128,14 +128,15 @@ Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a s
 
 \chapter{Introduction}
 The task of a filesystem is to provide non-volatile storage to applications in the form of the \textit{file} abstraction.
-Applications modify files through system calls such as \lstinline{write()} which generally does not provide any durability guarantees.
-Instead, the system call modifies a buffer in DRAM such as a page in the Linux page cache and returns to userspace.
-Writeback of the buffer to persistent storage is deferred to an implementation-defined point in the future.
+Applications modify files through system calls such as \lstinline{write()} which generally do not provide any durability guarantees.
+Instead, they modify DRAM buffers, such as pages in the Linux page cache, and return to userspace.
+Writeback of these buffer to persistent storage is deferred to an implementation-defined point in the future.
 
 However, many applications have stronger durability requirements.
-For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted to non-volatile storage before clearing the transaction.
-Otherwise, a system crash and recovery after clearing could result in the pre-purchase balance being restored, enabling double-spending by the account holder.
-These \textbf{synchronous IO} semantics must be requested through APIs such as \lstinline{fsync} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{OpenGroupFsync}.
+For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted before clearing the transaction.
+Otherwise, the on-disk state might remain the pre-purchase balance.
+In the event of a crash and subsequent reboot, the accounting system would then load this state from disk, enabling double-spending by the account holder.
+The solution is to request \textbf{synchronous IO} semantics from the filesystem through APIs such as \lstinline{fsync()} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{OpenGroupFsync}.
 
 The \textbf{Zettabyte File System (ZFS)} combines volume management and filesystem services.
 It pools many block devices into a storage pool (\textit{zpool}) which can hold thousands of sparsely allocated filesystems.
@@ -145,45 +146,44 @@ Transaction groups are ``synced out'' in the background by the \textit{txg sync}
 Synchronous IO semantics cannot be reasonably achieved by triggering \textit{txg syncs} for every synchronous operation.
 The reason is that ZFS's main on-disk structure, a single large merkle tree, is too expensive to update at the typical frequency at which userspace issues synchronous IO.
 Instead, ZFS maintains the \mbox{\textbf{ZFS Intent Log (ZIL)}} which is a per-filesystem logical write-ahead log that can be written independently of txg sync.
-The ZIL's \textit{log records} describe the logical changes that need to be applied to the filesystem after a system crash to recover the state that was reported as committed but not yet synced by txg sync.
+The ZIL's \textit{log records} describe the logical changes that need to be applied (``replayed'') to the filesystem after a system crash to recover the state that was reported as committed to userspace but not yet persisted by txg sync.
 
-The on-disk representation of the ZIL is a chain of \textit{log-write blocks} (LWBs), each of which contains many records.
-By default, LWBs are allocated from the zpool's main storage devices.
-Consequently, the lower bound for a synchronous IO operation is the latency required for writing the LWBs that contain the operation's log records.
-To address the case where this latency is insufficient, ZFS provides the ability to add a \textit{separate log device} (SLOG) to the zpool.
-The SLOG is typically a single (or mirrored) block device that provides lower latency than the main storage devices.
+The on-disk representation of the ZIL is a chain of \textit{log-write blocks} (LWBs), each of which contains many log records.
+The lower bound for the latency of a synchronous IO operation is the latency required for writing the LWBs that contain the operation's log records.
+By default, LWBs are allocated from the zpool's primary storage devices.
+To address the case these devices' latency is insufficient, ZFS provides the ability to add a \textit{separate log device} (SLOG) to the zpool.
+The SLOG is a block device that provides lower latency than the primary storage devices.
 A typical configuration today is to add a fast NVMe drive to an HDD-based zpool.
 Adding a fast SLOG accelerates LWB writes because LWBs are preferentially allocated from the SLOG.
-Note that the space required for a SLOG is small since LWBs are obsoleted as soon as txg sync writes out the dirty state that the log records persist.
+Note that the space requirements for SLOGs are low because LWBs are garbage-collected as soon as txg sync has written out the dirty state of all log records that an LWB contains.
 
 \textbf{Persistent Memory (PMEM)} is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
 The Linux kernel can expose PMEM as a pseudo block device (/dev/pmem) whose sectors map directly to PMEM pages.
-Unmodified block device consumers can use it as a fast block device, albeit with the caveat of lacing sector atomicity guarantees.
+Unmodified block device consumers can use it as a fast block device, albeit with the caveat of lacking sector atomicity guarantees.
 Block device consumers that are aware of PMEM can get \textbf{d}irect-\textbf{ac}cess (DAX) to \mbox{/dev/pmem}'s pages and bypass the block IO stack completely.
 
 The motivation for this thesis is to accelerate synchronous IO in ZFS by using PMEM as a ZFS SLOG device.
 A single DIMM of the current Intel Optane DC PMEM product line can sustain 550k random 4k write IOPS from a single CPU core which corresponds to a write latency of 1.81~us.
-However, when configuring /dev/pmem as a SLOG in ZFS, a single thread only achieves 10k~IOPS~(100~us/IOP), and only scales up to 100k~IOPS at 7 threads (70~us/IOP per thread).
+However, when configuring /dev/pmem as a SLOG in ZFS, a single thread only achieves 10k~IOPS~(100~us/IOP) and only scales up to 100k~IOPS at 7 threads (70~us/IOP per thread).
 This discrepancy prompted us to perform a more detailed analysis of ZFS's severe latency overhead in this benchmark.
-We find that approximately 80\% of wall clock time for the average IOP is spent in the ZIL code.
-We conclude that both the LWB structure and the mechanism to persist it (ZIO pipeline) are unfit for PMEM-level performance.
+We find that approximately 80\% of wall clock time for the average IOP is spent in the ZIL code, and
+we conclude that both the LWB structure and the mechanism to persist it (ZIO pipeline) are unfit for PMEM-level performance.
 
 Based on our observations, we propose \textbf{ZIL-PMEM}, a new ZIL design that exclusively targets PMEM.
-It coexists with the existing ZIL which we refer to as \textit{ZIL-LWB} in the remainder of this document.
-ZIL-PMEM achieves 128k random 4k sync write IOPS with a single thread and scales up to 400k IOPS as early as four threads before it becomes CPU-bound.
+It coexists with the existing ZIL, which we refer to as \textit{ZIL-LWB} in the remainder of this document.
+ZIL-PMEM achieves 128k random 4k synchronous write IOPS with a single thread, and scales up to 400k IOPS as early as four threads.
 Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
 The remainder of this thesis is structured as follows:
 in Chapter~\ref{ch:litreviewandbackground} we
- review prior work in the field of persistent memory related to filesystems and
- provide background knowledge on PMEM, as well as
- a detailed introduction to the components of ZFS that are relevant for this thesis.
+ review prior work in the field of persistent memory and its use in filesystems and
+ provide technical background knowledge on PMEM and ZFS.
 Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB's sub-par performance on a /dev/pmem SLOG.
 Our solution, \mbox{ZIL-PMEM}, is then presented Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the design.
 Our main contribution, the \textit{PRB/HDL} the data structure, is then presented in detail in Chapter~\ref{ch:prbhdl}.
 The integration of PRB/HDL into ZFS is then described in Chapter~\ref{ch:zilpmem}.
-We evaluate our implementation in Chapter~\ref{ch:eval} and conclude with a conclusion of our work in Chapter~\ref{ch:conclusion}.
+We evaluate our implementation in Chapter~\ref{ch:eval} and finish with a conclusion of our work in Chapter~\ref{ch:conclusion}.
 
 \chapter{Literature Review \& Technical Background}\label{ch:litreviewandbackground}
 In this chapter, we present prior work in the field of persistent memory and its application in various storage systems developed in research and industry.
@@ -2200,8 +2200,8 @@ The following implementation details of the append operation are relevant for la
 \end{itemize}
 
 
-\section{API Overview}\label{di:prb:api}
-In this section, we briefly discuss the API of PRB/HDL that is consumed by the ZIL-PMEM ZIL kind.
+\section{API Walkthrough}\label{di:prb:api}
+In this section, we provide a brief walkthrough of PRB/HDL's API that is consumed by the ZIL-PMEM ZIL kind.
 In the implementation, most types and functions are prefixed with \lstinline{zilpmem_} or \lstinline{zilpmem_prb_t} which we omit for brevity.
 
 \subsection{PRB Setup}
