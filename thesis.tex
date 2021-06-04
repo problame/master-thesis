@@ -749,7 +749,7 @@ It is of crucial importance that the completion of a DMU transaction, indicated 
 DMU transactions merely scope modifications on the DMU level to a txg; more specifically, the txg that was the \textit{open txg} at the time the transaction was started.
 If the system crashes before that txg has finished \textit{syncing}, the in-flight txgs' modifications are lost.
 
-% \clearpage % so that the figures in this subsectio land on semantically sensible pages
+\clearpage % so that the figures in this subsectio land on semantically sensible pages
 
 \subsection{ZFS Intent Log (ZIL)}\label{openzfs:the_zil_api}
 
@@ -786,44 +786,47 @@ Figure~\ref{fig:zil_api_syscall_activity_diagrams} visualizes these procedures.
 
 The ZIL tracks assigned ITXs in data structures called \lstinline{itxg}.
 There exists one \lstinline{itxg} for each of the three unsynced DMU transaction groups.
-Each \lstinline{itxg} structure is split into a \textit{sync list} and the \textit{async tree}.
+Each \lstinline{itxg} consists of a \textit{sync list} and an \textit{async tree}.
 The \textit{sync list} is a simple list of ITXs whereas the \textit{async tree} is a search-tree that maps from object ID to a list of ITXs.
 Most ITXs are appended to the \textit{sync list} when they are assigned to the ZIL.
 However, ITXs that only affect a particular file are placed into the \textit{async tree} instead.
 For example, an ITX that logs the creation of a file is added to the \textit{sync list} whereas an ITX that logs a write within an existing file is added to the \textit{async tree}.
 \lstinline{zil_commit} uses the \lstinline{itxg}s to determine the list of ITXs that need to be appended to the on-disk log so that successful recovery is possible.
-The following pseudo-code illustrates how \lstinline{zil_commit} constructs this so-called \textit{\textbf{commit list}}, and how the records on the commit list are encoded as so-called \textit{\textbf{log records}} and appended to the log.
-Figure~\ref{} provides an example.
-
-\begin{lstlisting}[style=figurepseudocode]
-zil_commit(object_id)
-  commit_list := []
-  for each unsynced transaction group 'txg':
-    itxg <- the itxg for txg
-    if object_id == 0:
-        move all itxs in itxg.async to itxg.sync
-    else:
-        move only the itxs in itxg.async[object_id] to itxg.sync
-      append itxg.sync to commit_list
-  for each itx in commit_list:
-    log_record := encode itx as log record
-    append log record to a persistent log structure
-\end{lstlisting}
+The pseudo-code in Figure~\ref{fig:zil_commit_itxg_pseudocode} illustrates how \lstinline{zil_commit} constructs this so-called \textit{\textbf{commit list}}, and how the ITXs on the commit list are encoded as \textit{\textbf{log records}} and appended to the on-disk log structure.
 
 After a system crash, the zpool is in the state of the last synced transaction group which we call $precrash\_txg$.
 All datasets (i.e, filesystems, ZVOLs) are at their $precrash\_txg$ state and any changes made in younger DMU transactions are missing.
 The ZPL and ZVOL code uses the ZIL's \lstinline{zil_replay} API when the filesystem is mounted (or the ZVOL opened) to recover the lost changes.
 The API contract is that the caller provides a callback that is invoked for exactly those log records that were lost, i.e., whose ITX's txg was $> precrash\_txg$.
-The callback is invoked in the order of the sequential on-disk log.
+The callback is invoked in the order of the on-disk log structure.
 Its job is to interpret the log record and to re-apply the change to the dataset in a new DMU transaction.
 Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level} exemplifies the rather unintuitive behavior of \lstinline{zil_commit} and \lstinline{zil_replay}.
+
+\begin{figure}[H]
+\begin{lstlisting}[style=figurepseudocode]
+    zil_commit(object_id)
+      commit_list := []
+      for each unsynced transaction group 'txg':
+        itxg <- the itxg for txg
+        if object_id == 0:
+            move all itxs in itxg.async to itxg.sync
+        else:
+            move only the itxs in itxg.async[object_id] to itxg.sync
+          append itxg.sync to commit_list
+      for each itx in commit_list:
+        log_record := encode itx as log record
+        append log record to a persistent log structure
+    \end{lstlisting}
+    \caption{Pseudo-code that illustrates how \lstinline{zil_commit} constructs the commit list from the \textit{itxg} structure.}
+    \label{fig:zil_commit_itxg_pseudocode}
+\end{figure}
 
 \begin{figure}[H]
     \centering
     \includegraphics[trim=0cm 0.42cm 0cm 0.42cm]{fig/zil_writepath_and_replay_sequence_logical_level.pdf}
     \caption{
         Example log structure resulting from a series of VFS operations, and the corresponding replay callback invocations for different values of $precrash\_txg$.
-        Note that \lstinline{fsync /A} not only logs \lstinline{create /A} and \lstinline{write to /A} but also \lstinline{create /B} since file creation is always placed on the itxg's \textit{sync list}.
+        First, note that \lstinline{fsync /A} not only logs \lstinline{create /A} and \lstinline{write to /A} but also \lstinline{create /B} since file creation is always placed on the itxg's \textit{sync list}.
         Second, note how records 1 and 2 are skipped during replay if $precrash\_txg = 4$.
         If they were not skipped, the replay callback would fail to create file /A when replaying record 1 because /A already exists in the on-disk state of txg 4.
     }
