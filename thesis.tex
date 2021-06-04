@@ -190,7 +190,7 @@ In this chapter we present prior work in the field of persistent memory and its 
 The last two sections on persistent memory and ZFS provide the technical background knowledge that is necessary to understand the performance analysis of ZIL-LWB and the design of ZIL-PMEM in the subsequent chapters.
 
 \section{Literature Review}
-We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash-consistency models, checkers for the PMEM programming model, and general methods to determine filesystem robustness in the presence of hardware failures.
+We have surveyed publications in the area of persistent memory storage systems, filesystem guarantees \& crash consistency models, checkers for the PMEM programming model, and general methods to determine filesystem robustness in the presence of hardware failures.
 
 \subsection{PMEM Filesystems}
 In this subsection we present research filesystems that were explicitly designed for persistent memory.
@@ -225,7 +225,7 @@ NOVA uses per-inode logs for operations scoped to a single inode (e.g. write sys
 The intended result is high scalability with regard to core count.
 The per-inode log data structure is a linked list with a head and tail pointer in the inode.
 NOVA leverages 8-byte atomic operations to update these pointers after it has written log entries.
-While not explicitly called so by the authors it is our impression that the log is a logical redo log except for writes, which --- judging from the text --- are always logged at page granularity.
+While not explicitly called so by the authors, it is our impression that the log is a logical redo log except for writes, which --- judging from the text --- are always logged at page granularity.
 The authors explain the recovery procedure and measure its performance but do not address correctness in the evaluation.
 
 \citerelwork{NOVA-Fortis}{xuNOVAFortisFaulttolerantNonvolatile2017} is a version of NOVA that introduces snapshots and hardening against data corruption.
@@ -243,12 +243,12 @@ Whereas snapshots are not relevant for this thesis because ZFS already provides 
 The authors use a custom fault injection tool to corrupt data structures in a targeted manner and test NOVA Fortis's recovery capabilities.
 
 \subsubsection{Hybrid PMEM filesystems}\label{sec:hybrid_pmem_file_systems}
-A recurring pattern in PMEM filesystem design is to split responsibilities between kernel and userspace component in order to eliminate system call overhead.
+A recurring pattern in PMEM filesystem design is to split responsibilities between kernel and userspace components in order to eliminate system call overhead.
 
 \citerelwork{Aerie}{volosAerieFlexibleFilesystem2014} is a userspace filesystem based on the premise that
 “SCM [Storage Class Memory] no longer requires the OS kernel [...].
 Applications link to a file-system library that provides local access to data and communicates with a [user-space] service for coordination.
-The OS kernel provides only coarse grained allocation and protection, and most functionality is distributed to client programs.
+The OS kernel provides only coarse-grained allocation and protection, and most functionality is distributed to client programs.
 For read-only workloads, applications can access data and metadata through memory with calls to the file-system service only for coarse-grained synchronization.
 When writing data, applications can modify data directly but must contact the file-system service to update metadata.”
 The system uses a redo log maintained in each client program which is shipped to the filesystem service periodically or when exclusive access to a file system object is relinquished.
@@ -264,7 +264,7 @@ Since its distinguishing feature is the intelligent migration of data between di
 The user-space library file system handles data operations by intercepting POSIX calls, memory-mapping the underlying file, and serving the read and overwrites using processor loads and stores.
 Metadata operations are handled by the kernel PM file system (ext4 DAX)”.
 SplitFS uses a redo log with idempotent entries that is written from userspace.
-As a performance optimization the authors use checksums and aligned start addresses to find valid log entries instead of an explicit linked list with persistent pointers.
+As a performance optimization, the authors use checksums and aligned start addresses to find valid log entries instead of an explicit linked list with persistent pointers.
 The SplitFS evaluation of correctness is limited to a comparison of user-observable filesystem state between SplitFS and ext4 in DAX mode.
 Recovery is evaluated only through the lens of recovery time (performance), not correctness.
 
@@ -281,7 +281,7 @@ Crash consistency and recovery is not addressed:
 Cross-media storage systems combine the advantages of multiple storage devices from different levels of the storage hierarchy.
 Historically, these kinds of systems strive to exploit hard disk for high capacity at low cost and more expensive flash storage for low latency random access IO.
 With persistent memory, a new class of storage has become available whose role in cross-media systems is still to be determined.
-In the context of this thesis we find it most useful to compare the overall system architecture.
+In the context of this thesis, we find it most useful to compare the overall system architecture.
 
 \citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media research filesystem.
 “Closest to the application, Strata’s user library synchronously logs process-private updates in NVM while reading from shared, read-optimized, kernel-maintained data and metadata.
@@ -299,10 +299,10 @@ ZFS with and without ZIL-PMEM compares to Strata in the following ways:
           ZFS accumulates the write-back state in DRAM and never reads the log except for recovery.
           (It is unclear to us how often Strata digests the logs. ZFS performs write-back of dirty state after at most 5 seconds.)
           % \item The Strata paper suggests that the system uses a single block size whereas ZFS supports variable block sizes (“Free Block Bitmap” in Strata vs. Spacemaps in ZFS).
-    \item Strata seems to tune allocations for SSDs, e.g. allocating blocks in erasure block size to prevent write amplification.
+    \item Strata seems to tune allocations for SSDs, e.g., allocating blocks in erasure block size to prevent write amplification.
           ZFS supports TRIM and supports variable block sizes up to 16~MiB, but there are no automatic optimizations that specifically target write amplification in SSDs.
           %\item ZFS guarantees data integrity and has provisions for redundancy.
-          %\item ZFS supports many devices at different performance class levels whereas Strata only supports a single device.
+          %\item ZFS supports many devices at different performance class levels, whereas Strata only supports a single device.
     \item ZFS is in-kernel and requires no modifications to applications whereas Strata requires linking to or LD\_PRELOADing a userspace library, which, tangentially, makes it incompatible with statically linked binaries.
           %\item ZFS is a mature filesystem used at large scale in production whereas Strata is an unproven research prototype.
 \end{itemize}
@@ -320,7 +320,7 @@ ZFS with and without ZIL-PMEM compares to Ziggurat as follows:
           The ZFS architecture such a feature is unlikely to be developed in the future (keyword: blockpointer rewrite).
     \item Ziggurat sends writes directly to the suitable tier based on prediction of future access patterns.
           If the access pattern is anticipated to be synchronous, Ziggurat chooses the PMEM tier.
-          The ZIL, and ZIL-PMEM specifically, only serves as a stop-gap between txg sync points of the main pool.
+          The ZIL and ZIL-PMEM specifically only serve as a stop-gap between txg sync points of the main pool.
           Data is always written twice --- once to the log and once to the main pool ---, and never read from the log except during recovery.
           %(The \lstinline{WR_INDIRECT ZIL} log entry type mitigates this for large writes).
     \item Both systems are fully in-kernel and require no modifications to userspace applications.
@@ -341,13 +341,13 @@ Write-back is asynchronous and controlled by relative thresholds on the cache de
 It starts when the cache fill ratio reaches the \textit{high watermark} and stops once it reaches the \textit{low watermark}.
 Reads are not handled by dm-writecache and instead served from the Linux page cache.~\cite{WritecacheTargetLinux}
 \\
-Dm-writecache is relevant to ZIL-PMEM because it is the closest functional analogue to the ZIL in the Linux Device Mapper stack.
-It has been designed with explicit support for persistent memory and its authors have presented it as a means to accelerate database workloads~\cite{tadakamadlaAcceleratingDatabaseWorkloads2019}.
+Dm-writecache is relevant to ZIL-PMEM because it is the closest functional analog to the ZIL in the Linux Device Mapper stack.
+It has been designed with explicit support for persistent memory, and its authors have presented it as a means to accelerate database workloads~\cite{tadakamadlaAcceleratingDatabaseWorkloads2019}.
 However, both the data flow and data integrity guarantees differ substantially between the two systems.
-First, ZIL-PMEM pools the PMEM space for all filesystems and ZVOLs in a zpool whereas dm-writecache is limited to a single block device and thus would require partitioning.
+First, ZIL-PMEM pools the PMEM space for all filesystems and ZVOLs in a zpool, whereas dm-writecache is limited to a single block device and thus would require partitioning.
 Second, ZIL-PMEM persists writes as log entries to an append-only log structure and does not perform coalescing or delta-encoding.
 In contrast, dm-writecache is a block-level cache where an overwrite of the virtual block results in an overwrite in the cache.
-Further, ZIL-PMEM protects data integrity through checksums whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
+Further, ZIL-PMEM protects data integrity through checksums, whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
 After ZFS has synced out modifications to the main pool, they benefit from ZFS's strong data redundancy mechanisms such as \textit{raidz}.
 In contrast, with dm-writecache, the origin block device driver must handle data redundancy if desired, e.g., though another Device Mapper target such as \textit{dm-raid}.
 We compare the performance of the two implementations in Section ~\ref{sec:eval:dmwritecache} of our evaluation.
@@ -360,7 +360,7 @@ The following publications use persistent memory to accelerate file system journ
 From the buffer cache’s perspective, the on-disk blocks that make up a filesystem journal are indistinguishable from non-journal filesystem blocks.
 Thus, for a journal block $A^\prime$ that logs an update to a block $A$, both blocks $A^\prime$ and $A$ will sit in the buffer cache.
 This waste of space can be reduced with PMEM by the author’s proposal.
-Instead of journaling on top of the block layer, one journals in the buffer cache itself by a) placing the buffer cache in PMEM and b) introducing a new buffer cache entry state “frozen” so that an entry can be “clean”, “dirty” or “frozen”.
+Instead of journaling on top of the block layer, they journal in the buffer cache itself by a) placing the buffer cache in PMEM and b) introducing a new buffer cache entry state “frozen” so that an entry can be “clean”, “dirty” or “frozen”.
 When modifying a block $A$, the filesystem no longer makes a journal entry but instead modifies the buffer cache entry directly.
 If the entry was “clean”, it is now “dirty”. If the entry was “frozen”, a copy is made and the modification goes to the copy, making it “dirty” as well.
 Committing a block to the journal is a simple state transition from “dirty” to “frozen”. On a crash + restart, “dirty” buffer cache entries are discarded but “frozen” entries remain.
@@ -372,15 +372,15 @@ Finally, the paper does not address hardware error handling or data corruption c
 \citerelwork{ext4 fast commits}{FastCommitsExt4} is a feature released in Linux 5.10.
 “The fast-commit journal [...] contains changes at the file level, resulting in a more compact format.
 Information that can be recreated is left out, as described in the patch posting:
-For example, if a new extent is added to an inode, then  corresponding updates to the inode table, the block bitmap, the group descriptor and the superblock can be derived based on just the extent information and the corresponding inode information.
+For example, if a new extent is added to an inode, then corresponding updates to the inode table, the block bitmap, the group descriptor and the superblock can be derived based on just the extent information and the corresponding inode information.
     [...] Fast commits are an addition to — not a replacement of — the standard commit path; the two work together.
 If fast commits cannot handle an operation, the filesystem falls back to the standard commit path.”
 The cited article mentions ongoing work to use persistent memory for ext4 fast commits.
 The approach is inspired by per-inode journaling as proposed by \citeauthor{parkIJournalingFinegrainedJournaling2017} in \cite{parkIJournalingFinegrainedJournaling2017}.
 
 \textbf{Disk-oriented database management systems} often use write-ahead logs (WALs) to allow a transaction to commit before the modified pages are written back to stable storage.
-However, appending to a shared WAL file has historically been a latency and scalability bottleneck which lead to amortization techniques such as \textit{commit groups} (aka \textit{group commit}) and \textit{pre-committed transactions} that batch the WAL entries of multiple committing transactions into a single physical WAL record.%
-\footnote{According to \cite{dewittImplementationTechniquesMain1984} ``the notion of gronp commits appears to be past of the unwritten database folklore. The System-R implementors claim to have implemented it.''}
+However, appending to a shared WAL file has historically been a latency and scalability bottleneck, which lead to amortization techniques such as \textit{commit groups} (aka \textit{group commit}) and \textit{pre-committed transactions} that batch the WAL entries of multiple committing transactions into a single physical WAL record.%
+\footnote{According to \cite{dewittImplementationTechniquesMain1984} ``the notion of group commits appears to be part of the unwritten database folklore. The System-R implementors claim to have implemented it.''}
 With persistent memory, the latency bottleneck no longer lies in the raw IO but rather the coordination overhead between multiple CPU cores and sockets, prompting new distributed logging designs that avoid a central point of contention.%
 ~\cite{fangHighPerformanceDatabase2011,pelleyStorageManagementNVRAM2013,johnsonAetherScalableApproach2010}
 ZIL-LWB employs \textit{group commit} as well, although the terminology is different.
@@ -404,16 +404,16 @@ However, since ZIL-PMEM shall maintain the same guarantees as ZIL-PMEM (see Sect
 The authors
 “present a formal framework for developing crash-consistency models, and a toolkit, called FERRITE, for validating those models against real file system implementations.”
 The system provides means to express expected filesystem behavior as a \textit{litmus test}.
-A litmus test encodes expected behavior of a filesystem though a series of events (e.g. write to a file) and a final predicate expressed as a satisfiability problem.
+A litmus test encodes expected behavior of a filesystem though a series of events (e.g., write to a file) and a final predicate expressed as a satisfiability problem.
 FERRITE can execute the litmus test against an axiomatic formal model of the filesystem to ensure that, iff the actual filesystem adheres to the formal model, the litmus test’s expectations hold.
-Notably the litmus test is executed symbolically and the validation predicates are checked for satisfiability by an SMT solver; this is exhaustive and not comparable to a unit  or regression test.
+Notably, the litmus test is executed symbolically and the validation predicates are checked for satisfiability by an SMT solver; this is exhaustive and not comparable to a unit  or regression test.
 FERRITE can also execute litmus tests against the actual filesystem to test whether it adheres to the formal model.
 This test is non-exhaustive.
-It is based on executing the litmus test “many times” where for each execution all disk commands emitted during execution are recorded.
+It is based on executing the litmus test “many times” where for each execution, all disk commands emitted during execution are recorded.
 All permutations and prefixes of these traces that are allowed under the semantics of the disk protocol are used to produce test disk images which are fed back to the filesystem under test for recovery.
-After recovery the litmus test’s predicate must hold against the concrete filesystem state after recovery.
-If it does not hold the given permutation of the trace is proof that the filesystem does not match its model (assuming the litmus test passes execution against the model), or that the filesystem’s assumptions about the disk do not match the FERRITE \textit{disk model}.
-FERRITE appears to be a useful tool to build a model of ZFS’s undocumented crash-consistency guarantees (ZFS has not been evaluated by the authors).
+After recovery, the litmus test’s predicate must hold against the concrete filesystem state after recovery.
+If it does not hold, the given permutation of the trace is proof that the filesystem does not match its model (assuming the litmus test passes execution against the model) or that the filesystem’s assumptions about the disk do not match the FERRITE \textit{disk model}.
+FERRITE appears to be a useful tool to build a model of ZFS’s undocumented crash consistency guarantees (ZFS has not been evaluated by the authors).
 Such a model would be helpful to validate ZIL-PMEM's goal to maintain the same semantics as ZIL-PMEM.
 However, this would require a FERRITE disk model for persistent memory.
 
@@ -438,7 +438,7 @@ We do not believe that we can apply the presented approach to ZFS with and witho
 
 \subsection{PMEM-specific Tools}\label{sec:rel_work:pmemspecifictools}
 A growing body of work introduces tools that check whether code that manipulates persistent memory actually issues the architecturally required instructions for persistence.
-However, most systems only target userspace code and are thus inapplicable to ZIL-PMEM which is implemented in the ZFS kernel module.
+However, most systems only target userspace code and are thus inapplicable to ZIL-PMEM, which is implemented in the ZFS kernel module.
 Whereas ZIL-PMEM can be compiled for userspace as part of the \textit{libzpool} library, the large amount of conditional compilation involved in the libzpool build process diminishes the significance of userspace tests.
 The following tools support kernel code and are applicable to ZIL-PMEM in principle.
 
@@ -452,7 +452,7 @@ To our great dissatisfaction, Yat has never been published and remains an Intel-
 \citerelwork{PMTest: A Fast And Flexible Testing Framework For Persistent Memory Programs}{liuPmtestFastFlexible2019}
 PMTest is a validation tool that claims to be significantly faster than the userspace-only \textit{pmemcheck} tool that is part of Intel's \textit{Persistent Memory Development Kit}.
 The implementation is based on traces of PMEM operations which are generated by (manually or automatically) instrumented application code.
-PMTest ships with two built-in checkers that assert correct instruction ordering (e.g.: missing store barriers) and durability (e.g.: missing cache flushes).
+PMTest ships with two built-in checkers that assert correct instruction ordering (e.g., missing store barriers) and durability (e.g., missing cache flushes).
 Higher-level checks must be implemented by the programmer.
 PMTest works within kernel modules, but the implementation is limited to a single thread.
 The processing of the operation trace happens in userspace.
@@ -462,7 +462,7 @@ Error handling code paths are often notoriously difficult to test critical for c
 Fault injection is a common technique to simulate failures and thereby exercise these code paths.
 
 \citerelwork{Model-based Failure Analysis Of Journaling File Systems}{prabhakaranModelbasedFailureAnalysis2005}
-The authors present an analysis of the failure modes caused by incorrect handling of disk write failures in the journaling code in ext4, ReiserFS and IBM JFS.
+The authors present an analysis of the failure modes caused by incorrect handling of disk write failures in the journaling code in ext4, ReiserFS, and IBM JFS.
 These filesystems each implement one or more of the following journaling modes: data journaling, ordered journaling, and writeback journaling.
 Any block write performed in one of these modes falls in one of the following categories:
 “J represent journal writes, D represent data writes, C represent journal commit writes, S represent journal super block writes, K represent checkpoint data writes [...]”.
@@ -474,7 +474,7 @@ It intercepts block device writes from the filesystem code and injects write fai
 If the filesystem subsequently performs another block write that is not permitted by the state machine, an implementation error has been found.
 The authors distinguish several classes of failures with varying degrees of data loss.
 The methodology is very filesystem specific which already shows in the adjustments required for IBM JFS.
-ZFS's on disk format and specifically the ZIL's structure is substantially different from the journaling modes presented in the paper (See Sections~\ref{sec:openzfs_background:ondiskstate} and~\ref{ch:openzfs_background:zillwb_persistence}).
+ZFS's on-disk format and specifically the ZIL's structure is substantially different from the journaling modes presented in the paper (See Sections~\ref{sec:openzfs_background:ondiskstate} and~\ref{ch:openzfs_background:zillwb_persistence}).
 The system is thus not applicable to ZIL-PMEM.
 
 \citerelwork{ndctl-inject-error}{NdctlinjecterrorManPage} is a subcommand of the \lstinline{ndctl} administrative tool that
@@ -503,7 +503,7 @@ We recommend \cite{rudoffPersistentMemoryProgramming2017} and \cite{Scargall2020
 \textit{Intel Optane DC Persistent Memory} is currently the only broadly available persistent memory product on the market.
 The hardware form factor for Optane PMEM is that of a regular (volatile) DIMM that is installed into the same type of slot on the motherboard.
 Supercapacitor-backed non-volatile DIMMs (NVDIMM-N) have been available for a longer period of time but are generally not comparable to PMEM.
-NVDIMM-N devices use on-DIMM DRAM as the primary data store, and only persist it to on-DIMM flash in case of power loss.
+NVDIMM-N devices use on-DIMM DRAM as the primary data store and only persist it to on-DIMM flash in case of power loss.
 In contrast, Optane PMEM uses the 3D-Xpoint non-volatile memory technology as the primary data store, although a smaller amount of on-DIMM DRAM is used for caching \cite{yangEmpiricalGuideBehavior2020}.
 % NVDIMM-P whose electrical and mechanical interface has recently been standardized as NVDIMM-P \cite{JEDECNVDIMM_P} ....
 
@@ -593,7 +593,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         The consequence is that software must detect the platform's properties at runtime, and dispatch to the implementation that ensures correctness and performance.
         \cite{rudoffPersistentMemoryProgramming2017}
 
-    \item[No Transactionality] Even if a platform only \textit{guarantees} persistence if CPU cashes are flushed, dirty cache lines may still be evicted and/or written back to PMEM at any time during program execution.
+    \item[No Transactionality] Even if a platform only \textit{guarantees} persistence if CPU caches are flushed, dirty cache lines may still be evicted and/or written back to PMEM at any time during program execution.
         Which cache lines are affected by this, and the order in which write-back happens, is a dynamic implementation-defined property of the microarchitecture, e.g., the cache eviction policy.
         Any modification that exceeds the atomicity guarantee must therefore be assumed to be partially written (``torn'') in PMEM until after caches are flushed.~\cite{Scargall2020}
 
@@ -610,7 +610,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
     \item[Error Handling] The error handling story for PMEM suffers particularly from the implicitness of the PMEM IO model.
 
         On the read path, PMEM can detect data corruption through ECC.
-        It communicates such problems and potentially other errors to the CPU which surfaces them to the operating system via \textit{machine check exceptions} (MCE).
+        It communicates such problems and potentially other errors to the CPU, which surfaces them to the operating system via \textit{machine check exceptions} (MCE).
         (MCE is an established mechanism to make the OS aware of errors detected by ECC DRAM.)
         Linux handles MCEs for PMEM by putting the affected page on a ``bad block list''.
         If the affected range is a userspace mapping, Linux notifies the application via SIGBUS, giving application developers a chance to handle the error somewhat gracefully.
@@ -645,7 +645,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
     \item[CPU Efficiency] Wait-time for PMEM IO is spent on-CPU.
         The inherent assumption is that at PMEM-level latencies, it is less overhead to stall the CPU than to context-switch to another application.
         This assumption holds until the bandwidth limits of PMEM are exceeded.
-        In that case, as with any other storage device, queuing effects come into play and per-IOP latency and hence stall duration grows.
+        In that case, as with any other storage device, queuing effects come into play, causing per-IOP latency and hence stall duration to grow.
         However, from the OS thread scheduler's perspective, the thread appears CPU-bound, even though it is effectively waiting for IO.
         This poses an efficiency problem if there is other work in the system that is actually CPU-bound.
 
@@ -664,7 +664,7 @@ ZFS combines volume management and filesystem services in a monolithic storage s
 
 When an administrator creates a ZFS storage pool (\textit{zpool}), they supply ZFS with a set of \textit{VDEVs} that represent the pool's volume topology.
 VDEVs can be either concrete (\textit{disk}, \textit{file} VDEV) or virtual (\textit{mirror}, \textit{raidz\{1,2,3\}}, or \textit{draid}).
-Concrete VDEVs supply physical storage space whereas the virtual types compose multiple concrete VDEVs to achieve redundancy.
+Concrete VDEVs supply physical storage space, whereas the virtual types compose multiple concrete VDEVs to achieve redundancy.
 The space supplied by virtual VDEVs is thus less than the sum of its children.
 
 The \textit{Storage Pool Allocator} (SPA) consumes a zpool's VDEVs and makes their aggregate space available through an interface that is reminiscent of \textit{malloc} and \textit{free}, albeit limited to allocation sizes that are multiples of the disk block size.
@@ -683,14 +683,14 @@ DMU transactions are always part of a \textit{transaction group} (txg).
 The DMU accumulates the changes to all object sets and objects on a per-\textit{txg} basis in DRAM, as so-called \textit{dirty state}.
 Once a txg's dirty data exceeds a threshold or a periodic timer triggers, the DMU atomically updates the on-disk state (more on this later).
 
-The DMU is used by the \textit{ZFS Posix Layer} (ZPL) to implement a POSIX-compliant filesystem, and by the \textit{ZVOL} layer to implement virtual block devices, e.g. for storage virtualization via iSCSI.
+The DMU is used by the \textit{ZFS Posix Layer} (ZPL) to implement a POSIX-compliant filesystem, and by the \textit{ZVOL} layer to implement virtual block devices, e.g., for storage virtualization via iSCSI.
 ZVOLs register as a block device driver in the kernel and map block-level read, write, and discard operations (\lstinline[style=figurepseudocode]{struct bio}) to the corresponding DMU operations of a single DMU object.
 In contrast, a ZPL filesystem (just ``filesystem'' from now on) uses multiple DMU objects to implement filesystem abstractions such as directories and files.
 Both the data structures that represent the filesystem metadata and the actual file data are stored in DMU objects.
 
 A single zpool can hold thousands of filesystems and ZVOLs, each of which keeps its state (=object(s)) in its own private object set.
 This necessitates another software module to create, delete, and manage all of these object sets.
-Its name is the \textit{dataset layer} (DSL) and it provides the following services:
+Its name is the \textit{dataset layer} (DSL), and it provides the following services:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Creation \& Destruction Of Object Sets] The DSL provides APIs to create and destroy the object sets for filesystems and ZVOLs.
     \item[Naming \& Hierarchical Organization Of Object Sets] The DSL assigns names to object sets and organizes them in a tree structure.
@@ -707,7 +707,7 @@ The ZFS term for the metadata about an individual object set that contains user 
 \subsection{On-Disk State}\label{sec:openzfs_background:ondiskstate}
 
 ZFS's on-disk structure is a tree of SPA-allocated blocks that link to their children through \textit{block pointers}.
-Block pointers are 128 byte sized structures that, among other metadata, contain the size, checksum and DVA of the pointee.
+Block pointers are 128 byte sized structures that, among other metadata, contain the size, checksum, and DVA of the pointee.
 % It is possible to specify multiple DVAs in a single block pointer where each DVA contains an identical copy of the pointee.
 % When a block pointer is ``dereferenced'', the pointee can be read through any of the DVAs stored in the block pointer.
 % If the read operation through one DVA fails, or the checksum detects that the read data is corrupt, the other copies might still work since the SPA attempts to spread allocations over different VDEVs.%
@@ -723,15 +723,15 @@ The interpretation of that \lstinline{objset_phys_t}'s content depends on the da
 The DMU moves the on-disk state forward atomically at the granularity of transaction groups.
 To ``sync out'' a txg, the DMU's ``syncing thread'' (referred to as \textit{txg sync} from here on) constructs a new version of the on-disk tree structure.
 The new tree re-uses unmodified subtrees of the existing on-disk state whenever possible and allocates new blocks from the SPA for updated state.
-Since newly allocated blocks have by definition a different block pointer, changes at any level of the tree propagate up to the location in the uberblock where the block pointer that points to the MOS's \lstinline{objset_phys_t} is stored.
-This root block pointer is then replaced atomically, thereby moving the pool's on disk state forward by one txg.
+Since newly allocated blocks have, by definition, a different block pointer, changes at any level of the tree propagate up to the location in the uberblock where the block pointer that points to the MOS's \lstinline{objset_phys_t} is stored.
+This root block pointer is then replaced atomically, thereby moving the pool's on-disk state forward by one txg.
 If the system crashes at any point in time before this final update, the pool's state after recovery is still that of the previous txg.
 
 The uberblock is not part of the tree structure described above but stored in the \textit{VDEV labels} instead.
 VDEV labels contain the necessary metadata to import the pool and the set of the most recently used uberblock pointers.
 Each physical storage device has four VDEV label locations at well-known offsets.
 When a pool is imported during boot, ZFS searches all VDEV labels for the uberblock with the highest txg and interprets it as the root block pointer of the tree structure.
-The atomic replacement of the uberblock that \textit{txg sync} depends on is implemented through two-phase in-place overwrite scheme that ensures that there are always at least two old or new valid copies of the VDEV label on each storage device.
+The atomic replacement of the uberblock that \textit{txg sync} depends on is implemented through a two-phase in-place overwrite scheme that ensures that there are always at least two old or new valid copies of the VDEV label on each storage device.
 
 DMU consumers should be able to make progress while a transaction group is being written to disk.
 Therefore, the DMU always maintains three unwritten transaction groups, each in a different state.
@@ -784,16 +784,16 @@ Figure~\ref{fig:zil_api_syscall_activity_diagrams} visualizes these procedures.
 The ZIL tracks assigned ITXs in data structures called \lstinline{itxg}.
 There exists one \lstinline{itxg} for each of the three unsynced DMU transaction groups.
 Each \lstinline{itxg} consists of a \textit{sync list} and an \textit{async tree}.
-The \textit{sync list} is a simple list of ITXs whereas the \textit{async tree} is a search-tree that maps from object ID to a list of ITXs.
+The \textit{sync list} is a simple list of ITXs, whereas the \textit{async tree} is a search tree that maps from object ID to a list of ITXs.
 Most ITXs are appended to the \textit{sync list} when they are assigned to the ZIL.
 However, ITXs that only affect a particular file are placed into the \textit{async tree} instead.
 For example, an ITX that logs the creation of a file is added to the \textit{sync list} whereas an ITX that logs a write within an existing file is added to the \textit{async tree}.
 \lstinline{zil_commit} uses the \lstinline{itxg}s to determine the list of ITXs that need to be appended to the on-disk log so that successful recovery is possible.
 The pseudo-code in Figure~\ref{fig:zil_commit_itxg_pseudocode} illustrates how \lstinline{zil_commit} constructs this so-called \textbf{commit list}, and how it appends the ITXs, encoded as {\textbf{log records}, to the on-disk log structure.
 
-After a system crash, the zpool is in the state of the last synced transaction group which we call $precrash\_txg$.
+After a system crash, the zpool is in the state of the last synced transaction group, which we call $precrash\_txg$.
 All datasets (i.e, filesystems, ZVOLs) are at their $precrash\_txg$ state and any changes made in younger DMU transactions are missing.
-The ZPL and ZVOL code uses the ZIL's \lstinline{zil_replay} API when the filesystem is mounted (or the ZVOL opened) to recover the lost changes.
+The ZPL and ZVOL code use the ZIL's \lstinline{zil_replay} API when the filesystem is mounted (or the ZVOL opened) to recover the lost changes.
 The API contract is that the caller provides a callback that is invoked for exactly those log records that were lost, i.e., whose ITX's txg was $> precrash\_txg$.
 The callback is invoked in the order of the on-disk log structure.
 Its job is to interpret the log record and to re-apply the change to the dataset in a new DMU transaction.
@@ -822,7 +822,7 @@ zil_commit(object_id)
     \centering
     \includegraphics[trim=0cm 0.42cm 0cm 0.42cm]{fig/zil_writepath_and_replay_sequence_logical_level.pdf}
     \caption{
-        Example log structure resulting from a series of VFS operations, and the corresponding replay callback invocations for different values of $precrash\_txg$.
+        Example log structure resulting from a series of VFS operations and the corresponding replay callback invocations for different values of $precrash\_txg$.
         First, note that \lstinline{fsync /A} not only logs \lstinline{create /A} and \lstinline{write to /A} but also \lstinline{create /B} since file creation is always placed on the itxg's \textit{sync list}.
         Second, note how records 1 and 2 are skipped during replay if $precrash\_txg = 4$.
         If they were not skipped, the replay callback would fail to create file /A when replaying record 1 because /A already exists in the on-disk state of txg 4.
@@ -833,7 +833,7 @@ zil_commit(object_id)
 Note that replay only re-enacts the logical changes to the dataset but does not necessarily restore the exact physical state of the dataset that would have been synced in the absence of a crash.
 For example, changes that would have been spread across transaction groups 23, 24, and 25 at write time may land in transaction groups 42 and 43 during replay.
 Further, the system could crash again during replay.
-For example, a power outage could cause txg 42 to be the last-synced txg whereas 43 was still in \textit{syncing} state.
+For example, a power outage could cause txg 42 to be the last-synced txg, whereas 43 was still in \textit{syncing} state.
 Since the replay callbacks for the individual log records are \underline{\smash{not idempotent}}, the ZIL must ensure that, after a crash during replay, the changes that were already replayed in transaction group 42 are not replayed again.
 For example, the second replay attempt could apply the remaining set of changes in transaction group 83.
 (But it may also happen that they are spread over several txgs, e.g., 83 and 84).
@@ -859,7 +859,7 @@ The basic structure is depicted in Figure~\ref{fig:zil_lwb__physical_structure_o
 \end{figure}
 
 After \lstinline{zil_commit} has produced the commit list, it iterates over it and appends the log record representation of each ITX to an in-DRAM buffer that will become the new tail LWB in the chain.
-Once this buffer is full, it is issued to disk in the background and the procedure continues with a new tail LWB.
+Once this buffer is full, it is issued to disk in the background, and the procedure continues with a new tail LWB.
 The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs has been advantageous in the past:
 \begin{description}[noitemsep]
     \item[Latency Amortization]
@@ -870,8 +870,8 @@ The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs
         As explained above, when a thread $A$ packs log records into LWBs $L_1 \dots L_n$, it issues the IO operations for all but the last LWB $L_n$.
         A releases its lock on the LWB chain and goes to sleep, waiting for another thread $B$ to continue to fill $L_n$.
         If such a thread $B$ \lstinline{zil_commit}s to the same dataset within that time window, it might fill $L_n$ completely and issue it to disk, making $L_{n+1}$ the new tail LWB.
-        The IO completion callback for $L_n$ then wakes up $A$ and which is now allowed to return from \lstinline{zil_commit} because the last entry on its commit list is now fully persisted.
-        If no thread other threads picks up $L_n$, a timeout wakes up $A$ so that it can issue the IO operation itself.
+        The IO completion callback for $L_n$ then wakes up $A$ which is now allowed to return from \lstinline{zil_commit} because the last entry on its commit list is now fully persisted.
+        If no thread other thread picks up $L_n$, a timeout wakes up $A$ so that it can issue the IO operation itself.
 
         Without this mechanism, thread $B$ would need to wait for the last LWB of $A$ to be persisted, \textit{and} for its own LWBs to be persisted because $B$'s first LWB is pointed to by $A$'s last LWB.
         By sharing the last LWB of $A$ and $B$, up to $1 * lat_{disk}$ of waiting time can be avoided.
@@ -881,7 +881,7 @@ The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs
         Log records are stored as a contiguous sequence within the LWB.
         This avoids fragmentation if the commit list consists of small log records because many such log records can be packed into the smallest LWB (4~KiB).
         However, the on-disk format does not allow for splitting of individual log records.
-        If the log record cannot be split in software (\lstinline{WR_NEED_COPY}), the open LWB is issued with wasted space and a new LWB is allocated for the log record.
+        If the log record cannot be split in software (\lstinline{WR_NEED_COPY}), the open LWB is issued with wasted space, and a new LWB is allocated for the log record.
         Conversely, if the current LWB is large but only a few small entries need to be committed, a mostly empty LWB will be issued.
 \end{description}
 
@@ -900,7 +900,7 @@ The full procedure for appending an LWB to the chain thus consists of the follow
     \item Repurpose the current LWB's block pointer field to store the computed checksum.
     \item Write out the current LWB.
 \end{enumerate}
-The checksum ensures crash-consistency of the append operation since a partially written block is assumed to have an invalid checksum.
+The checksum ensures crash consistency of the append operation since a partially written block is assumed to have an invalid checksum.
 And even in the case where no crash occurs, ZIL-LWB relies on an invalid checksum to detect the end of the LWB chain during recovery.
 (It is assumed unlikely for an unwritten but allocated LWB to be mistaken for an already written LWB because of additional metadata repeated in each LWB that must match for all LWBs in a chain.)
 For OpenZFS native encryption, the LWBs are not checksummed but encrypted and authenticated using an AEAD algorithm such as \lstinline{aes-256-gcm}.
@@ -908,7 +908,7 @@ For OpenZFS native encryption, the LWBs are not checksummed but encrypted and au
 LWB that only contain obsolete entries (their maximum txg $\le$ last synced txg) are garbage-collected by \textit{txg sync}.
 Every time \textit{txg sync} visits the object set to construct the new version of the on-disk structure, it unlinks LWBs from the head of the chain whose maximum txg is $\le syncing\_txg$ until it reaches an LWB that contains at least one log record for a txg $> syncing\_txg$.
 The unlinking updates the chain's head block pointer in the ZIL header but, due to the atomic nature of txg sync, the update only becomes visible on disk if $syncing\_txg$ successfully finishes syncing.
-In that case, $syncing\_txg$ becomes the new $precrash\_txg$ txg and thus all entries in the freed LWBs are by definition obsolete.
+In that case, $syncing\_txg$ becomes the new $precrash\_txg$ txg, and thus all entries in the freed LWBs are by definition obsolete.
 
 We visualize both the append and garbage-collection operations in Figure~\ref{fig:zil_lwb__physical_structure_append}.
 
@@ -1290,7 +1290,7 @@ We present the design and implementation of PRB in a top-down manner.
 In Section~\ref{di:prb:analysis} we isolate the requirements that ZIL-PMEM puts on PRB by recapitulating how the ZIL fits into ZFS's overall architecture.
 Afterwards, in Section~\ref{di:prb:approach}, we give a high-level overview of our design.
 Section~\ref{di:prb:logstructure} presents the virtual log abstraction that is exposed by HDL and Section \ref{di:prb:replayapproach} describes the high-level approach for replay.
-Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash-consistency is addressed by HDL.
+Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash consistency is addressed by HDL.
 Subsequently, we describe PRB which is the storage substrate that the HDLs use for persistence:
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use for PMEM space management and log entry storage.
 In Section~\ref{di:prb:traversal} we describe the algorithm that traverses the in-PMEM data structure during log recovery.
@@ -1304,7 +1304,7 @@ Remember from Section~\ref{sec:openzfs_background} that all ZPL filesystem state
 When a filesystem call modifies DMU objects, it must do so from within a DMU transaction $T_i$ that belongs to a transaction group $T_{i_{txg}}$.
 After the system call handler has completed the DMU transaction by calling \lstinline{dmu_tx_commit(T_i)}, the logical change $C_i$ made in $T_i$ is not yet persisted to stable storage.
 Instead, the DMU accumulates the changes from many DMU transactions in DRAM as so-called \textit{dirty state}, grouped by the transaction's transaction group (txg).
-This dirty state is eventually persisted to ZFS's on disk state in a procedure that, through copy-on-write techniques, is atomic at the granularity of txgs (\textit{txg sync}).
+This dirty state is eventually persisted to ZFS's on-disk state in a procedure that, through copy-on-write techniques, is atomic at the granularity of txgs (\textit{txg sync}).
 
 The ZIL bridges the gap between txg syncs so that synchronous VFS operations can return to userspace, even though their DMU transaction's txg has not yet been synced to disk.
 For that purpose, each VFS operation summarizes each logical change $C_i$ that it makes per DMU transaction $T_i$ as an \textit{intent log transaction}~(ITX).
@@ -1599,13 +1599,13 @@ Apart from random data corruption, we have considered the following scenarios an
     This scenario is very unlikely because we generate log GUIDs as 128 bit random numbers and check for collisions with other HDLs.
 \end{itemize}
 
-\section{HDL: Replay Crash-Consistency}\label{di:prb:ccrecovery}
+\section{HDL: Replay Crash Consistency}\label{di:prb:ccrecovery}
 
 The PRB and its HDLs must be able to tolerate a system crash at any time in their lifecycle.
 With regard to recovery, this means that claiming must be restartable and replay resumable across crashes.
 Further, the restarted or resumed recovery procedure must be able to handle online and offline loss of entries due to data corruption.
 
-Crash-consistency for claiming is trivial because it runs during pool import before txg sync starts.
+Crash consistency for claiming is trivial because it runs during pool import before txg sync starts.
 Thus, all changes made by claiming are accumulated in DRAM and atomically persisted by the first transaction group that is synced after pool import.
 From the perspective of HDLs that are in state \textit{logging}, this first transaction group is $precrash\_txg + 1$.
 If the system crashes before that txg is synced, a subsequent import attempt restarts from the same state as the previous one.
