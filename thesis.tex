@@ -246,7 +246,7 @@ The authors use a custom fault injection tool to corrupt data structures in a ta
 \subsubsection{Hybrid PMEM filesystems}\label{sec:hybrid_pmem_file_systems}
 A recurring pattern in PMEM filesystem design is to split responsibilities between kernel and userspace component in order to eliminate system call overhead.
 
-\citerelwork{Aerie}{volosAerieFlexibleFilesystem2014} is a user-space filesystem based on the premise that
+\citerelwork{Aerie}{volosAerieFlexibleFilesystem2014} is a userspace filesystem based on the premise that
 “SCM [Storage Class Memory] no longer requires the OS kernel [...].
 Applications link to a file-system library that provides local access to data and communicates with a [user-space] service for coordination.
 The OS kernel provides only coarse grained allocation and protection, and most functionality is distributed to client programs.
@@ -257,7 +257,7 @@ It is our understanding that only log entries shipped to and validated by the fi
 The authors state that log entries can be lost if a client crashes before the log entries are shipped.
 The evaluation does not address crash consistency or recovery at all.
 
-\citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media filesystem with both kernel and user-space components.
+\citerelwork{Strata}{kwonStrataCrossMedia2017} is a cross-media filesystem with both kernel and userspace components.
 Since its distinguishing feature is the intelligent migration of data between different storage media, we discuss it in the Section~\ref{sec:cross_media_storage_systems} on cross-media storage systems.
 
 \citerelwork{SplitFS}{kadekodiSplitFSReducingSoftware2019} is a research filesystem that proposes a
@@ -274,7 +274,7 @@ Recovery is evaluated only through the lens of recovery time (performance), not 
 EvFS minimizes the latency by building a user-level storage stack and introducing asynchronous processing of complex file I/O with page cache and direct I/O.
 [...]
 EvFS leads to a 700-ns latency for 64-byte non-blocking file writes and reduces the latency for 4-Kbyte blocking file I/O by 20 us compared to a kernel file system [EXT4] with journaling disabled.“
-In contrast to Aerie, EvFS does not require a coordinating user-space service.
+In contrast to Aerie, EvFS does not require a coordinating userspace service.
 Crash consistency and recovery is not addressed:
 “EvFS is not a production-ready file system because it neither provides all the POSIX APIs or crash-safe properties”.
 
@@ -296,7 +296,7 @@ ZFS with and without ZIL-PMEM compares to Strata in the following ways:
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item Both systems use a logical redo operation log instead of a block-level journaling mechanism.
     \item Both systems perform asynchronous write-back and thereby reap similar benefits from it (parallel batch processing, optimized allocation).
-    \item Strata’s kernel component digests the logs written from user-space in order to write them back to other tiers.
+    \item Strata’s kernel component digests the logs written from userspace in order to write them back to other tiers.
           ZFS accumulates the write-back state in DRAM and never reads the log except for recovery.
           (It is unclear to us how often Strata digests the logs. ZFS performs write-back of dirty state after at most 5 seconds.)
           % \item The Strata paper suggests that the system uses a single block size whereas ZFS supports variable block sizes (“Free Block Bitmap” in Strata vs. Spacemaps in ZFS).
@@ -304,7 +304,7 @@ ZFS with and without ZIL-PMEM compares to Strata in the following ways:
           ZFS supports TRIM and supports variable block sizes up to 16~MiB, but there are no automatic optimizations that specifically target write amplification in SSDs.
           %\item ZFS guarantees data integrity and has provisions for redundancy.
           %\item ZFS supports many devices at different performance class levels whereas Strata only supports a single device.
-    \item ZFS is in-kernel and requires no modifications to applications whereas Strata requires linking to or LD\_PRELOADing a user-space library, which, tangentially, makes it incompatible with statically linked binaries.
+    \item ZFS is in-kernel and requires no modifications to applications whereas Strata requires linking to or LD\_PRELOADing a userspace library, which, tangentially, makes it incompatible with statically linked binaries.
           %\item ZFS is a mature filesystem used at large scale in production whereas Strata is an unproven research prototype.
 \end{itemize}
 
@@ -324,7 +324,7 @@ ZFS with and without ZIL-PMEM compares to Ziggurat as follows:
           The ZIL, and ZIL-PMEM specifically, only serves as a stop-gap between txg sync points of the main pool.
           Data is always written twice --- once to the log and once to the main pool ---, and never read from the log except during recovery.
           %(The \lstinline{WR_INDIRECT ZIL} log entry type mitigates this for large writes).
-    \item Both systems are fully in-kernel and require no modifications to user-space applications.
+    \item Both systems are fully in-kernel and require no modifications to userspace applications.
     \item Ziggurat builds on NOVA-Fortis and thus inherits the PMEM-specific data integrity and redundancy mechanisms provided for the PMEM storage tier.
           ZIL-PMEM data integrity measures are currently limited to data and metadata checksumming.
     \item The Ziggurat paper does not mention data integrity measures or redundancy mechanisms for the block device layers beneath PMEM.
@@ -440,7 +440,7 @@ We do not believe that we can apply the presented approach to ZFS with and witho
 \subsection{PMEM-specific Tools}\label{sec:rel_work:pmemspecifictools}
 A growing body of work introduces tools that check whether code that manipulates persistent memory actually issues the architecturally required instructions for persistence.
 However, most systems only target userspace code and are thus inapplicable to ZIL-PMEM which is implemented in the ZFS kernel module.
-Whereas ZIL-PMEM can be compiled for user-space as part of the \textit{libzpool} library, the large amount of conditional compilation involved in the libzpool build process diminishes the significance of userspace tests.
+Whereas ZIL-PMEM can be compiled for userspace as part of the \textit{libzpool} library, the large amount of conditional compilation involved in the libzpool build process diminishes the significance of userspace tests.
 The following tools support kernel code and are applicable to ZIL-PMEM in principle.
 
 \citerelwork{Yat: A Validation Framework For Persistent Memory Software}{lantzYatValidationFramework2014}
@@ -1129,7 +1129,7 @@ The subsequent two chapters then introduce the core data structure and our appro
 ZIL-PMEM must coexist with ZIL-LWB in code and at runtime due to limited availability of PMEM hardware and the limitations of the ZIL-PMEM design.
 
 \csgoal{Same Guarantees}
-ZIL-PMEM must maintain the same crash consistency guarantees towards user-space as ZIL-LWB for both ZPL and ZVOL.
+ZIL-PMEM must maintain the same crash consistency guarantees towards userspace as ZIL-LWB for both ZPL and ZVOL.
 
 \csgoal{Simple Administration \& Pooled Storage}
 Pooling of storage resources and simple administration are central to ZFS~\cite{bonwickZettabyteFileSystem2003}.
@@ -1189,7 +1189,7 @@ ZIL-PMEM should thus provide a mechanism to shift excessive PMEM IO wait time of
 \csgoal{Testability}
 ZIL-PMEM must be architected for testability.
 The core algorithms must be covered by unit tests.
-Further, ZIL-PMEM should be integrated into the ztest user-space stress test as well as the SLOG tests of the ZFS Test Suite.
+Further, ZIL-PMEM should be integrated into the ztest userspace stress test as well as the SLOG tests of the ZFS Test Suite.
 
 \subsection{Out Of Scope For The Thesis}
 The following features were omitted to constrain the scope of the thesis.
@@ -3175,7 +3175,7 @@ The OpenZFS project has the following existing facilities for testing:
 \begin{description}[noitemsep]
     \item[ZFS Test Suite (ZTS)] The ZFS Test Suite is a set of automated integration tests that assert behavior of the kernel module and CLI tools.
         ZTS is implemented in shell and provides a significant amount of functional tests that exercise both the data path and administrative layer of ZFS.
-    \item[ztest] The \textit{ztest} tool is a user-space binary that links against \textit{libzpool} and stress-tests core components of ZFS that are shared among all supported platforms.
+    \item[ztest] The \textit{ztest} tool is a userspace binary that links against \textit{libzpool} and stress-tests core components of ZFS that are shared among all supported platforms.
         It define routines that imitate the kernel module's use the core components' APIs.
         The stress-testing aspect comes from repeatedly dispatching these routines to a pool of threads.
         Additionally, IO failures are injected through ZFS's fault injection facilities (ref. Section~\ref{sec:rel_work:fault_injection}), and system crashes are simulated by randomly killing the \textit{ztest} process.
@@ -3528,7 +3528,7 @@ What follows is a description of the benchmarks:
         The workload spawns a number of threads that inserts rows with random data into one or more tables.
         We use the default setting (a single table) and map the scaling factor to the number of threads that perform the insert queries.
         Each thread uses a private, long-lived connection to the MariaDB server.
-        We use Docker's \lstinline{--net=host} parameter when starting the MariaDB container to allow sysbench to connect via loopback TCP, avoiding the overhead of Docker's user-space proxy.
+        We use Docker's \lstinline{--net=host} parameter when starting the MariaDB container to allow sysbench to connect via loopback TCP, avoiding the overhead of Docker's userspace proxy.
         The result metric is the number of transactions per second (tps) reported by sysbench.
 
     \item[Redis-SET] Redis is a popular in-memory key value store.
