@@ -3870,10 +3870,6 @@ Our \textit{commit slot} mechanism for avoidance of excessive on-CPU waiting whe
 
 \section{Future Work}\label{sec:futurework}
 
-NUMA
-
-we have no evaluation on impact of interrupt masking, future work~\ref{di:prb:write:crashconsistency}
-
 We would like to systematically \textbf{validate the speculations about write amplification} that we made in the evaluation.
 This requires instrumentation of all benchmarked storage stacks.
 The minimum required metrics are the sum of application data that were written at the VFS level, and the number of bytes written to PMEM.
@@ -3910,6 +3906,11 @@ Possible approaches for reducing space overhead are:
         Whereas padding to 256 byte multiples delivers the best performance on Optane PMEM, it is presumably unnecessary on DRAM/NVDIMM-N~\cite{yangEmpiricalGuideBehavior2020}.
 \end{itemize}
 
+We also ruled out \textbf{NUMA awareness} as a requirement for ZIL-PMEM to limit the scope of this thesis.
+In the future, we would like to analyze the current implementation's performance on NUMA systems and furthermore explore how the design can be made NUMA-aware.
+A critical metric will be NUMA's impact on tail latencies.
+A possible approach for NUMA-awareness could be to maintain a dedicated set of \textit{commit slots} per NUMA node that preferentially use chunks that are located on a NUMA-local Optane DIMM.
+
 We would like to \textbf{extend our performance evaluation} with the following storage stacks:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[ZIL ZIO Bypass By Saji Nair]
@@ -3929,6 +3930,7 @@ We would like to \textbf{extend our performance evaluation} with the following s
         The experiment would be particularly interesting in combination with a (properly tuned) dedicated logdev configuration for XFS.
 \end{description}
 
+\begin{samepage}
 Regarding \textbf{correctness and robustness} of our implementation, we would like to explore the following topics in the future:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Validating PMEM Durability] PMTest is a tool which automatically validates that the software under test issues the architectually required instructions for durability (Section~\ref{sec:rel_work:pmemspecifictools}).
@@ -3941,6 +3943,7 @@ Regarding \textbf{correctness and robustness} of our implementation, we would li
     \item[Fuzzing] Fuzzing could potentially be used harden our implementation against unexpected in-PMEM state.
         Our software engineering efforts to facilitate testing of PRB/HDL might enable the use of established userspace tooling with reasonable effort.
 \end{description}
+\end{samepage}
 
 Our implementation does not yet attempt to \textbf{detect write errors or unsafe shutdowns} (ref. Section~\ref{sec:background:pmemprogrammingmodel}).
 The PRB garbage collection procedure presents is an opportune point for eager detection of media errors by traversing a chunk's content before garbage-collecting it.
@@ -3965,6 +3968,10 @@ For the \textbf{integration into ZFS}, we anticipate the following future work i
     \item[Support for Native Encryption] The threat model for supporting \mbox{OpenZFS} Native Encryption in ZIL-PMEM must be the same as for ZIL-LWB.
         The entry header and body need to be authenticated and the entry body needs to be encrypted.
         ZIL-PMEM's recovery path needs to be vetted to ensure that recorded entries cannot be injected into unintended replay sequences (replay attack).
+
+    \item[System-Wide Impact Of Interrupt Masking] Due to licensing issues, we must mask local interrupts while using the FPU on the write path~(see~Section~\ref{di:prb:write:crashconsistency}).
+        This will also be necessary to support hardware-accelerated encryption.
+        We would like to investigate the practical impact of this aspect of the implementation on overall system performance.
 
     \item[Redundancy Through Mirroring] Redundancy in ZIL-PMEM could be achieved through mirroring of PRB between two or more DIMMs.
         During recovery, we would always scan both PRBs and deduplicate the discovered entries.
