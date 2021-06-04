@@ -1244,13 +1244,13 @@ Thus, there is sufficient headroom for PMEM space usage in ZIL-PMEM.
 \section{Design Overview}\label{sec:designoverview}
 We add the concept of \textit{ZIL kinds} to ZFS.
 A zpool's ZIL kind is a pool-scoped variable that determines its strategy for persisting the ZIL to stable storage.
-The ZIL's record format, logical structure, and code that creates and replays log records remain shared among all ZIL kinds.
+The ZIL's record format, logical structure, and code for creation and replay of log records remain shared among all ZIL kinds.
 The default ZIL kind is \textit{ZIL-LWB}, but if a zpool has exactly one SLOG and that SLOG is persistent memory (/dev/pmem), its ZIL kind is \textit{ZIL-PMEM}.
 ZIL-LWB uses the SPA to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices (ref. Section~\ref{ch:openzfs_background:zillwb_persistence}).
-For ZIL-PMEM, we exempt the PMEM SLOG's allocatable space from block allocation to use directly for \textit{PRB/HDL}, our PMEM-specific data structure.
+For ZIL-PMEM, we exempt the PMEM SLOG's allocatable space from block allocation to use it directly for \textit{PRB/HDL}, our PMEM-specific data structure.
 
 We partition the PMEM space into fixed-size contiguous segments called \textit{chunks}.
-We develop a data structure called PRB that consumes these chunks and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
+A data structure called PRB consumes these chunks and exposes the abstraction of an unordered persistent storage layer for \textit{log entries}.
 A log entry is the unit of data that can be written to and read from PRB.
 It consists of the ZIL's log record and PRB-specific metadata.
 PRB scales to many concurrent writers and features a mechanism to avoid excessive on-CPU waiting for PMEM~IO.
@@ -1264,7 +1264,7 @@ After a system crash, each HDL scans PRB for entries that need to be \textit{rep
 Replay happens in a deterministic sequential order and is crash-consistent.
 Loss of entries, e.g., due to data corruption, is handled as gracefully as possible under the constraints of the logical dependencies encoded in the log structure.
 
-The role of the ZIL-PMEM ZIL kind is to integrate PRB/HDL into ZFS by
+The role of the ZIL-PMEM ZIL kind is the integration of PRB/HDL into ZFS by
 hooking into the SPA to construct the PRB,
 synchronizing HDL and dataset lifecycles, and
 adapting between the ZIL and the HDL domain.
