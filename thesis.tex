@@ -483,10 +483,10 @@ The kernel driver forwards injection requests to the NVDIMM firmware via ACPI.~\
 The errors then surface as \textit{machine check exceptions} (MCE), which is the same mechanism used to indicate detected but uncorrectable ECC errors for DRAM and PMEM.
 The functionality is useful for testing correct error handling in the filesystem when \textit{reading} PMEM.
 ZIL-PMEM uses \lstinline{memcpy_mcsafe()} to buffer all PMEM reads in DRAM and thus is able to handle MCEs gracefully.
-The handling is the same as for corrupted or missing log entries, for which we have good unit test coverage (ref. Sections~\ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption} and \ref{sec:eval:correctness:prb}).
+The handling is the same as for corrupted or missing log entries, for which we have good unit test coverage (see Sections~\ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption} and \ref{sec:eval:correctness:prb}).
 
 \citerelwork{ZFS Fault Injection}{ZinjectOpenZFSMan}
-ZFS supports runtime IO error injection through APIs usable by the \textit{ztest} stress test and through the \textit{zinject} tool used by the \textit{ZFS Test Suite} (ref. Section~\ref{sec:eval:correctness:zilpmem}).
+ZFS supports runtime IO error injection through APIs usable by the \textit{ztest} stress test and through the \textit{zinject} tool used by the \textit{ZFS Test Suite}.
 The ZFS Test Suite makes use of the command for high-level features such as automatic hot spares.
 The mechanism is implemented in the ZIO pipeline and supports scoping of errors either to an entire device or to specific logical data objects in ZFS.
 Most of the semantics are tied to ZFS’s \lstinline{zbookmark} and \lstinline{blkptr} structures which we do not use in ZIL-PMEM.
@@ -1014,7 +1014,7 @@ We run this fio workload on the following storage configurations:
     \item[zil-lwb] The zpool with ZIL-LWB ZIL kind as described above.
     \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all datasets.
         This setting effectively disables the ZIL (thereby violating the synchronous semantics) and serves as an upper bound for the performance that any ZIL implementation can achieve.
-        The remaining work done by \textit{async} is only CPU- and/or DRAM-bound, i.e.,  DMU object modification and ITX allocation (ref. Figure~\ref{fig:zil_api_syscall_activity_diagrams}).
+        The remaining work done by \textit{async} is only CPU- and/or DRAM-bound, i.e.,  DMU object modification and ITX allocation.
     \item[fsdax] The fio configuration above, applied directly to the /dev/pmem0 block device (\lstinline{direct=1} instead of \lstinline{direct=0}, and \lstinline{filename=/dev/pmem0} instead of \lstinline{filename_format=...}).
         This configuration demonstrates the performance of the Linux block device emulation around the PMEM hardware. It includes the syscall overhead.
     \item[devdax] The fio configuration above, with \lstinline{ioengine=dev-dax}, applied directly to the \texttt{/dev/dax} namespace (\lstinline{filename=/dev/dax0.1} instead of the \lstinline{filename_format} option).
@@ -1246,7 +1246,7 @@ We add the concept of \textit{ZIL kinds} to ZFS.
 A zpool's ZIL kind is a pool-scoped variable that determines its strategy for persisting the ZIL to stable storage.
 The ZIL's record format, logical structure, and code for creation and replay of log records remain shared among all ZIL kinds.
 The default ZIL kind is \textit{ZIL-LWB}, but if a zpool has exactly one SLOG and that SLOG is persistent memory (/dev/pmem), its ZIL kind is \textit{ZIL-PMEM}.
-ZIL-LWB uses the SPA to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices (ref. Section~\ref{ch:openzfs_background:zillwb_persistence}).
+ZIL-LWB uses the SPA to allocate log-write blocks (LWBs) from the storage pool with a bias towards SLOG devices.
 For ZIL-PMEM, we exempt the PMEM SLOG's allocatable space from block allocation to use it directly for \textit{PRB/HDL}, our PMEM-specific data structure.
 
 We partition the PMEM space into fixed-size contiguous segments called \textit{chunks}.
@@ -2105,7 +2105,7 @@ Note that it would be sufficient to prevent the \textit{function calls} from ret
 Such a system is used by ZIL-LWB's \textit{commit ITXs} which uses condition variables to wake \lstinline{zil_commit}ting threads up when the last LWB that contains one of their commit list's records has been written.
 However, we could not use \textit{commit ITX} in ZIL-PMEM because its implementation is too closely tied to the concept of LWBs.
 
-For the ITXG bypass, we (ab)use a read-write-lock which we elaborate on in Section~\ref{sec:itxgbypass}.
+For the ITXG bypass, we (use a read-write-lock which we elaborate on in Section~\ref{sec:itxgbypass}.
 
 Within the HDL, we use a spinlock to serialize access to the state used for dependency tracking (\textit{live table}, \textit{last table}).
 
@@ -2392,11 +2392,11 @@ The existing ZIL, which uses LWBs for persistence (see Section~\ref{ch:openzfs_b
 Note that some listings and figures in this section already mention ZIL-PMEM.
 However, in our implementation, all refactoring steps presented in this section are separate commits that precede the introduction of the ZIL-PMEM ZIL kind.
 
-\subsection{On-Disk State}\label{sec:di:zil_header}
+\subsection{ZIL Header}\label{sec:di:zil_header}
 ZIL-LWB keeps its state in the ZIL header which is stored in the \lstinline{objset_phys_t} structure.
 For ZIL kinds, we change the ZIL header to be a tagged union that uses the new \lstinline{zh_kind_t} enum as a discriminant.
 The existing ZIL-LWB header fields are moved into the \lstinline{zil_header_lwb_t} type.
-ZIL-PMEM's ZIL header, which we describe in Section~\ref{ch:zilpmem}, is the second member of that union.
+ZIL-PMEM's ZIL header, which we describe later in Section~\ref{sec:zilpmemzilkind}, is the second member of that union.
 Figure~\ref{lst:zil_header_before_and_after} shows the relevant C structures before and after the changes described in this paragraph.
 
 \begin{figure}[H]
@@ -2499,18 +2499,18 @@ Given these insights we refactor the ZIL implementation (\textit{zil.c}) as foll
               \item Move the \lstinline{zilog_t} members that are only used by the functions in \textit{zil\_lwb.c} into a separate structure called \lstinline{zilog_lwb_t} that is private to \textit{zil\_lwb.c}.
               \item Embed \lstinline{zilog_t} as the first member in \lstinline{zilog_lwb_t}.
               \item Add member \lstinline{zlvt_alloc_size} to \lstinline{zl_vtable_t} that indicates the amount of memory to be allocated when allocating a \lstinline{zilog_t}.
+              \item Add constructor and destructor methods to the vtable that are called after allocating the \lstinline{zlvt_alloc_size}d \lstinline{zilog_t}.
+                The \lstinline{zillwb_} constructor and destructors initialize and deinitialize the private members of \lstinline{zilog_lwb_t}.
               \item Add a \textit{downcast} step to the start of each \lstinline{zillwb_} functions that casts the \lstinline{zilog_t} pointer into a \lstinline{zilog_lwb_t} pointer.
                 The cast is safe because \lstinline{zilog_t} is embedded as the first member of \lstinline{zilog_lwb_t}.
                 The majority of \lstinline{zillwb_} functions operate only on the \lstinline{zilog_lwb_t}-private state without accessing the embedded \lstinline{zilog_t}.
-              \item Add constructor and destructor methods to the vtable that are called after allocating the \lstinline{zlvt_alloc_size}d \lstinline{zilog_t}.
-                The \lstinline{zillwb_} constructor and destructors initialize and deinitialize the private members of \lstinline{zilog_lwb_t}.
           \end{itemize}
 \end{enumerate}
 The end result is best described in the terminology of object-oriented programming:
 \textbf{\lstinline{zilog_t} is an abstract base class} that implements the public ZIL interface as well as ITX-related functionality and defines abstract methods for persisting log records.
 These abstract methods must be implemented by concrete subclasses.
 \lstinline{zilog_lwb_t} is such a subclass that implements the LWB-based persistence strategy.
-For ZIL-PMEM, the \lstinline{zilog_pmem_t} struct which we introduce in Section~\ref{ch:zilpmem} implements persistence directly to PMEM.
+For ZIL-PMEM, the \lstinline{zilog_pmem_t}, which we will introduce in Section~\ref{sec:zilpmemzilkind}, persists log records to PRB/HDL.
 Which subclass is instantiated at runtime is determined by the \lstinline{zh_kind} field in the ZIL header.
 Figure~\ref{fig:zilog_splitup_viz} illustrates the changes described in this section.
 
@@ -2565,7 +2565,7 @@ We expect that the solution will be highly dependent on implementation-level con
 Whereas ZIL writing and replay are abstracted away by the \lstinline{zilog_t} refactoring, there are several cases where the raw ZIL-LWB chain is traversed directly using the \lstinline{zil_parse} function.
 \lstinline{zil_parse} exposes several ZIL-LWB-specific implementation details to its callers, such as blockpointers and the concept of LWBs.
 This is problematic for ZIL kinds because not every conceivable ZIL kind uses these concepts --- ZIL-PMEM being the obvious example.
-We investigate all users of the ZIL traversal code and come to the conclusion that there is no need for a generalized interface that every ZIL kind needs to implement.
+We investigate all consumers of the ZIL traversal code and come to the conclusion that there is no need for a generalized interface that every ZIL kind needs to implement.
 The basis for this decision is a manual audit of all \lstinline{zil_parse} callers:
 \begin{description}[noitemsep]
     \item[dmu\_traverse] This code module implements a callback-based traversal of the zpool's data structures.
@@ -2599,15 +2599,14 @@ Other ZIL kinds, or a future revision of ZIL-LWB, might be able to detect the lo
 In that case, an abstract integrity check method that must be implemented by each ZIL kind might be advisable.
 
 \subsection{ZIL-LWB-Specific Callbacks}\label{sec:zil_kinds:callbacks}
-There are several callbacks in the ZIL API that are necessary for ZIL-LWB.
-They need to be considered for our ZIL kind refactoring.
+There are several callbacks in the ZIL API that other components of ZFS must invoke for ZIL-LWB to function correctly:
 \begin{description}
-    \item[zil\_lwb\_add\_txg] Necessary to keep the in-DRAM representation of an LWB alive when writing \lstinline{WR_INDIRECT} blocks.
+    \item[zil\_lwb\_add\_txg] Keeps the in-DRAM representation of an LWB alive when writing \lstinline{WR_INDIRECT} blocks.
     \item[zil\_lwb\_add\_block] Necessary for an optimization that minimizes the number of flush commands that are sent to the SLOG device.
-    \item[zil\_bp\_tree\_add] During a ZIL traversal with \lstinline{zil_parse}, this API was used to avoid doing operation more than once for a given blockpointer.
+    \item[zil\_bp\_tree\_add] During a ZIL traversal with \lstinline{zil_parse}, this API is used to avoid doing operations more than once for a given blockpointer.
     It is an implementation detail of ZIL-LWB that is only a public ZIL API because it is used by \textit{zdb}'s ZIL traversal code.
 \end{description}
-None of them are necessary for ZIL-PMEM, nor are they likely to be for other ZIL kinds.
+None of these callbacks are necessary for ZIL-PMEM, nor are they likely to be for other ZIL kinds.
 Therefore, we prefix the callback functions with \lstinline{zillwb_} and move them to \textit{zil\_lwb.c}.
 The original call sites are unreachable with ZIL-PMEM, which allows us to ignore them for the remainder of this thesis.
 We recommend that future work replace these statically dispatched callbacks with dynamic callbacks through function pointers to enforce decoupling.
@@ -2617,7 +2616,7 @@ The general concept of ZIL kinds and the vtable-based implementation add complex
 In this section, we discuss the alternatives that we considered for supporting multiple ZIL implementations at runtime.
 
 \textbf{Alternative \#1}: We considered moving the level at which we dispatch into ZIL-kind-specific code one API layer upwards.
-This would make \lstinline{zilog_t} and ITX a private implementation detail of ZIL-LWB.
+This architecture would make \lstinline{zilog_t} and ITX a private implementation detail of ZIL-LWB.
 The API layer at which the virtual dispatch would take place are the \lstinline{zfs_log_OP} and \lstinline{zvol_log_OP} helper functions which create and assign ITXs for ZPL and ZVOL operations.
 The sequence diagram in Figure~\ref{fig:zfs_log_write_sequence_diagram} provides an example of how they are used by a \lstinline{write} system call.
 Declaring this API layer the interface for ZIL kinds would allow ZIL implementations to choose freely how they want to represent log records in DRAM and on stable storage.
@@ -2629,10 +2628,9 @@ However, the additional freedom also has significant drawbacks that ultimately l
         There are no equivalent abstractions that wrap the \lstinline{zilog_t} APIs for ZIL replay or traversal.
         In order to have a single clean abstraction at the level of \lstinline{zfs_log_OP}, it would be necessary to extend this API so that \lstinline{zilog_t} could be hidden as an implementation detail of ZIL-LWB.
         We were not confident in our ability to design this API extension without the risk of introducing a leaky abstraction.
-    \item ZIL-kind-specific functions for logging would also require ZIL-kind-specific replay functions.
-        In ZIL-LWB this is a non-trivial amount of code.
+    \item ZIL-kind-specific functions for logging would also require ZIL-kind-specific replay functions, which is a non-trivial amount of code.
         ZIL kinds such as ZIL-PMEM that only need to implement a different persistence strategy would have to duplicate this code, pointlessly increasing maintenance cost.
-    \item We find it undesirable to allow ZIL-kinds to implement different crash consistency guarantees, in particular, if ZIL kinds switch automatically depending on SLOG configuration as proposed later in this chapter (Section~\ref{sec:zil_kinds:change}).
+    \item We find it undesirable to allow ZIL-kinds to implement different crash consistency guarantees, in particular, if ZIL kinds switch automatically depending on SLOG configuration as proposed later in this chapter (Section~\ref{sec:zilpmemzilkind:activation}).
         Centralizing the ITX code and forcing every ZIL kind to fit into the ITX model is the best way to ensure that crash consistency guarantees are the same across ZIL kinds.
 \end{enumerate}
 
@@ -2645,7 +2643,7 @@ However, the additional freedom also has significant drawbacks that ultimately l
 
 \textbf{Alternative \#2}: Since we identified the ZIO pipeline as the most dominant contributor of latency in ZIL-LWB (Chapter~\ref{ch:lwb_analysis}), we considered sharing LWBs as a concept between all ZIL kinds.
 In that scenario, the ZIL kinds would merely be an alternative to the ZIO pipeline.
-A prototype that bypasses ZIO but preserves the concept of LWBs has been presented at the OpenZFS 2020 Developer summit by \citeauthor{openzfsZILPerformanceImprovements2020}, targeting NVMe drives \cite{openzfsZILPerformanceImprovements2020}
+A prototype that bypasses ZIO but preserves the concept of LWBs has been presented at the OpenZFS 2020 Developer summit by \citeauthor{openzfsZILPerformanceImprovements2020}, targeting NVMe drives~\cite{openzfsZILPerformanceImprovements2020}.
 We found this approach too restrictive for ZIL-PMEM:
 \begin{enumerate}[noitemsep]
     \item The batching of many log records into fewer but larger LWBs adds unnecessary latency overhead.
@@ -2666,7 +2664,7 @@ However, some design questions (see \ref{sec:zil_kinds:change} and \ref{sec:zil_
 Prior to the work presented in this thesis, ZFS had no concept of persistent memory.
 Fortunately, the requirements of ZIL-PMEM are very limited:
 \begin{itemize}[noitemsep]
-    \item \texttt{/dev/pmem} SLOGs must be recognized as such (``\textit{PMEM SLOG}'') when they are added to the pool so that the ZIL-PMEM can be activated.
+    \item /dev/pmem SLOGs must be recognized as such (``PMEM SLOG'') when they are added to the pool so that the ZIL-PMEM can be activated.
     \item The PMEM SLOG's allocatable space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, etc., see Section~\ref{sec:background:pmemprogrammingmodel}).
         If direct access is not possible, the PMEM SLOG must be considered faulty, and pool import must be refused.
         We assume that direct access cannot be lost once it has been established.
@@ -2691,12 +2689,12 @@ The ZIL-PMEM ZIL kind is used instead of ZIL-LWB based on the following rule:
 \begin{displayquote}
   If the pool has exactly one SLOG and that SLOG is \lstinline{is_dax}, the ZIL kind is ZIL-PMEM. Otherwise, it is ZIL-LWB.
 \end{displayquote}
-This rule must be evaluated when the pool is imported or whenever the pool's SLOG VDEVs are about to change, i.e.,
+This rule must be evaluated when the pool is imported or whenever the pool's SLOG VDEVs are about to change:
 during pool creation, on \lstinline{zpool add} and \lstinline{zpool remove}, and when \lstinline{zpool import} is told to drop log devices via the \lstinline{-m} flag.
-To determine whether change ZIL kinds, we compare the resulting desired ZIL kind $k_{desired}$ with the \lstinline{zh_kind} value of any ZIL header in the pool.
+We compare the resulting desired ZIL kind with the \lstinline{zh_kind} value of any ZIL header in the pool.
 If they do not match, we change the ZIL kind of all headers as described in Section~\ref{sec:zil_kinds:change}.
 This implicit activation \& deactivation of ZIL kinds makes ZIL-PMEM completely transparent to the administrator, thereby fulfilling our requirement of simple administration.
-ZIL-PMEM is automatically used if it supports the user-specified SLOG device configuration, i.e., a single /dev/pmem0 SLOG VDEV.
+ZIL-PMEM is automatically used if it supports the user-specified SLOG device configuration, i.e., a single /dev/pmem SLOG.
 Otherwise, the system transparently falls back to ZIL-LWB.
 
 \textbf{Note}: We have not yet implemented changing ZIL kinds after pool creation and thus not implemented the design described in the previous paragraph.
@@ -2709,19 +2707,19 @@ If the rule evaluation is not stable, the pool's ZIL kind could ``flap'' between
 It is worth reconsidering whether full implicitness is actually desirable or whether surfacing ZIL kinds to the administrator is acceptable.
 For example, we could store the pool's \textit{current} ZIL kind in the MOS and provide a zpool command or property to change it.
 Before the change is executed, the desired ZIL kind would check that the pool configuration is supported and fail the change operation if that is not the case.
-In the case of ZIL-PMEM, this hook would evaluate the rule above.
-Any changes to the zpool topology (\lstinline{zpool add}, \lstinline{remove}, \lstinline{import} with \lstinline{-m}), would also invoke this hook.
+In the case of ZIL-PMEM, we would evaluate the rule above.
+Any changes to the VDEV config (\lstinline{zpool add}, \lstinline{remove}, \lstinline{import} with \lstinline{-m}) would also check with the active ZIL kind first.
 % Implicit activation and deactivation could still be achieved by moving the rule evaluation to the \lstinline{zpool} command.
 
 \subsection{PMEM Space Reservation \& PRB Construction}\label{sec:zilpmemzilkind:spacereservation}
 
 If the pool's ZIL kind is ZIL-PMEM, we reserve all of the allocatable space on the PMEM SLOG for PRB.
 To accomplish this, we introduce a new allocation class called \lstinline{exempt} that is, by convention, never used for SPA allocations.
-In our current implementation, the \lstinline{zpool} command assigns this allocation class automatically to \lstinline{is_dax} SLOG VDEVs, instead of the \lstinline{log} allocation class.
+The \lstinline{zpool} command assigns SLOGs that are \lstinline{is_dax} automatically to the \lstinline{exempt} class, instead of the \lstinline{log} class.
 Note that the VDEV labels, which attribute the VDEV to the zpool and store parts of the zpool config, are located outside the allocatable space.
 Readers and updaters of VDEV labels continue to use block device IO (\lstinline{zio_read_phys} and \lstinline{zio_write_phys}).
 
-ZIL-PMEM uses \lstinline{dax_direct_access} API (ref. Section~\ref{sec:background:pmemconfiguration}) to discover the memory mapping of the \lstinline{exempt} SLOG VDEV's allocatable space and constructs the pool's PRB instance on top of it.
+ZIL-PMEM uses the \lstinline{dax_direct_access} API (see Section~\ref{sec:background:pmemconfiguration}) to discover the memory mapping of the \lstinline{exempt} SLOG VDEV's allocatable space, and constructs the pool's PRB instance on top of it:
 \begin{enumerate}
 \item The pool import procedure allocates the \lstinline{prb_t} and stores the pointer in the DRAM object that represents the imported pool (\lstinline{spa_t}).
 When the pool is exported, the \lstinline{spa_unload} procedure frees the \lstinline{prb_t}.
@@ -2747,7 +2745,7 @@ Also, there is existing infrastructure to prevent removal of SLOGs with existing
 Whereas \lstinline{prb_t} and \lstinline{spa_t}'s allocation lifecycles line up well, the same is not true for datasets and HDLs:
 HDLs must be set up during pool import and must not be torn down via \lstinline{prb_teardown_hdl} until either their dataset is destroyed or the zpool is exported.
 In contrast, the per-dataset runtime state (\lstinline{dsl_dataset_t}, its \lstinline{objset_t} and the objset's \lstinline{zilog_t}) is allocated ``on demand'' when its consumer, the ZPL code, \textit{holds} it by its object ID in the MOS.
-Specifically, the first holder performs the allocation and recovers state from the corresponding persistent structure (\lstinline{dsl_dataset_phys_t}, \lstinline{objset_phys_t} and, partially, \lstinline{zil_header_t}).
+Specifically, the first holder performs the allocation and recovers state from the corresponding persistent structure (\lstinline{dsl_dataset_phys_t}, \lstinline{objset_phys_t}).
 Conversely, if there was already another holder, the existing DRAM object is shared.
 Once a consumer no longer needs to hold a dataset, it \textit{releases} its hold on the instance.
 The last consumer that releases the structure frees the DRAM object.
@@ -2792,43 +2790,6 @@ To avoid reference counting overhead for HDLs on the write path, we acquire a HD
 
 The following cases required additional code to adapt between the two domains:
 \begin{description}
-    \item[Error Handling During Pool Import \& Claiming]
-        ZIL kinds inherit the behavior of ZIL-LWB for integrity checking and claiming of the ZIL during pool import.
-        ZIL-LWB checks the LWB chain twice.
-        The first pass (\lstinline{zil_check_log_chain}) checks for log corruption so that it can fail the pool import early if the log is corrupt.
-        The second pass (\lstinline{zil_claim}) does ZIL-LWB's equivalent of claiming and stores the maximum claimed log record number in the ZIL header.
-        It discards traversal errors because it assumes that no online log corruption happened since the first pass.
-        (Note that \lstinline{zil_claim} does have a return value, but only due to software-technical reasons. It must always return zero.)
-        ZIL-LWB's approach opens a window for time-of-check vs. time-of-use bugs, which we discovered and reported during development \cite{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords}.
-        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption (see Section~\ref{di:prb:ccrecovery}).
-
-        Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.
-        Until that shortcoming of our implementation is addressed, we trigger a kernel panic if \lstinline{prb_claim} returns an error.
-
-    \item[Error Handling During Replay]
-        Analogous to claiming, ZIL-LWB does not assume that the log will be corrupted between pool import (\lstinline{zil_check_log_chain}) and replay (\lstinline{zil_replay})~\cite{OpenZFSGithubIssueFailingDebugAssertionWhenLosingClaimedNotReplayedLWBs}.
-        However, ZIL-PMEM detects online corruption and returns an error from \lstinline{prb_replay} (see Section~\ref{di:prb:ccrecovery}).
-
-        Again, due to time constraints, we have not yet refactored the consumers of the ZIL to enable handling of replay errors.
-        Until this shortcoming has been addressed, ZIL-PMEM triggers a kernel panic if \lstinline{prb_replay} returns an error.
-
-    \item[ZIL Header Updates]
-        Remember from Section~\ref{di:prb:api:hdl} on the PRB/HDL API that the responsibility of \textit{persisting} the ZIL-PMEM header is split:
-        HDL APIs that update the ZIL header return the updated version through an \textit{out}-parameter, and the API consumer is responsible for persisting the update to the main pool.
-
-        Unlike DMU consumers, the ZIL implementation itself is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
-        When \textit{txg sync} is syncing the \lstinline{syncing_txg}, it invokes the \lstinline{zil_sync} API of each \lstinline{zilog_t}.
-        The role of \lstinline{zil_sync} is to set the ZIL header buffer that is stored in \lstinline{objset_phys_t::os_zil_header} to the state that shall be persisted in the \lstinline{syncing_txg}.
-        \textit{Txg sync} then uses this buffer's content when it writes out \lstinline{objset_phys_t} to the on-disk tree structure.
-
-        ZIL-PMEM queues the updated header values returned by the HDL APIs in a 4-ary array that is indexed by \lstinline{[txg&3]}.
-        Each cell contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
-        A header update \lstinline{(txg_u, header_u)} overwrites the cell at index \lstinline{txg_u&3}.
-        Updates must only be made from the \textit{open} or \textit{quiescing} txgs.
-        \lstinline{zilpmem_sync} then reads then cell \lstinline{C} at index \lstinline{updates[syncing_txg&3]}.
-        If \lstinline{C.txg == syncing_txg}, it stores \lstinline{C.header} in the \lstinline{objset_phys_t::os_zil_header} field to be picked up by \textit{txg sync}.
-        Otherwise, it leaves \lstinline{objset_phys_t::os_zil_header} unmodified.
-
     \item[zil\_commit]
         We implement \lstinline{zil_commit} as follows:
         \begin{enumerate}[noitemsep]
@@ -2858,22 +2819,59 @@ The following cases required additional code to adapt between the two domains:
         The ITXs are queued in the \textit{itxg} structure from where they are either \lstinline{zil_commit}ted or freed when the txg syncs.
         To avoid unnecessary memory usage and performance overhead, ITXs that log large \textit{write} operations do not always contain a copy of the written data.
         Instead, the ITX is marked as a \lstinline{WR_NEED_COPY} ITX.
-        Such ITXs only contain the object number of the DMU object and the byte range within the object that was written.
-        The creation of the log record is deferred until \lstinline{zil_commit} which creates the actual \textit{write} records whose payload data is read back in from the DMU object.
+        Such ITXs only contain the object number of the modified DMU object and the affected range within it, i.e., offset and length.
+        The actual \textit{write} log record is created lazily in \lstinline{zil_commit}.
+        Its payload, the modified data, is copied from the DMU object.
 
         To support WR\_NEDD\_COPY in ZIL-PMEM, we implement an isolated structure that turns a single \lstinline{WR_NEED_COPY} record into an iterator over \textit{write} log entries.
         \lstinline{zil_commit} writes each entry yielded by the iterator to the HDL using \lstinline{prb_write_entry}.
-        Whereas the repeated chunk acquisition and dependency tracking during each HDL write incurs a small overhead, it also increases fairness among HDLs if there is contention for commit slots.
+        Whereas the repeated chunk acquisition and dependency tracking during each HDL write add a small overhead, it also increases fairness among HDLs if there is contention for commit slots.
+
+    \item[Error Handling During Pool Import \& Claiming]
+        ZIL kinds inherit the behavior of ZIL-LWB for integrity checking and claiming of the ZIL during pool import.
+        ZIL-LWB checks the LWB chain twice.
+        The first pass (\lstinline{zil_check_log_chain}) checks for log corruption so that it can fail the pool import early if the log is corrupt.
+        The second pass (\lstinline{zil_claim}) does ZIL-LWB's equivalent of claiming and stores the maximum claimed log record number in the ZIL header.
+        It discards traversal errors because it assumes that no online log corruption happened since the first pass.
+        (Note that \lstinline{zil_claim} does have a return value, but only due to software-technical reasons. It must always return zero.)
+        ZIL-LWB's approach opens a window for time-of-check vs. time-of-use bugs, which we discovered and reported during development \cite{OpenZFSGithubIssueHandlingOfLostClaimedNotReplayedLogRecords}.
+        In contrast, PRB/HDL does checking and claiming in a single pass (\lstinline{prb_claim}), reports corrupted log state through its return value, and is designed to correctly handle online log corruption (see Section~\ref{di:prb:ccrecovery}).
+
+        Due to time constraints, we have not refactored the zpool import procedure to allow claiming to fail.
+        Until that shortcoming of our implementation is addressed, we trigger a kernel panic if \lstinline{prb_claim} returns an error.
+
+    \item[Error Handling During Replay]
+        Analogous to claiming, ZIL-LWB does not assume that the log will be corrupted between the time of check during pool import (\lstinline{zil_check_log_chain}) and replay (\lstinline{zil_replay})~\cite{OpenZFSGithubIssueFailingDebugAssertionWhenLosingClaimedNotReplayedLWBs}.
+        However, ZIL-PMEM detects online corruption and returns an error from \lstinline{prb_replay} (see Section~\ref{di:prb:ccrecovery}).
+
+        Again, due to time constraints, we have not yet refactored the consumers of the ZIL to enable the handling of replay errors.
+        Until this shortcoming has been addressed, ZIL-PMEM triggers a kernel panic if \lstinline{prb_replay} returns an error.
+
+    \item[ZIL Header Updates]
+        Remember from Section~\ref{di:prb:api:hdl} on the PRB/HDL API that the responsibility of \textit{persisting} the ZIL-PMEM header is split:
+        HDL APIs that update the ZIL header return the updated version through an \textit{out}-parameter, and the API consumer is responsible for persisting the update.
+
+        Unlike DMU consumers, the ZIL implementation itself is responsible for queuing up changes that need to applied for the \textit{open}, \textit{quiescing} and \textit{syncing} txg.
+        When \textit{txg sync} is syncing the \lstinline{syncing_txg}, it invokes the \lstinline{zil_sync} API of each \lstinline{zilog_t}.
+        The role of \lstinline{zil_sync} is to set the ZIL header buffer that is stored in \lstinline{objset_phys_t::os_zil_header} to the state that shall be persisted in the \lstinline{syncing_txg}.
+        \textit{Txg sync} then uses this buffer's content when it writes out \lstinline{objset_phys_t} to the on-disk tree structure.
+
+        ZIL-PMEM queues the updated header values returned by the HDL APIs in a 4-ary array that is indexed by \lstinline{[txg&3]}.
+        Each cell contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
+        A header update \lstinline{(txg_u, header_u)} overwrites the cell at index \lstinline{txg_u&3}.
+        Updates must only be made from the \textit{open} or \textit{quiescing} txgs.
+        \lstinline{zilpmem_sync} then reads then cell \lstinline{C} at index \lstinline{updates[syncing_txg&3]}.
+        If \lstinline{C.txg == syncing_txg}, it stores \lstinline{C.header} in the \lstinline{objset_phys_t::os_zil_header} field to be picked up by \textit{txg sync}.
+        Otherwise, it leaves \lstinline{objset_phys_t::os_zil_header} unmodified.
 
 \end{description}
 
 \subsection{ITXG Bypass For ZVOL}\label{sec:itxgbypass}
-ZIL kinds are forced into the \textit{commit list} model that defined by the \textit{itxg} structure which is shared among all ZIL kinds.
-This model leads to an inherently sequential representation of the ZIL contents:
-ZIL-LWB is a long chain of log entries grouped in LWBs, and ZIL-PMEM starts a new generation for every entry on the commit list to encode it properly.
-We believe that this architecture is the best compromise for consistent behavior across ZIL kinds, performance, code duplication, and maintainability.
+The \textit{itxg} structure forces the same sequential log structure upon all ZIL kinds:
+ZIL-LWB is a long chain of log entries grouped in LWBs, and ZIL-PMEM starts a new generation for every entry on the commit list.
+This architecture is the best compromise for consistent behavior across ZIL kinds, performance, code duplication, and maintainability.
 (See Section~\ref{sec:zil_kinds:alternatives} for a reflection on alternatives.)
-Our evaluation in the next chapter shows that ZIL-PMEM yields significant latency benefits and comes close to saturating PMEM bandwidth when performing synchronous IO from four threads to \textit{separate} datasets.
+Moreover, our evaluation in the next chapter shows that ZIL-PMEM yields significant latency benefits and comes close to saturating PMEM bandwidth when performing synchronous IO from four threads to \textit{separate} datasets.
 However, we also wanted to explore the performance potential of PRB/HDL without the limitations of \textit{itxg} but the same log record types and guarantees towards upper layers.
 The result is an \textit{ITXG bypass} mode for ZIL-PMEM, which we present in this subsection.
 
@@ -2884,8 +2882,9 @@ ZVOLs are implemented as a dataset with a single DMU object that contains the vi
 When a block device driver accesses the ZVOL block device (\textit{read, write, discard}), ZFS maps the block device operations to DMU operations on the object.
 The modifications are logged to the ZIL as \textit{write} and \textit{truncate} ITXs.
 If the block device operation has synchronous semantics, ZFS calls \lstinline{zil_commit} before acknowledging completion of the block device operation.
-The following pseudo-code describes how the ZVOL processes a block device operation.
+The pseudo-code in Figure~\ref{fig:itxg_bypass_zvol:pseudocode:upstream} illustrates the behavior described above.
 
+\begin{figure}[H]
 \begin{lstlisting}[style=figurepseudocode]
 Input:
     op      block device operation
@@ -2917,6 +2916,9 @@ Steps:
     op.done() // acknowledge completion
 
 \end{lstlisting}
+\caption{Pseudo-code for the procedure that handles ZVOL block device operations.}
+\label{fig:itxg_bypass_zvol:pseudocode:upstream}
+\end{figure}
 
 The Linux kernel's model for block-level IO is based on the assumption that storage devices are asynchronous.
 IO operations are represented by a \lstinline[style=figurepseudocode]{struct bio} that is eventually submitted to the IO stack (\lstinline{submit_bio}), potentially scheduled or merged, and then passed down to the block device driver, which issues operations to the hardware.
@@ -2935,10 +2937,12 @@ In Linux, this indication is either given by the \lstinline{bio} operation's typ
 We leverage this observation as follows.
 We do not queue ITXs in \textit{itxg} but write all log entries directly to the HDL from within the DMU transaction.
 By default, we do not start a new generation, thereby enabling parallel writes to the HDL.
-If the block device consumer requests a flush, we serialize HDL access to start a new generation.%
+If the block device consumer requests a flush, we temporarily serialize HDL access and start a new generation.%
 \footnote{Remember that external synchronization on generation start is a requirement of PRB/HDL, see Sections~\ref{di:prb:write:hdlscoped} and \ref{di:prb:api:write}.}
-We use a reader-writer-lock to achieve this behavior, as illustrated by the following pseudo-code.
+We use a reader-writer-lock to achieve this behavior, as illustrated by the pseudo-code in Figure~\ref{fig:itxg_bypass_zvol:pseudocode:modified}.
+Figure~\ref{fig:itxg_bypass_viz} provides an example.
 
+\begin{figure}[H]
 \begin{lstlisting}[style=figurepseudocode]
 Input:
     op      block device operation
@@ -2978,10 +2982,11 @@ Steps:
 
     op.done() // acknowledge completion
 \end{lstlisting}
+\caption{Pseudo-code that illustrates how the ITXG bypass uses a reader-writer-lock to enable parallel writes to the ZVOL's HDL.}
+\label{fig:itxg_bypass_zvol:pseudocode:modified}
+\end{figure}
 
-The following Figure~\ref{fig:itxg_bypass_viz} provides an example sequence of two threads that issue block IO operations to the same ZVOL in parallel.
-
-\begin{figure}
+\begin{figure}[H]
     \centering
     \includegraphics{fig/itxg_bypass_viz.pdf}
     \caption{Example timeline for the IO operations of two threads that write to the same ZVOL, with the ITXG bypass mode enabled.
@@ -3051,7 +3056,7 @@ The \lstinline{txg&3}'th element in the array then contains the state for \lstin
 The value of \lstinline{txg} is repeated within the per-txg state to detect when an array element is re-used.
 
 With regard to PRB, an entry $E_i$ must only be written to PMEM if its txg $E_i.txg$ is newer than the HDL's highest-ever written txg $T_{max}$, or if it is one of $T_{max}$, $T_{max}-1$, or $T_{max}-2$.
-The reason is the fixed number of three counters in the entry header that are used for dependency tracking (ref. Section~\ref{di:prb:deptrack}).
+The reason is the fixed number of three counters in the entry header that are used for dependency tracking (see Section~\ref{di:prb:deptrack}).
 We add tests that ensure that the \lstinline{prb_write_entry} API returns an error if entries are written that do not meet this criterion.
 We also test the behavior of replay to ensure that --- if the write path implementation were incorrect --- replay would identify the problem with a distinct error code.
 
@@ -3177,7 +3182,7 @@ The OpenZFS project has the following existing facilities for testing:
     \item[ztest] The \textit{ztest} tool is a userspace binary that links against \textit{libzpool} and stress-tests core components of ZFS that are shared among all supported platforms.
         It defines routines that imitate the kernel module's use of the core components' APIs.
         The stress-testing aspect comes from repeatedly dispatching these routines to a pool of threads.
-        Additionally, IO failures are injected through ZFS's fault injection facilities (ref. Section~\ref{sec:rel_work:fault_injection}), and system crashes are simulated by randomly killing the \textit{ztest} process.
+        Additionally, IO failures are injected through ZFS's fault injection facilities (see Section~\ref{sec:rel_work:fault_injection}), and system crashes are simulated by randomly killing the \textit{ztest} process.
         \textit{ztest} is particularly useful for exposing race conditions in the administrative layer that would not be discovered by the mostly sequential usage in the ZTS.
 \end{description}
 
@@ -3330,7 +3335,7 @@ We present the results in Figure~\ref{fig:eval:correctness_line_coverage}.
 \section{Performance}
 
 We evaluate the performance of ZIL-PMEM using an extensive set of benchmarks.
-We start with the familiar 4k synchronous random write workload that motivated this thesis (ref. Section~\ref{ch:lwb_analysis}), asking the following questions:
+We start with the familiar 4k synchronous random write workload that motivated this thesis (see Section~\ref{ch:lwb_analysis}), asking the following questions:
 \begin{itemize}[noitemsep]
     \item How many IOPS does ZIL-PMEM achieve for this workload? What is the speedup over ZIL-LWB?
     \item How does ZIL-PMEM scale with an increasing number of writer threads?
