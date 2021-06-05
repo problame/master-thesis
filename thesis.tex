@@ -397,7 +397,7 @@ A formal and automatically verifiable model would have been extremely helpful to
 \citerelwork{All File Systems Are Not Created Equal}{pillaiAllFileSystems2014} contributes a survey of the atomicity and ordering guarantees of several popular Linux filesystems and provides a tool called ALICE to validate or derive the guarantees required by applications.
 ZFS with and without ZIL-PMEM could benefit from this survey as well.
 The survey could be used to characterize ZFS’s guarantees.
-ALICE could be used to determine whether ZFS’s guarantees are sufficient for applications and/or whether ZFS’s guarantees exceed the requirements of the majority of applications.
+ALICE could be used to determine whether ZFS’s guarantees are sufficient for applications or whether ZFS’s guarantees exceed the requirements of the majority of applications.
 However, since ZIL-PMEM shall maintain the same guarantees as ZIL-PMEM (see Section~\ref{sec:requirements}), such findings would only be relevant for future work.
 
 \citerelwork{{\small Specifying and Checking File System Crash-Consistency Models}}{bornholtSpecifyingCheckingFile2016}
@@ -593,12 +593,12 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         The consequence is that software must detect the platform's properties at runtime, and dispatch to the implementation that ensures correctness and performance.
         \cite{rudoffPersistentMemoryProgramming2017}
 
-    \item[No Transactionality] Even if a platform only \textit{guarantees} persistence if CPU caches are flushed, dirty cache lines may still be evicted and/or written back to PMEM at any time during program execution.
+    \item[No Transactionality] Even if a platform only \textit{guarantees} persistence if CPU caches are flushed, dirty cache lines may still be evicted and written back to PMEM at any time during program execution.
         Which cache lines are affected by this, and the order in which write-back happens, is a dynamic implementation-defined property of the microarchitecture, e.g., the cache eviction policy.
         Any modification that exceeds the atomicity guarantee must therefore be assumed to be partially written (``torn'') in PMEM until after caches are flushed.~\cite{Scargall2020}
 
     \item[Ordering]
-        Due to out-of-order and/or speculative execution, the program order of instructions does not necessarily correspond to the granularity and order in which their effects become observable from outside the thread that issues them.
+        Due to out-of-order or speculative execution, the program order of instructions does not necessarily correspond to the granularity and order in which their effects become observable from outside the thread that issues them.
         The degree to which such effects can happen depends on the CPU architecture's memory ordering model.
         On x86\_64, the ordering guarantees are generally strong%
         \footnote{x86\_64 guarantees sequential consistency for pages mapped as \textit{write-back cacheable} (WB), details see~\cite{braisSignificanceX86SFENCE2019}.}
@@ -1014,7 +1014,7 @@ We run this fio workload on the following storage configurations:
     \item[zil-lwb] The zpool with ZIL-LWB ZIL kind as described above.
     \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all datasets.
         This setting effectively disables the ZIL (thereby violating the synchronous semantics) and serves as an upper bound for the performance that any ZIL implementation can achieve.
-        The remaining work done by \textit{async} is only CPU- and/or DRAM-bound, i.e.,  DMU object modification and ITX allocation.
+        The remaining work done by \textit{async} is only CPU- or DRAM-bound, i.e.,  DMU object modification and ITX allocation.
     \item[fsdax] The fio configuration above, applied directly to the /dev/pmem0 block device (\lstinline{direct=1} instead of \lstinline{direct=0}, and \lstinline{filename=/dev/pmem0} instead of \lstinline{filename_format=...}).
         This configuration demonstrates the performance of the Linux block device emulation around the PMEM hardware. It includes the syscall overhead.
     \item[devdax] The fio configuration above, with \lstinline{ioengine=dev-dax}, applied directly to the \texttt{/dev/dax} namespace (\lstinline{filename=/dev/dax0.1} instead of the \lstinline{filename_format} option).
@@ -1330,7 +1330,7 @@ We derive the following abstract view of \textbf{what} needs to be stored \textb
 \begin{itemize}[noitemsep,beginpenalty=100000,midpenalty=100000]
     \item The log records themselves.
     \item The transaction group of the DMU transaction that the log record encodes.
-    \item Structural information that defines replay order and/or logical dependencies between log records that replay must respect.
+    \item Structural information that defines replay order and logical dependencies between log records that replay must respect.
     \item For replay, the precrash txg to discern replayable from obsolete log records (see previous section).
     \item For replay, some representation of \textit{replay progress} to enable resumption of replay if the system crashes during replay.
         (The log record format and replay callbacks are not idempotent.)
@@ -1341,7 +1341,7 @@ For ZIL-PMEM, we put the following requirements on the PRB/HDL:
     \item On the write path, the overhead added to the raw log record write time should be minimal.
     \item It must scale well on a multicore system since many datasets write their log records in parallel.
         This scalability requirement includes efficient use of CPU time in case the PMEM write bandwidth is exceeded.
-    \item It must garbage-collect log records after they are obsoleted by \textit{txg sync} and/or finished replay.
+    \item It must garbage-collect log records after they are obsoleted by \textit{txg sync} or finished replay.
     \item It must provide the replay interface described above.
     \item It must detect data corruption using checksums. (Repair and redundancy are out of scope for this thesis, see Section~\ref{sec:requirements}.)
 \end{itemize}
@@ -1713,7 +1713,7 @@ When a thread writes an entry to the conceptual \textit{set of entries} that is 
 Once a chunk is full, PRB lets it sit unmodified until all entries in it are obsolete.
 Garbage collection then removes all entries in those obsolete-only chunks and makes them available for reuse by writers.
 The PRB scanning done by claiming and replay is implemented as an iteration over the entries in all chunks of the PRB.
-If a chunk contains at least one candidate entry for replay, the claiming HDL holds the chunk back from the write path and/or garbage collection.
+If a chunk contains at least one candidate entry for replay, the claiming HDL holds the chunk back from the write path and garbage collection.
 Note that this design fully decouples storage location (chunk) from log structure (encoded in entry metadata, see previous sections).
 
 Each chunk is represented by a DRAM object that holds the following values:
@@ -3373,7 +3373,7 @@ It provides the following functionality:
     \item[Result Storage] For each benchmark invocation, we serialize a description of the storage stack, benchmark parameters, and results into JSON objects and store these objects as unique files in the filesystem.
         Results are grouped by a prefix for post-processing, e.g., files with prefix \lstinline{app_benchmarks__v4} contain the results of the fourth iteration of our application benchmark design.
 \end{description}
-We also automate post-processing of the results using the popular Pandas framework and render plots using Matplotlib and/or Seaborn.
+We also automate post-processing of the results using the popular Pandas framework and render plots using Matplotlib.
 
 \subsection{4k Synchronous Random Write Workload}\label{sec:eval:4ksyncwrites}
 The first pillar of our performance evaluation is the \textit{fio} 4k synchronous random write workload that motivated the design of ZIL-PMEM.
@@ -3841,27 +3841,27 @@ We draw the following conclusions from our observations made above:
 
 \chapter{Conclusion}\label{ch:conclusion}
 
-We have demonstrated that the ZFS Intent Log~(ZIL), which is ZFS's mechanism for supporting synchronous IO semantics, is unable to take advantage of persistent memory (PMEM) as a \textit{separate log device} (SLOG).
-Our analysis shows that the ZIL's block-device-oriented data structure (LWB chain), as well as ZFS's IO abstraction (ZIO pipeline), add considerable latency overhead.
+We have shown that the upstream implementation of the ZFS Intent Log (ZIL), which is ZFS's mechanism for supporting synchronous IO semantics, is unable to take advantage of persistent memory (PMEM) as a \textit{separate log device} (SLOG).
+Our analysis in Chapter~\ref{ch:lwb_analysis} highlights the considerable latency overhead added by the ZIL's block-device-oriented data structure (LWB chain) and ZFS's IO abstraction (ZIO pipeline).
 This observation motivated the development of ZIL-PMEM, our new ZIL implementation that exclusively targets PMEM.
 
 In comparison to related work in academia, ZIL-PMEM falls into the category of an in-kernel cross-media filesystem that uses PMEM for acceleration of its write path.
 Other publications in this niche are \textit{Ziggurat} and \textit{Strata} \cite{zhengZigguratTieredFile2019,kwonStrataCrossMedia2017}.
 Ziggurat focuses on predictive data placement and can migrate data between different storage tiers such as PMEM and flash.
-It is based on NOVA-Fortis and thus a PMEM-first design whereas ZIL-PMEM starts to introduce PMEM into a block-device-oriented system.
+It is based on NOVA-Fortis and thus a PMEM-first design, whereas ZIL-PMEM introduces PMEM into a block-device-oriented system.
 Strata uses PMEM as a log buffer for fast synchronous IO and aggregates the log contents for efficient write-back to SSDs.
 Its hybrid architecture (LD\_PRELOADed library + kernel module) is not directly comparable to ZIL-PMEM.
 In the open-source ecosystem, we have identified Linux Device Mapper with its \textit{dm-writecache} target as a practically relevant alternative to \mbox{ZIL-PMEM}.
-Our survey of systems for modeling and/or validating filesystem crash consistency did not yield anything that would be directly applicable to our work with reasonable effort.
+Our survey of systems for modeling and validating filesystem crash consistency did not yield anything that would be directly applicable to our work with reasonable effort.
 % we mention PMTest in future work
 
-Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG device and exposes the abstraction of per-dataset virtual, persistent, and garbage collected logs (HDLs).
-PRB/HDL scales to many concurrent writers, is specifically optimized for Intel Optane PMEM's performance characteristics, and features an innovative mechanism to avoid excessive on-CPU waiting for PMEM IO.
+Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG device and exposes the abstraction of per-dataset virtual persistent and garbage collected logs (HDLs).
+PRB/HDL scales to many concurrent writers, is specifically optimized for Intel Optane PMEM's performance characteristics and features an innovative mechanism to avoid excessive on-CPU waiting for PMEM IO.
 To our knowledge, we are the first to identify and address this problem in the domain of PMEM-aware filesystems.
 Our persistent data structure ensures data integrity through checksums and encodes logical dependencies between log entries in a way that allows for parallel writes to a HDL and yet results in a deterministic replay order during recovery.
 The recovery procedure is crash-consistent and handles detected data corruption as well as \textit{machine check exceptions} (MCEs) correctly and gracefully.
 
-We have integrated PRB/HDL into ZFS such that the old ZIL implementation (ZIL-LWB) and ZIL-PMEM can coexist at runtime.
+We have integrated PRB/HDL into ZFS such that the upstream ZIL implementation (ZIL-LWB) and ZIL-PMEM can coexist at runtime.
 Our approach shares the code and data structures that define the logical structure of the ZIL but provides sufficient flexibility for different persistence mechanisms.
 Whereas there are still open issues related to dynamic changing of ZIL kinds after pool creation and the overall degree to which ZIL kinds should be exposed to the user, we were able to successfully evaluate our implementation.
 
@@ -3889,7 +3889,7 @@ This can be observed by comparing the IOPS achieved by ZIL-PMEM in Figure~\ref{f
 Whereas the values for scaling factor (=\lstinline{numjobs}) 1 are expectably the same, \textit{fio-growing} only achieves approximately 50\% of the IOPS at \lstinline{numjobs=4} and \lstinline{8}.
 For \lstinline{numjobs=4}, we believe that this is due to the use of a per-dataset mutex to ensure a sequential log structure (Section~\ref{sec:zilpmem:zilog}).
 The effect does not grow further for \lstinline{numjobs=8} because we are already limited by PMEM bandwidth at \lstinline{numjobs=4}.
-An extended latency breakdown that measures the time spent acquiring the per-dataset mutex could be used to confirm this hypothesis.
+An extended latency breakdown that measures the time spent on acquiring the per-dataset mutex could be used to confirm this hypothesis.
 
 Our evaluation does not address the \textbf{performance of the recovery path}.
 We expect the relevant factors to be a) the number of datasets in the pool, b) the chunk size, and c) the number of chunks.
@@ -3901,11 +3901,11 @@ We chose a large chunk size for our evaluation (128 MiB) to avoid contention on 
 % Consequently, only every ${30840^\text{th}}$ log entry would need to acquire the PRB-global mutex to get a new chunk.
 Such a large chunk size is probably not required in practice.
 For example, in a 4k write workload, only every $\frac{128 * 2^{20}}{256 + 192 + 4*2^{10} + (256 - 192)} \sim 30840^\text{th}$ write would require a new chunk, which assuming back-to-back writes at a very optimistic latency of 1.5~us, is only every 46.2~ms.
-Since data corruption of an entry header makes the subsequent entries in the chunk unreachable for traversal, we expect that it is desirable to find the smallest possible chunk size that works on a given system.
+Since data corruption in an entry header makes the subsequent entries in the chunk unreachable for traversal, we expect that it is desirable to find the smallest possible chunk size that works on a given system.
 
 We explicitly ignored \textbf{space efficiency} as a concern for ZIL-PMEM because of the high capacity of Intel Optane PMEM.
-However, determining and potentially reducing the per-entry space overhead of ZIL-PMEM could be beneficial for media wear-out.
-Users with NVDIMM-N devices, which are usable with ZIL-PMEM in principle but have DRAM-level capacities and significantly higher prices, could benefit as well.
+However, determining and potentially reducing the per-entry space overhead could be beneficial for media wear-out.
+Users of NVDIMM-N devices, which are usable with ZIL-PMEM in principle but have DRAM-level capacities and significantly higher prices, could benefit as well.
 Possible approaches for reducing space overhead are:
 \begin{itemize}[noitemsep]
     \item Batching of multiple small log records into a single PRB entry (e.g., directory operations, file metadata).
@@ -3940,7 +3940,7 @@ We would like to \textbf{extend our performance evaluation} with the following s
 \begin{samepage}
 Regarding \textbf{correctness and robustness} of our implementation, we would like to explore the following topics in the future:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Validating PMEM Durability] PMTest is a tool which automatically validates that the software under test issues the architectually required instructions for durability (Section~\ref{sec:rel_work:pmemspecifictools}).
+    \item[Validating PMEM Durability] PMTest is a tool which automatically validates that the software under test issues the architectually required instructions for durability and ordering (Section~\ref{sec:rel_work:pmemspecifictools}).
         In contrast to other tools, it supports kernel mode \textit{and} is publicly available.
 
     \item[Fault Injection for PMEM Access] Whereas we are careful to always use \lstinline{memcpy_mcsafe} when accessing PMEM, we do not have tests that verify the error handling path.
@@ -3953,31 +3953,32 @@ Regarding \textbf{correctness and robustness} of our implementation, we would li
 \end{samepage}
 
 Our implementation does not yet attempt to \textbf{detect write errors or unsafe shutdowns} (ref. Section~\ref{sec:background:pmemprogrammingmodel}).
-The PRB garbage collection procedure presents an opportune point for eager detection of media errors by traversing a chunk's content before garbage-collecting it.
-If the PMEM hardware detects an error, the problem will be surfaced via an MCE and can be reported to the user.
-As an end-to-end check, PRB further stores a checksum of a chunk's content in its DRAM representation. This checksum could be validated against the readable PMEM content during garbage collection.
-Regarding unsafe shutdowns, it would be a good extension of the user experience to detect the condition and to surface it to the user via \lstinline{zpool status} or during pool import.
-However, we believe that ZIL-PMEM's existing measures to detect data corruption should be able to correctly handle problems caused by unsafe shutdowns on the fly.
+The PRB garbage collection procedure presents an opportune point for eager detection of media errors by traversing the chunks before garbage-collecting them.
+If the PMEM hardware detects an error during traversal and surfaces it via MCE, garbage collection can report it to the user.
+PRB could further store a checksum of each chunk's content in DRAM and validate it against the readable PMEM content during garbage collection.
+Regarding unsafe shutdowns, it would be a valuable extension of the user experience to detect the condition and to surface it to the user via \lstinline{zpool status} or during pool import.
+However, ZIL-PMEM's existing measures to detect data corruption should be able to handle any problems caused by unsafe shutdowns.
 
 For the \textbf{integration into ZFS}, we anticipate the following future work items:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[PMEM Space Management] For maintainability and other use cases for PMEM in ZFS, it might be sensible to integrate PMEM allocation more deeply into the SPA.
-        For example, the allocation interface could be extended such that it becomes possible to request DAX-capable blocks.
-        Instead of our simplistic partitioning scheme for dividing the entire PMEM space into chunks (Section~\ref{sec:zilpmemzilkind:spacereservation}), ZIL-PMEM would pre-allocate chunks from the SPA and remember their DVA by storing them in the object set.
+        For example, we could extend the allocation interface such that it becomes possible to request DAX-capable blocks.
+        Instead of our simplistic partitioning scheme which divides the entire PMEM space into chunks (Section~\ref{sec:zilpmemzilkind:spacereservation}), ZIL-PMEM would pre-allocate chunks from the SPA.
+        It would store the chunks' DVAs in the object set to reconstruct PRB after a crash.
 
     \item[ZIL Kinds User Experience] The goal to make ZIL-PMEM, or ZIL kinds in general, fully transparent to the administrator should be reconsidered.
         (See Section~\ref{sec:zilpmemzilkind:activation} for our rationale.)
 
-    \item[Handling Of Claiming And Replay Errors] PRB/HDL detects and reports online log corruption, but ZIL-PMEM currently does not propagate these errors and panics instead.
-        As described in Section~\ref{sec:zilpmem:zilog}, this is due to shortcomings in the upstream error handling model claiming and replay errors.
+    \item[Handling Of Claiming And Replay Errors] PRB/HDL is able to detect and report online log corruption, but ZIL-PMEM currently does not propagate these errors and triggers a kernel panic instead.
+        As described in Section~\ref{sec:zilpmem:zilog}, this is due to shortcomings in the upstream error handling model for claiming and replay errors.
         We would like to refactor the pool import code so that users are better informed about log corruption and can specify the action that the respective ZIL implementation should take in that case.
 
-    \item[Support for Native Encryption] The threat model for supporting \mbox{OpenZFS} Native Encryption in ZIL-PMEM must be the same as for ZIL-LWB.
+    \item[Support for Native Encryption] The threat model for \mbox{OpenZFS} Native Encryption support in ZIL-PMEM must be the same as for ZIL-LWB.
         The entry header and body need to be authenticated, and the entry body needs to be encrypted.
         ZIL-PMEM's recovery path needs to be vetted to ensure that recorded entries cannot be injected into unintended replay sequences (replay attack).
 
-    \item[System-Wide Impact Of Interrupt Masking] Due to licensing issues, we must mask local interrupts while using the FPU on the write path~(see~Section~\ref{di:prb:write:crashconsistency}).
-        This will also be necessary to support hardware-accelerated encryption.
+    \item[System-Wide Impact Of Interrupt Masking] Due to licensing issues, we must mask local interrupts while using the FPU on the write path (see Section~\ref{di:prb:write:crashconsistency}).
+        This will also be necessary to support hardware-accel\-erated encryption.
         We would like to investigate the practical impact of this aspect of the implementation on overall system performance.
 
     \item[Redundancy Through Mirroring] Redundancy in ZIL-PMEM could be achieved through mirroring of PRB between two or more DIMMs.
@@ -3995,7 +3996,7 @@ We have submitted the following Git repositories along with this thesis.
 \appendixsection{OpenZFS Repository}
 
 Our fork of the upstream OpenZFS repository that contains all changes presented in this thesis.
-The following branches and respective commit hashes represent the source code state used for evaluation.
+The following branches and respective commit hashes represent the source code state used for the evaluation.
 All branch names listed below have the prefix \lstinline{problame/master-thesis-archive/}.
 Use \\ \lstinline{git log --format=oneline --graph --remotes='*master-thesis-archive*'} for a visualization of the commit history.
 % git branch -a -l | grep master-thesis-archive | sed 's#.*remotes/github-ma-repo/problame/master-thesis-archive/##' | tee /dev/stderr | xclip -selection clipboard
