@@ -110,7 +110,7 @@ Persistent memory (PMEM) is an emerging technology that provides low-latency mem
 OpenZFS is a storage system that combines volume management and filesystem services.
 The ZFS Intent Log (ZIL) is ZFS's mechanism for supporting synchronous IO semantics.
 The current ZIL implementation (ZIL-LWB) exhibits sub-par performance when configuring Linux's \mbox{/dev/pmem} pseudo block device as a separate log device (SLOG) for use by the ZIL.
-An analysis of the distribution of wall clock time among the ZFS components that are involved in synchronous writes reveals that block-device-oriented abstractions and data structures account for the vast majority of the overall latency of synchronous writes.
+An analysis of the distribution of wall clock time among the ZFS components involved in synchronous writes reveals that block-device-oriented abstractions and data structures account for the vast majority of the overall latency for this type of IO operation.
 
 Motivated by this observation, we propose a new type of ZIL called \textit{ZIL-PMEM} that exclusively targets persistent memory to take advantage of its remarkable performance characteristics.
 We refactor ZFS to support different \textit{ZIL kinds} at runtime, enabling coexistence of ZIL-LWB and ZIL-PMEM.
@@ -383,7 +383,7 @@ However, appending to a shared WAL file has historically been a latency and scal
 With persistent memory, the latency bottleneck no longer lies in the raw IO but rather the coordination overhead between multiple CPU cores and sockets, prompting new distributed logging designs that avoid a central point of contention.%
 ~\cite{fangHighPerformanceDatabase2011,pelleyStorageManagementNVRAM2013,johnsonAetherScalableApproach2010}
 ZIL-LWB employs \textit{group commit} as well, although the terminology is different.
-It batches log records issued by independent threads for the same filesystem into the currently \textit{open} \textit{log-write block} (LWB).
+It batches log records issued by independent threads for the same filesystem into the currently ``open'' \textit{log-write block} (LWB).
 Once the open LWB is full or a timeout has passed, the open LWB is written (\textit{issued}) to disk (see Section~\ref{ch:openzfs_background:zillwb_persistence} for details).
 In contrast, ZIL-PMEM commits log records directly to PMEM and allows multiple cores to do so in parallel with minimal global coordination.
 Our evaluation shows that the design scales well on single-socket systems.
@@ -397,7 +397,7 @@ A formal and automatically verifiable model would have been extremely helpful to
 ZFS with and without ZIL-PMEM could benefit from this survey as well.
 The survey could be used to characterize ZFS’s guarantees.
 ALICE could be used to determine whether ZFS’s guarantees are sufficient for applications or whether ZFS’s guarantees exceed the requirements of the majority of applications.
-However, since ZIL-PMEM shall maintain the same guarantees as ZIL-PMEM (see Section~\ref{sec:requirements}), such findings would only be relevant for future work.
+However, since ZIL-PMEM shall maintain the same guarantees as ZIL-LWB (Section~\ref{sec:requirements}), such findings would only be relevant for future work.
 
 \citerelwork{{\small Specifying and Checking File System Crash-Consistency Models}}{bornholtSpecifyingCheckingFile2016}
 The authors
@@ -3852,8 +3852,8 @@ In the open-source ecosystem, we have identified Linux Device Mapper with its \t
 Our survey of systems for modeling and validating filesystem crash consistency yielded no solution that would be immediately applicable to our work.
 % we mention PMTest in future work
 
-Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG device and exposes the abstraction of per-dataset virtual persistent and garbage collected logs (HDLs).
-PRB/HDL scales to many concurrent writers, is specifically optimized for Intel Optane PMEM's performance characteristics and features an innovative mechanism to avoid excessive on-CPU waiting for PMEM IO.
+Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG device and exposes the abstraction of a persistent garbage-collected log (HDL) for each dataset in the pool.
+PRB/HDL scales to many concurrent writers, is specifically optimized for Intel Optane PMEM's performance characteristics, and features an innovative mechanism to avoid excessive on-CPU waiting for PMEM IO.
 To our knowledge, we are the first to identify and address this problem in the domain of PMEM-aware filesystems.
 Our persistent data structure ensures data integrity through checksums and encodes logical dependencies between log entries in a way that allows for parallel writes to a HDL and yet results in a deterministic replay order during recovery.
 The recovery procedure is crash-consistent and handles detected data corruption as well as \textit{machine check exceptions} (MCEs) correctly and gracefully.
