@@ -130,7 +130,7 @@ Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a s
 The task of a filesystem is to provide non-volatile storage to applications in the form of the \textit{file} abstraction.
 Applications modify files through system calls such as \lstinline{write()} which generally do not provide any durability guarantees.
 Instead, they modify DRAM buffers, such as pages in the Linux page cache, and return to userspace.
-Writeback of these buffer to persistent storage is deferred to an implementation-defined point in the future.
+Writeback of these buffers to persistent storage is deferred to an implementation-defined point in the future.
 
 However, many applications have stronger durability requirements.
 For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted before clearing the transaction.
@@ -179,7 +179,7 @@ in Chapter~\ref{ch:litreviewandbackground} we
  review prior work in the field of persistent memory and its use in filesystems and
  provide technical background knowledge on PMEM and ZFS.
 Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB's sub-par performance on a /dev/pmem SLOG.
-Our solution, \mbox{ZIL-PMEM}, is then presented Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
+Our solution, \mbox{ZIL-PMEM}, is then presented in Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the design.
 Our main contribution, the \textit{PRB/HDL} the data structure, is then presented in detail in Chapter~\ref{ch:prbhdl}.
 The integration of PRB/HDL into ZFS is then described in Chapter~\ref{ch:zilpmem}.
@@ -308,7 +308,7 @@ ZFS with and without ZIL-PMEM compares to Strata in the following ways:
 \end{itemize}
 
 \citerelwork{Ziggurat}{zhengZigguratTieredFile2019}
-``Ziggurat exploits the benefits of NVMM through intelligent data placement during file writes and data migration.
+``Ziggurat exploits the benefits of NVMM [Non-Volatile Main Memory] through intelligent data placement during file writes and data migration.
 Ziggurat includes two placement predictors that analyze the file write sequences and predict whether the incoming writes are both large and stable, and whether updates to the file are likely to be synchronous.
 Ziggurat then steers the incoming writes to the most suitable tier based on the prediction: writes to synchronously-updated files go to the NVMM tier to minimize the synchronization overhead.
 Small, random writes also go to the NVMM tier to fully avoid random writes to disk. The remaining large sequential writes to asynchronously-updated files go to disk''.
@@ -344,8 +344,7 @@ Reads are not handled by dm-writecache and instead served from the Linux page ca
 Dm-writecache is relevant to ZIL-PMEM because it is the closest functional analog to the ZIL in the Linux Device Mapper stack.
 It has been designed with explicit support for persistent memory, and its authors have presented it as a means to accelerate database workloads~\cite{tadakamadlaAcceleratingDatabaseWorkloads2019}.
 However, both the data flow and data integrity guarantees differ substantially between the two systems.
-First, ZIL-PMEM pools the PMEM space for all filesystems and ZVOLs in a zpool, whereas dm-writecache is limited to a single block device and thus would require partitioning.
-Second, ZIL-PMEM persists writes as log entries to an append-only log structure and does not perform coalescing or delta-encoding.
+ZIL-PMEM persists writes as log entries to an append-only log structure and does not perform coalescing or delta-encoding.
 In contrast, dm-writecache is a block-level cache where an overwrite of the virtual block results in an overwrite in the cache.
 Further, ZIL-PMEM protects data integrity through checksums, whereas dm-writecache fully relies on hardware error correction and detection, reported via \lstinline{memcpy_mcsafe()}.
 After ZFS has synced out modifications to the main pool, they benefit from ZFS's strong data redundancy mechanisms such as \textit{raidz}.
@@ -405,7 +404,7 @@ The authors
 “present a formal framework for developing crash-consistency models, and a toolkit, called FERRITE, for validating those models against real file system implementations.”
 The system provides means to express expected filesystem behavior as a \textit{litmus test}.
 A litmus test encodes expected behavior of a filesystem though a series of events (e.g., write to a file) and a final predicate expressed as a satisfiability problem.
-FERRITE can execute the litmus test against an axiomatic formal model of the filesystem to ensure that, iff the actual filesystem adheres to the formal model, the litmus test’s expectations hold.
+FERRITE can execute the litmus test against an axiomatic formal model of the filesystem to ensure that the litmus test's expectations hold if and only if the actual filesystem adheres to the formal model.
 Notably, the litmus test is executed symbolically and the validation predicates are checked for satisfiability by an SMT solver; this is exhaustive and not comparable to a unit  or regression test.
 FERRITE can also execute litmus tests against the actual filesystem to test whether it adheres to the formal model.
 This test is non-exhaustive.
@@ -458,7 +457,7 @@ PMTest works within kernel modules, but the implementation is limited to a singl
 The processing of the operation trace happens in userspace.
 
 \subsection{Fault Injection}\label{sec:rel_work:fault_injection}
-Error handling code paths are often notoriously difficult to test critical for correctness.
+Error handling code paths are often notoriously difficult to test but critical for correctness.
 Fault injection is a common technique to simulate failures and thereby exercise these code paths.
 
 \citerelwork{Model-based Failure Analysis Of Journaling File Systems}{prabhakaranModelbasedFailureAnalysis2005}
@@ -490,7 +489,7 @@ ZFS supports runtime IO error injection through APIs usable by the \textit{ztest
 The ZFS Test Suite makes use of the command for high-level features such as automatic hot spares.
 The mechanism is implemented in the ZIO pipeline and supports scoping of errors either to an entire device or to specific logical data objects in ZFS.
 Most of the semantics are tied to ZFS’s \lstinline{zbookmark} and \lstinline{blkptr} structures which we do not use in ZIL-PMEM.
-Since ZIL-PMEM's existing unit tests already cover many scenarios for lost log entries at a higher level, we do not see an immediate for ZIO Fault Injection in this thesis.
+Since ZIL-PMEM's existing unit tests already cover many scenarios for lost log entries at a higher level, we do not see an immediate need for ZIO Fault Injection in this thesis.
 However, a fault injection tool or ``editor'' utility with an understanding of ZIL-PMEM's persistent data structures could be useful for end-to-end testing in the future, in particular in comparison to \textit{ndctl-inject-error}.
 
 \section{Persistent Memory}
@@ -567,9 +566,9 @@ For DAX-capable devices such as the \textit{fsdax} /dev/pmem nodes, the kernel-i
 A block device consumer that is DAX-aware can thereby conditionally enable PMEM-specific optimizations.
 For example, both Ext4 and XFS provide the \textit{dax} mount option that enables bypass of the block layer for writing data (albeit not yet for journaling / logging).
 % PMEM-only in-kernel filesystems such as NOVA (ref. Section~\ref{sec:in_kernel_pmem_filesystems}) also use an \textit{fsdax} namespace and \lstinline{dax_direct_access} to get access to PMEM.
-Apart from internal optimizations, Ext4 and XFS in DAX mode support direct mmapping of individual files.
-This is possible because both filesystems overwrite data in-place --- supporting direct \lstinline{mmap} to PMEM is roughly equivalent to pre-allocating the mapped range's data ``blocks'' (=pages) on the underlying DAX device, and establishing a userspace-accessible memory mapping.
-However, for ZIL-PMEM, only the kernel-internal use of the \lstinline{dax_direct_access} is relevant.
+Apart from such internal optimizations, Ext4 and XFS in DAX mode support direct mapping of individual files, which is implemented by pre-allocating the mapped range's data ``blocks'' (=pages) on the underlying DAX device and establishing a userspace-accessible memory mapping.
+However, for ZIL-PMEM, only the kernel-internal \lstinline{dax_direct_access} API is relevant since ZIL-PMEM does not aim to provide support for directly mapped files.
+
 
 % \textit{Storage Networking Industry Association} (SNIA) has published the \textit{NVM Programming Model} \cite{NVMProgrammingModel2017} describes different \textit{modes} for through which software can take advantage of persistent memory.
 % For PMEM-aware filesystems, the \textit{NVM.PM.FILE} and the \textit{NVM.PM.VOLUME} modes are the most relevant.
@@ -600,12 +599,10 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
     \item[Ordering]
         Due to out-of-order or speculative execution, the program order of instructions does not necessarily correspond to the granularity and order in which their effects become observable from outside the thread that issues them.
         The degree to which such effects can happen depends on the CPU architecture's memory ordering model.
-        On x86\_64, the ordering guarantees are generally strong%
-        \footnote{x86\_64 guarantees sequential consistency for pages mapped as \textit{write-back cacheable} (WB), details see~\cite{braisSignificanceX86SFENCE2019}.}
-        but some of the more efficient cache flushing instructions (\lstinline{clflushopt}, \lstinline{clwb}) as well as non-temporal stores (``\lstinline{ntstore}'') are weakly ordered and could be reordered or combined.
+        On x86\_64, the ordering guarantees are generally strong but some of the more efficient cache flushing instructions (\lstinline{clflushopt}, \lstinline{clwb}) as well as non-temporal stores (e.g., \lstinline{vmovntdqa}) are weakly ordered and could thus be reordered or combined.
         To prevent such effects, it is necessary to insert a store barrier instruction (\lstinline{sfence}).
         For example, on our evaluation system, we must use \lstinline{ntstore A + sfence + ntstore B} to ensure that B is written to PMEM after A.
-        With regard to ZIL-PMEM, we cover this and the previous three aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.~\cite{rudoffPersistentMemoryProgramming2017,braisSignificanceX86SFENCE2019}
+        With regard to ZIL-PMEM, we cover this and the previous three aspects of PMEM programming in Section~\ref{di:prb:write:crashconsistency} where we describe how ZIL-PMEM stores log records in PMEM.~\cite{rudoffPersistentMemoryProgramming2017, braisSignificanceX86SFENCE2019, intelSdmMemoryOrdering}
 
     \item[Error Handling] The error handling story for PMEM suffers particularly from the implicitness of the PMEM IO model.
 
@@ -622,7 +619,7 @@ The reason is that the CPU microarchitecture effectively becomes a semi-transpar
         It is only guaranteed to have reached the \textit{persistence domain} which may just be a volatile buffer in the memory controller.
         There is no mechanism to wait for persistence to the non-volatile media.
         Thus, if the asynchronous attempt to persist that buffer's content fails, the software has already proceeded under the assumption that the store succeeded.
-        The recommended mitigations are all based on the idea to read all PMEM content in the background, either using a hardware engine (``patrol scrub'') or an ACPI device-specific method (``address range scrub'').
+        The recommended mitigations are all based on the idea of reading all PMEM content in the background, either using a hardware engine (``patrol scrub'') or an ACPI device-specific method (``address range scrub'').
         The idea is that write errors will be discovered through the PMEM's ECC mechanisms and surfaced to the operating system.
         (See \cite{ReliabilityAvailabilityServiceability}; \cite[Chapter 17]{Scargall2020})
 
@@ -694,7 +691,7 @@ Its name is the \textit{dataset layer} (DSL), and it provides the following serv
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[Creation \& Destruction Of Object Sets] The DSL provides APIs to create and destroy the object sets for filesystems and ZVOLs.
     \item[Naming \& Hierarchical Organization Of Object Sets] The DSL assigns names to object sets and organizes them in a tree structure.
-        For example, a zpool named \lstinline{tank} has a root ZPL filesystem object set \lstinline{tank} and possibly three child filesystems \lstinline{tank/a} \lstinline{tank/b} and \lstinline{tank/b/c}, each with their own object set.
+        For example, a zpool named \lstinline{example} has a root ZPL filesystem object set \lstinline{example} and possibly three child filesystems \lstinline{example/a}, \lstinline{example/b}, and \lstinline{example/b/c}, each with their own object set.
     \item[Properties \& Inheritance] Per-object-set configuration options, e.g., on-the-fly compression, can be inherited along the tree hierarchy to aid administration of large pools.
         % It is also possible to automatically infer mountpoints from the hierachy, e.g., if \lstinline{mountpoint=/mp} is configured for \textit{tank/b}, then \lstinline{tank/b/c}'s default mountpoint is \lstinline{tank/b/c}.
         % However, this mountpoint inheritance is not mandatory, i.e., it would be possible to override \lstinline{tank/b/c}'s mountpoint to be \lstinline{/mnt}.
@@ -802,15 +799,15 @@ Figure~\ref{fig:zil_writepath_and_replay_sequence_logical_level} exemplifies the
 \begin{figure}[H]
 \begin{lstlisting}[style=figurepseudocode]
 zil_commit(object_id):
-    commit_list := []
-    for each unsynced transaction group 'txg':
-    itxg <- the itxg for txg
+  commit_list := []
+  for each unsynced transaction group 'txg':
+    itxg := the itxg for txg
     if object_id == 0:
-        move all itxs in itxg.async to itxg.sync
+      move all itxs in itxg.async to itxg.sync
     else:
-        move only the itxs in itxg.async[object_id] to itxg.sync
-        append itxg.sync to commit_list
-    for each itx in commit_list:
+      move only the itxs in itxg.async[object_id] to itxg.sync
+      append itxg.sync to commit_list
+  for each itx in commit_list:
     log_record := encode itx as log record
     append log record to a persistent log structure
 \end{lstlisting}
@@ -995,7 +992,7 @@ We use the following system configuration:
     \item We configure all Optane DIMMs in \textit{AppDirectNotInterleaved} mode.
     \item We create a 40~GiB-sized \textit{fsdax} namespace on the region of the first DIMM on the first socket.
     \item We create a 40~GiB-sized \textit{devdax} namespace on the region of the first DIMM on the first socket.
-    \item We partition each of the 3 NVMe drives into 10 equal-sized partitions each.
+    \item We partition each of the 3 NVMe drives into 10 equal-sized partitions.
     \item We create a zpool called \texttt{dut} with the 30 partitions as top-level VDEVs, and the \textit{fsdax} namespace's /dev/pmem device as a SLOG.
         The reason for the large number of partitions is that we observed slightly improved txg sync performance, presumably due to a higher degree of parallelism towards the NVMe drives.
     \item We create 8 datasets in the zpool, named \lstinline{dut/ds$i}, mounted at \lstinline{/dut/ds$i}.
@@ -2060,7 +2057,7 @@ Procedure For Commit Slot Release:
     Exit Semaphore
 \end{lstlisting}
 
-The procedure above is all the PRB-wide coordination that is required for writing a log entry, iff the acquired slot's \textit{open chunk}'s capacity is sufficient.
+The procedure above is all the PRB-wide coordination that is required for writing a log entry, if the acquired slot's \textit{open chunk}'s capacity is sufficient.
 If capacity is insufficient, the writing thread replaces the full \textit{open chunk} with a new one.
 To accomplish that, it puts the current \textit{open chunk} on the correct \textit{full list} and gets a new \textit{open chunk} from the \textit{free list}.
 Access to the PRB's lists is protected by a PRB-wide mutex.
@@ -2098,7 +2095,7 @@ This is the case for ZIL-PMEM proper, which uses a mutex to serialize \lstinline
 (Remember from Section~\ref{openzfs:the_zil_api} that the ZIL's shared itxg structure defines the sequential \textit{commit list} model.)
 However, for the ITXG bypass for ZVOLs (Section~\ref{sec:itxgbypass}), the ZVOL dataset's HDL can be written in parallel.
 
-Multiple threads are allowed to write to a single HDL simultaneously iff they do not start a new generation.
+Multiple threads are allowed to write to a single HDL simultaneously if they do not start a new generation.
 Threads that start a new generation must wait for all threads that wrote entries to the previous generation to finish writing.
 The reason is that the new generation's entry logically depends on the previous generation's entry.
 Note that it would be sufficient to prevent the \textit{function calls} from returning out of dependency order while allowing the new generation's entry to be written in parallel with the old entries.
@@ -2161,7 +2158,7 @@ This is true because the space occupied by $E_{n+1}$ contains an invalid follow 
 Stores made in Phase 1 for $E_n$ are guaranteed to be persistent before any store for $E_{n+1}$ happens due to the \lstinline{cacheflush+sfence} at the end of Phase 1.
 Note that we do not need to address the case where the chunk is full because we cannot append $E_{n+1}$ to a full chunk.
 
-The first \lstinline{sfence} in phase 1 is required for correctness iff we do not trust the body checksum to detect partial writes.
+The first \lstinline{sfence} in phase 1 is required for correctness if we do not trust the body checksum to detect partial writes.
 If we omitted the \lstinline{sfence} in phase 1, it would be possible that the entry header written in phase 2 reaches PMEM completely but the body written in phase 1 does not.
 In that case, after a crash, the traversal algorithm would observe a valid header but a body space with undefined content.
 We would rely fully on the body checksum to detect the partially written body.
@@ -3852,7 +3849,7 @@ It is based on NOVA-Fortis and thus a PMEM-first design, whereas ZIL-PMEM introd
 Strata uses PMEM as a log buffer for fast synchronous IO and aggregates the log contents for efficient write-back to SSDs.
 Its hybrid architecture (LD\_PRELOADed library + kernel module) is not directly comparable to ZIL-PMEM.
 In the open-source ecosystem, we have identified Linux Device Mapper with its \textit{dm-writecache} target as a practically relevant alternative to \mbox{ZIL-PMEM}.
-Our survey of systems for modeling and validating filesystem crash consistency did not yield anything that would be directly applicable to our work with reasonable effort.
+Our survey of systems for modeling and validating filesystem crash consistency yielded no solution that would be immediately applicable to our work.
 % we mention PMTest in future work
 
 Our main contribution is the PRB/HDL data structure which consumes the space of a PMEM SLOG device and exposes the abstraction of per-dataset virtual persistent and garbage collected logs (HDLs).
@@ -3897,10 +3894,8 @@ The important metrics for recovery are a) pool import time, b) replay time, and 
 
 The trade-offs around the \textbf{chunk size} have not yet been evaluated.
 We chose a large chunk size for our evaluation (128 MiB) to avoid contention on the PRB-wide mutex that must be held while getting a new free chunk.
-% For example, the 128 MiB chunk size allows for $\frac{128 * 2^20}{256 + 192 + 4*2^10 + (256 - 192)} \sim 30840$ 4k log entries per chunk.
-% Consequently, only every ${30840^\text{th}}$ log entry would need to acquire the PRB-global mutex to get a new chunk.
 Such a large chunk size is probably not required in practice.
-For example, in a 4k write workload, only every $\frac{128 * 2^{20}}{256 + 192 + 4*2^{10} + (256 - 192)} \sim 30840^\text{th}$ write would require a new chunk, which assuming back-to-back writes at a very optimistic latency of 1.5~us, is only every 46.2~ms.
+For example, in a 4k write workload, only every $\frac{128 * 2^{20}}{256 + 192 + 4*2^{10} + (256 - 192)} \sim 29127^\text{th}$ write would require a new chunk, which assuming back-to-back writes at a very optimistic latency of 1.5~us, is only every 46.2~ms.
 Since data corruption in an entry header makes the subsequent entries in the chunk unreachable for traversal, we expect that it is desirable to find the smallest possible chunk size that works on a given system.
 
 We explicitly ignored \textbf{space efficiency} as a concern for ZIL-PMEM because of the high capacity of Intel Optane PMEM.
@@ -4043,7 +4038,7 @@ The branch \lstinline{master-thesis-archive/submitted_state} at commit a467b56f3
 
 \appendixsection{Thesis Repository}
 
-The repository with the \LaTeX source code and assets that were used to produce this document.
+The repository with the \LaTeX\ source code and assets that were used to produce this document.
 
 
 \cleardoublepage
