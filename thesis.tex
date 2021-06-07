@@ -128,14 +128,14 @@ Our implementation shows high speedups over ZIL-LWB, with a maximum of 8x in a s
 
 \chapter{Introduction}
 The task of a filesystem is to provide non-volatile storage to applications in the form of the \textit{file} abstraction.
-Applications modify files through system calls such as \lstinline{write()} which generally do not provide any durability guarantees.
-Instead, they modify DRAM buffers, such as pages in the Linux page cache, and return to userspace.
+Applications operate on files through system calls such as \lstinline{write()} which generally do not provide any durability guarantees.
+Instead, they only modify DRAM buffers, such as pages in the Linux page cache, and return to userspace.
 Writeback of these buffers to persistent storage is deferred to an implementation-defined point in the future.
 
 However, many applications have stronger durability requirements.
 For example, an accounting system that processes a purchase needs to ensure that the updated account balance is persisted before clearing the transaction.
 Otherwise, the on-disk state might remain the pre-purchase balance.
-In the event of a crash and subsequent reboot, the accounting system would then load this state from disk, enabling double-spending by the account holder.
+In the event of a crash and subsequent reboot, the accounting system would then load this outdated state from disk, enabling double-spending by the account holder.
 The solution is to request \textbf{synchronous IO} semantics from the filesystem through APIs such as \lstinline{fsync()} which ``assure that after a system crash [...] all data up to the time of the \lstinline{fsync()} call is recorded on the disk.''~\cite{OpenGroupFsync}.
 
 The \textbf{Zettabyte File System (ZFS)} combines volume management and filesystem services.
@@ -150,34 +150,29 @@ The ZIL's \textit{log records} describe the logical changes that need to be appl
 
 The on-disk representation of the ZIL is a chain of \textit{log-write blocks} (LWBs), each of which contains many log records.
 The lower bound for the latency of a synchronous IO operation is the latency required for writing the LWBs that contain the operation's log records.
-By default, LWBs are allocated from the zpool's primary storage devices.
-To address the case these devices' latency is insufficient, ZFS provides the ability to add a \textit{separate log device} (SLOG) to the zpool.
-The SLOG is a block device that provides lower latency than the primary storage devices.
-A typical configuration today is to add a fast NVMe drive to an HDD-based zpool.
-Adding a fast SLOG accelerates LWB writes because LWBs are preferentially allocated from the SLOG.
-Note that the space requirements for SLOGs are low because LWBs are garbage-collected as soon as txg sync has written out the dirty state of all log records that an LWB contains.
+By default, ZFS allocates LWBs from the zpool's primary storage devices.
+To address the case where these devices' latency is insufficient, ZFS provides the ability to add a \textit{separate log device} (SLOG) to a zpool which is reserved and preferred for LWB allocation.
+A typical configuration is to use a single or mirrored NVMe drive(s) as a SLOG in an HDD-based zpool.
+Note that the space requirements for the ZIL (and thus SLOGs) are low because LWBs are garbage-collected as soon as txg sync has written out the dirty state of all log records that an LWB contains.
 
-\textbf{Persistent Memory (PMEM)} is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
+\textbf{Persistent memory (PMEM)} is an emerging technology that provides low-latency memory-mapped byte-addressable persistent storage.
 The Linux kernel can expose PMEM as a pseudo block device (/dev/pmem) whose sectors map directly to PMEM pages.
 Unmodified block device consumers can use it as a fast block device, albeit with the caveat of lacking sector atomicity guarantees.
 Block device consumers that are aware of PMEM can get \textbf{d}irect-\textbf{ac}cess (DAX) to \mbox{/dev/pmem}'s pages and bypass the block IO stack completely.
 
-The motivation for this thesis is to accelerate synchronous IO in ZFS by using PMEM as a ZFS SLOG device.
-A single DIMM of the current Intel Optane DC PMEM product line can sustain 550k random 4k write IOPS from a single CPU core which corresponds to a write latency of 1.81~us.
+The motivation for this thesis is to accelerate synchronous IO in ZFS by using PMEM as a SLOG device.
+A single DIMM of the current Intel Optane DC PMEM product line can sustain 550k random 4k write IOPS from a single CPU core, corresponding to a write latency of 1.81~us.
 However, when configuring /dev/pmem as a SLOG in ZFS, a single thread only achieves 10k~IOPS~(100~us/IOP) and only scales up to 100k~IOPS at 7 threads (70~us/IOP per thread).
 This discrepancy prompted us to perform a more detailed analysis of ZFS's severe latency overhead in this benchmark.
-We find that approximately 80\% of wall clock time for the average IOP is spent in the ZIL code, and
-we conclude that both the LWB structure and the mechanism to persist it (ZIO pipeline) are unfit for PMEM-level performance.
+We find that approximately 80\% of wall clock time for the average synchronous write IOP is spent in the ZIL code, and we conclude that both the LWB structure and the mechanism to persist it (ZIO pipeline) are unfit for PMEM-level performance.
 
 Based on our observations, we propose \textbf{ZIL-PMEM}, a new ZIL design that exclusively targets PMEM.
 It coexists with the existing ZIL, which we refer to as \textit{ZIL-LWB} in the remainder of this document.
-ZIL-PMEM achieves 128k random 4k synchronous write IOPS with a single thread, and scales up to 400k IOPS as early as four threads.
+With ZIL-PMEM, a single thread achieves 128.5k random 4k synchronous write IOPS and scales up to 400k IOPS at four threads.
 Our implementation is extensively unit-tested and passes the ZFS test suite's SLOG integration tests.
 
 The remainder of this thesis is structured as follows:
-in Chapter~\ref{ch:litreviewandbackground} we
- review prior work in the field of persistent memory and its use in filesystems and
- provide technical background knowledge on PMEM and ZFS.
+in Chapter~\ref{ch:litreviewandbackground} we review prior work in the field of filesystems that use persistent memory, and provide technical background knowledge on PMEM and ZFS.
 Chapter~\ref{ch:lwb_analysis} describes our analysis of ZIL-LWB's sub-par performance on a /dev/pmem SLOG.
 Our solution, \mbox{ZIL-PMEM}, is then presented in Chapters \ref{ch:designoverview}, \ref{ch:prbhdl}, and \ref{ch:zilpmem}.
 Chapter~\ref{ch:designoverview} defines the project goals and provides a high-level overview of the design.
@@ -739,7 +734,7 @@ It is the txg that is used for any newly started DMU transactions.
 Between syncing and open txg sits the \textit{quiescing} txg.
 It is not used for any new DMU transactions, but some DMU transactions assigned to it may not have completed yet.
 However, once that has happened, it is guaranteed that the accumulated dirty state for the quiescing txg is not going to change and is ready to be written out by \textit{txg sync}.
-Thus, as soon as the syncing txg has been fully written, the quiescing txg becomes the new syncing txg, the open txg becomes the new syncing txg, and a new open txg is born.
+Thus, as soon as the syncing txg has been fully written, the quiescing txg becomes the new syncing txg, the open txg becomes the new quiescing txg, and a new open txg is born.
 
 It is of crucial importance that the completion of a DMU transaction, indicated by a call to the \lstinline{dmu_tx_commit} function, does \underline{\smash{not}} guarantee persistence.
 DMU transactions merely scope modifications on the DMU level to a txg; more specifically, the txg that was the \textit{open txg} at the time the transaction was started.
@@ -868,7 +863,7 @@ The packing of $N$ log records on the commit list into $M$ fewer but larger LWBs
         A releases its lock on the LWB chain and goes to sleep, waiting for another thread $B$ to continue to fill $L_n$.
         If such a thread $B$ \lstinline{zil_commit}s to the same dataset within that time window, it might fill $L_n$ completely and issue it to disk, making $L_{n+1}$ the new tail LWB.
         The IO completion callback for $L_n$ then wakes up $A$ which is now allowed to return from \lstinline{zil_commit} because the last entry on its commit list is now fully persisted.
-        If no thread other thread picks up $L_n$, a timeout wakes up $A$ so that it can issue the IO operation itself.
+        If no other thread picks up $L_n$, a timeout wakes up $A$ so that it can issue the IO operation itself.
 
         Without this mechanism, thread $B$ would need to wait for the last LWB of $A$ to be persisted, \textit{and} for its own LWBs to be persisted because $B$'s first LWB is pointed to by $A$'s last LWB.
         By sharing the last LWB of $A$ and $B$, up to $1 * lat_{disk}$ of waiting time can be avoided.
@@ -922,7 +917,7 @@ We visualize both the append and garbage-collection operations in Figure~\ref{fi
 By default, the SPA uses the same VDEVs for \textit{txg sync}'s tree blocks and the ZIL's LWB allocations.
 However, it is possible to mark some of the pool's VDEVs as \textit{separate log devices} (SLOGs).
 If a SLOG is present, the SPA uses it exclusively and preferentially for LWB allocations.
-As hinted in Figure~\ref{fig:zil_lwb__physical_structure_overview}, a typical configuration is the use high-capacity HDDs in a space-efficient \textit{raidz} configuration for the main pool and a costlier but faster NVMe drive (\textit{disk} VDEV) as a SLOG.
+As hinted in Figure~\ref{fig:zil_lwb__physical_structure_overview}, a typical configuration is the use high-capacity HDDs in a space-efficient \textit{raidz} configuration for the main pool and a costlier but faster NVMe drive, or mirror thereof, as a SLOG.
 Thereby, the advantages of both storage media are combined.
 Note that SLOGs only need very limited capacity (tens of GiBs at most) since any LWB is guaranteed to be obsolete after three txgs.
 
