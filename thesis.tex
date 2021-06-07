@@ -406,7 +406,7 @@ ALICE could be used to determine whether ZFS’s guarantees are sufficient for a
 However, since ZIL-PMEM shall maintain the same guarantees as ZIL-LWB (Section~\ref{sec:requirements}), such findings would only be relevant for future work.
 
 \citerelwork{{\small Specifying and Checking File System Crash-Consistency Models}}{bornholtSpecifyingCheckingFile2016}
-The authors
+The authors of this paper
 “present a formal framework for developing crash-consistency models, and a toolkit, called FERRITE, for validating those models against real file system implementations.”
 The system provides means to express expected filesystem behavior as a \textit{litmus test}.
 A litmus test encodes expected behavior of a filesystem though a series of events (e.g., write to a file) and a final predicate expressed as a satisfiability problem.
@@ -423,7 +423,7 @@ Such a model would be helpful to validate ZIL-PMEM's goal to maintain the same s
 However, this would require a FERRITE disk model for persistent memory.
 
 \citerelwork{Using Model Checking to Find Serious File System Errors}{yangUsingModelChecking2006}
-The authors present an “implementation-level model checker” that removes the need to define a formal model for the filesystem.
+The authors pre\-sent an “implementation-level model checker” that removes the need to define a formal model for the filesystem.
 Instead, the model is inferred by running the OS with the filesystem and recording both syscalls emitted by the application and disk operations emitted by the filesystem.
 These traces are subsequently fed to a process that produces disk images created from reorderings of disk operations.
 The disk images are fed to the filesystem’s fsck tool.
@@ -794,7 +794,7 @@ For example, an ITX that logs the creation of a file is added to the \textit{syn
 \lstinline{zil_commit} uses the \lstinline{itxg}s to determine the list of ITXs that need to be appended to the on-disk log so that successful recovery is possible.
 The pseudo-code in Figure~\ref{fig:zil_commit_itxg_pseudocode} illustrates how \lstinline{zil_commit} constructs this so-called \textbf{commit list}, and how it appends the ITXs, encoded as {\textbf{log records}, to the on-disk log structure.
 
-After a system crash, the zpool is in the state of the last synced transaction group, which we call $precrash\_txg$.
+After a system crash, the zpool is in the state of the last synced transaction group, which we refer to as $precrash\_txg$.
 All datasets (i.e, filesystems, ZVOLs) are at their $precrash\_txg$ state and any changes made in younger DMU transactions are missing.
 The ZPL and ZVOL code use the ZIL's \lstinline{zil_replay} API when the filesystem is mounted (or the ZVOL opened) to recover the lost changes.
 The API contract is that the caller provides a callback that is invoked for exactly those log records that were lost, i.e., whose ITX's txg was $> precrash\_txg$.
@@ -977,7 +977,7 @@ Our main evaluation system has the following hardware configuration:
     \item[CPU] 2 x Intel Xeon Silver 4215 CPU \@ 2.50GHz
     \item[Mainboard] Supermicro X11DPi-NT, BIOS 3.1a 10/16/2019
     \item[DRAM] 16 x Micron 8GiB DDR4 2933MT/s (\mbox{18ASF2G72PDZ-2G9E1}), evenly distributed across sockets.
-    \item[NVMe] 3 x Micron PRO 960GB NVMe, 512 byte namespace format (MTFDHBA960TDF)
+    \item[NVMe] 3 x Micron PRO 960GB NVMe, 512 byte namespace format \\ (MTFDHBA960TDF)
     \item[PMEM] 4 x Intel Optane DC Persistent Memory, 128 GB, (NMA1XXD128GPS), two per socket.
 \end{description}
 We use the following software stack:
@@ -1012,17 +1012,20 @@ To avoid scalability-bottlenecks in the ITX code, we place each thread's file on
 For each \lstinline{numjobs} value, we measure for one minute (\lstinline{time_based=1}, \lstinline{runtime=60}), with a ramp-up time of 2~seconds (\lstinline{ramp_time=2}), and set \lstinline{end_fsync=1}.
 Before we run the benchmark, we prepare the job files using the \lstinline{create_only=1}.
 
+\begin{samepage}
 We run this fio workload on the following storage configurations:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
     \item[zil-lwb] The zpool with ZIL-LWB ZIL kind as described above.
-    \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all datasets.
-        This setting effectively disables the ZIL (thereby violating the synchronous semantics) and serves as an upper bound for the performance that any ZIL implementation can achieve.
+    \item[async] The same configuration as above, but with \lstinline{sync=disabled} set on all data\-sets.
+        This setting effectively disables the ZIL and thereby violates the synchronous semantics.
+        It serves as an upper bound for the performance that any ZIL implementation can achieve.
         The remaining work done by \textit{async} is only CPU- or DRAM-bound, i.e.,  DMU object modification and ITX allocation.
-    \item[fsdax] The fio configuration above, applied directly to the /dev/pmem0 block device (\lstinline{direct=1} instead of \lstinline{direct=0}, and \lstinline{filename=/dev/pmem0} instead of \lstinline{filename_format=...}).
+    \item[fsdax] The fio configuration above, but applied directly to the /dev/pmem0 block device instead of the filesystem, using \lstinline{direct=1,filename=/dev/pmem0} instead of \lstinline{direct=0} and the \lstinline{filename_format} option.
         This configuration demonstrates the performance of the Linux block device emulation around the PMEM hardware. It includes the syscall overhead.
     \item[devdax] The fio configuration above, with \lstinline{ioengine=dev-dax}, applied directly to the \texttt{/dev/dax} namespace (\lstinline{filename=/dev/dax0.1} instead of the \lstinline{filename_format} option).
         In this configuration, fio mmaps the PMEM namespace directly and thereby bypasses the kernel completely.
 \end{description}
+\end{samepage}
 
 \section{Results}\label{ch:lwb_analysis:results}
 
@@ -1189,7 +1192,7 @@ ZIL-PMEM should thus provide a mechanism to shift excessive PMEM IO wait time of
 \csgoal{Testability}
 ZIL-PMEM must be architected for testability.
 The core algorithms must be covered by unit tests.
-Further, ZIL-PMEM should be integrated into the ztest userspace stress test as well as the SLOG tests of the ZFS Test Suite.
+Further, ZIL-PMEM should be integrated into the \textit{ztest} user\-space stress test as well as the SLOG tests of the ZFS Test Suite.
 
 \subsection{Out Of Scope For The Thesis}
 The following features were omitted to constrain the scope of the thesis.
@@ -1297,7 +1300,7 @@ Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:pr
 Subsequently, we describe PRB, which is the storage substrate that the HDLs use for persistence:
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use for PMEM space management and log entry storage.
 In Section~\ref{di:prb:traversal}, we describe the algorithm that traverses the in-PMEM data structure during log recovery.
-Section~\ref{di:prb:gc} explains how garbage collection removes obsolete from PRB.
+Section~\ref{di:prb:gc} explains how garbage collection removes obsolete entries from PRB.
 The low-latency and CPU efficient design of the write path is then presented in Section~\ref{di:prb:write}.
 Finally, Section~\ref{di:prb:api} provides a walkthrough of the API that ZIL-PMEM consumes.
 
@@ -1532,7 +1535,7 @@ When an entry $E$ is written or replayed, we compare it to $E_{last}$ using the 
     We create a copy of the \textit{live table} which we refer to as \textit{last table}.
     It will be used to compute the counters stored in the entries of generation $E.gen$ (next paragraph).
 \end{description}
-Regardless of whether a new generation was started or not, we always update $E_{last} \leftarrow E$ and increment the counter in the \textit{live table} as described in the previous paragraph after evaluating the rules above.
+We always update \mbox{$E_{last} \leftarrow E$}, regardless of whether a new generation was started or not, and increment the counter in the \textit{live table} as described in the previous paragraph after evaluating the rules above.
 
 The counters $E.C_{ctxg_i}$ have the same value for all entries in generation $E.gen$  because, by definition, they only count entries written up to but not including $E.gen$.
 We compute them from the \textit{last table} once and cache the results until the next generation is started:
@@ -1684,8 +1687,8 @@ Before allowing access to the entry, it ensures that the entry metadata still ma
 If either the read from PRB fails (e.g., due to checksum errors) or if the metadata does not match, we know that the entry has been corrupted since the PRB scan.
 
 Note that the last generation $E_{seal}.gen - 1$ of the log structure is not protected against re-appearing log entries.
-Assume that during initial claiming, entries $(42,1)$ and $(42,3)$ in generation $42$ are observed as the last entries of the replay sequence.
-Then $(E_{seal}.gen, E_{seal.gsid)}$ is $(43,1)$ and the counters of $E_{seal}$ only account for these two entries, and all previous generation's entries.
+Suppose that during initial claiming, entries $(42,1)$ and $(42,3)$ in generation $42$ are observed as the last entries of the replay sequence.
+In that case, $(E_{seal}.gen, E_{seal}.gsid)$ is $(43,1)$ and the counters of $E_{seal}$ only account for these two entries, and all previous generation's entries.
 Now assume that another entry $(42,2)$ had been written but was temporarily invisible during initial claiming, e.g., due to temporary data corruption.
 If for some reason $(42,2)$ becomes visible again, and we start replaying, then $(42,2)$ will be replayed even though it was not visible during claiming.
 And if $(42,2)$ were to replace $(42,1)$ or $(42,3)$, we would not even notice the counter mismatch when arriving at $E_{seal}$.
@@ -1893,7 +1896,7 @@ For the case where PMEM is corrupted, we distinguish the following conditions:
         The error handling for MCE errors is the same as for invalid checksums in entry header and body, which we describe below.
         (See Section~\ref{sec:background:pmemprogrammingmodel} for details on MCEs.)
     \item[Header: Detected Data Corruption]
-        If the header checksum validation fails, the header was either corrupted or never completely written.
+        If header checksum validation fails, the header was either corrupted or never completely written.
         The latter case is critical for crash consistency on the write path, as we will elaborate on in Section~\ref{di:prb:write:crashconsistency}.
         Regardless of the cause, an invalid header's values cannot be trusted, and thus the traversal stops.
     \item[Header: Undetected Data Corruption]
@@ -2289,7 +2292,7 @@ It is always the API consumer's responsibility to ensure that the update is corr
 Claiming can fail, e.g., if the procedure detects a missing entry for the HDL (claiming performs a dry-run of replay internally).
 The API consumer defines the error handling policy.
 It can either abort pool import or choose to abandon the log.
-To abaondon the log, the API consumer must first tear down the HDL using \lstinline{prb_teardown_hdl(..., abandon_claim=true, ...)} to release claims made during \lstinline{prb_claim}.
+To abaondon the log, the API consumer must first tear down the HDL using \lstinline{prb_teardown_hdl} with argument \lstinline{abandon_claim=true} to release claims made during \lstinline{prb_claim}.
 Then, the API consumer can reset the ZIL header content using \lstinline{zil_header_pmem_init} and re-instantiate the HDL using \lstinline{prb_setup_hdl}.
 The re-instantiated HDL is in state \textit{nozil}.
 
@@ -2343,7 +2346,7 @@ The callback must perform the following steps for crash-consistent replay for ea
     \item \lstinline{dmu_tx_commit(tx)} the DMU transaction.
 \end{enumerate}
 
-Note that the callback must use \lstinline{prb_replay_read_replay_node} function because \lstinline{replay_node_t} is an opaque type in the PRB API.
+Note that the callback is forced to use \lstinline{prb_replay_read_replay_node} function because \lstinline{replay_node_t} is an opaque type in the PRB API.
 The function forces the API consumer to do DRAM buffering and protects against online and offline data corruption internally, as discussed in Section~\ref{di:prb:ccrecovery}.
 
 \lstinline{prb_replay} can fail either due to an error returned by the callback, due to an error in the scanning phase or due to log corruption.
@@ -2382,8 +2385,8 @@ In addition to the body (\lstinline{body_dram}, \lstinline{body_len}), the log w
         Note: for ZIL-PMEM, this value is always the same as the log record's \lstinline{lrc_txg} field.
     \item[needs\_new\_gen] Indicates whether a new generation should be started for this log entry.
         It is the responsibility of the caller to serialize the start of a new generation as described in Section~\ref{di:prb:write:hdlscoped}.
-        If a thread writes an entry with \lstinline{needs_new_gen} is \lstinline{true}, that thread must be the only thread executing \lstinline{zilpmem_prb_write_entry} for the given HDL.
-        The contrary is not true: if \lstinline{needs_new_gen} is \lstinline{false}, multiple threads may write entries in parallel to the same HDL.
+        If a thread writes an entry with \lstinline{needs_new_gen} is \lstinline{true}, that thread must be the only thread that is executing \lstinline{zilpmem_prb_write_entry} for the given HDL.
+        The contrary is not true: multiple threads may write entries in parallel to the same HDL if they set \lstinline{needs_new_gen} to \lstinline{false}.
         Note that writers for different HDLs do not need to coordinate at all.
 \end{description}
 
@@ -2479,7 +2482,7 @@ If the feature is not active, we implicitly know that the ZIL kind is ZIL-LWB an
 If the feature is active, we use the \lstinline{zh_kind} discriminant field to determine the ZIL kind.
 
 ZIL kind implementations only access their sub-structure within the ZIL header.
-For example, ZIL-LWB only operates on the \lstinline{zil_header_lwb_t} structure, not the full \lstinline{zil_header_t}.
+For example, ZIL-LWB only operates on the \lstinline{zil_header_lwb_t} structure, not \lstinline{zil_header_t}.
 Hence, there is no difference to the ZIL-LWB implementation whether ZIL kinds are enabled or not.
 
 The migration path for activating ZIL kinds is simple since all ZIL headers in the pool are guaranteed to be ZIL-LWB before the migration.
@@ -2563,7 +2566,7 @@ Step~\ref{changezilkinds:switchheaders} must happen atomically for all ZIL heade
 Otherwise, a crash could result in a pool with mixed ZIL kinds.
 
 Due to time constraints, we have \textbf{not yet implemented} the procedure outlined above.
-As a stop-gap solution, we instead implemented a simplified scheme where a zpool's ZIL kind is determined on pool creation time by a kernel module parameter (\lstinline{zil_default_kind}).
+As a stop-gap solution, we instead implemented a simplified scheme where a zpool's ZIL kind is determined on pool creation time by a kernel module parameter called \lstinline{zil_default_kind}.
 On subsequent pool imports, we derive the pool's ZIL kind from the root dataset's ZIL kind.
 We prevent attempts to switch the ZIL kind by preventing any changes to the SLOG VDEV config in a ZIL-PMEM pool.
 
@@ -2687,7 +2690,7 @@ Prior to the work presented in this thesis, ZFS had no concept of persistent mem
 Fortunately, the requirements of ZIL-PMEM are very limited:
 \begin{itemize}[noitemsep]
     \item /dev/pmem SLOGs must be recognized as such (``PMEM SLOG'') when they are added to the pool so that the ZIL-PMEM can be activated.
-    \item The PMEM SLOG's allocatable space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, etc., see Section~\ref{sec:background:pmemprogrammingmodel}).
+    \item The PMEM SLOG's space must be directly accessible via the PMEM programming model (load/store instructions, cache flushing, etc., see Section~\ref{sec:background:pmemprogrammingmodel}).
         If direct access is not possible, the PMEM SLOG must be considered faulty, and pool import must be refused.
         We assume that direct access cannot be lost once it has been established.
 \end{itemize}
@@ -2707,10 +2710,12 @@ Consequently, \lstinline{is_dax} becomes an independent \textit{zpool feature}.
 The changes described in the preceding sections prepare the way for the introduction of the new ZIL-PMEM ZIL kind.
 
 \subsection{Activation}\label{sec:zilpmemzilkind:activation}
+\begin{samepage}
 The ZIL-PMEM ZIL kind is used instead of ZIL-LWB based on the following rule:
 \begin{displayquote}
   If the pool has exactly one SLOG and that SLOG is \lstinline{is_dax}, the ZIL kind is ZIL-PMEM. Otherwise, it is ZIL-LWB.
 \end{displayquote}
+\end{samepage}
 This rule must be evaluated when the pool is imported or whenever the pool's SLOG VDEVs are about to change:
 during pool creation, on \lstinline{zpool add} and \lstinline{zpool remove}, and when \lstinline{zpool import} is told to drop log devices via the \lstinline{-m} flag.
 We compare the resulting desired ZIL kind with the \lstinline{zh_kind} value of any ZIL header in the pool.
@@ -2720,7 +2725,7 @@ ZIL-PMEM is automatically used if it supports the user-specified SLOG device con
 Otherwise, the system transparently falls back to ZIL-LWB.
 
 \textbf{Note}: We have not yet implemented changing ZIL kinds after pool creation and thus not implemented the design described in the previous paragraph.
-Instead, the \lstinline{zil_default_kind} kernel module parameter determines the ZIL kind of a newly created pool (ref. Section~\ref{sec:zil_kinds:change}).
+Instead, the kernel module parameter \lstinline{zil_default_kind} determines the ZIL kind of a newly created pool (ref. Section~\ref{sec:zil_kinds:change}).
 If the ZIL kind is ZIL-PMEM, the implementation enforces that the pool config has exactly one SLOG VDEV that is \lstinline{is_dax}, and prevents any changes to the SLOG VDEV config.
 
 \textbf{Alternative Design}
@@ -2782,7 +2787,7 @@ We add the necessary callbacks to synchronize the \textit{HDL map} with the data
     \item During pool import, after setting up the PRB but before claiming, we iterate over the head datasets%
         \footnote{Head datasets are ZPL filesystems, ZVOLs, and clones thereof. ``Behind'' a head dataset can be one or more snapshots.}
         in the pool, set up the HDLs for each of them, and add them to the \textit{HDL map}.
-    \item When a new head dataset is created (\lstinline{dmu_objset_create_impl_dnstats} and \lstinline{dmu_objset_clone_sync}), we set up its HDL and add it to \textit{HDL map}.
+    \item When a new head dataset is created we set up its HDL and add it to \textit{HDL map} (\lstinline{dmu_objset_create_impl_dnstats} and \lstinline{dmu_objset_clone_sync}).
     \item When a head dataset is destroyed (\lstinline{zil_destroy_sync}), we tear down the HDL and remove it from the \textit{HDL map}.
 \end{itemize}
 
@@ -2817,7 +2822,7 @@ The following cases required additional code to adapt between the two domains:
         \begin{enumerate}[noitemsep]
             \item Acquire a \lstinline{zilog_pmem_t}-wide mutex.
             \item Get the \textit{commit list} from the \textit{itxg} data structure.
-            \item Write each ITX (i.e., log record) on the commit list to the HDL using \lstinline{prb_write_entry}.
+            \item Write each ITX (i.e., log record) on the commit list to the HDL using the \lstinline{prb_write_entry} function.
                 A new generation is started for every ITX to encode the sequential log structure.
             \item Release the mutex.
         \end{enumerate}
@@ -2879,7 +2884,7 @@ The following cases required additional code to adapt between the two domains:
         \textit{Txg sync} then uses this buffer's content when it writes out \lstinline{objset_phys_t} to the on-disk tree structure.
 
         ZIL-PMEM queues the updated header values returned by the HDL APIs in a 4-ary array that is indexed by \lstinline{[txg&3]}.
-        Each cell contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
+        Each cell of the array contains the tuple \lstinline{(txg: u64, header: zil_header_pmem_t)}.
         A header update \lstinline{(txg_u, header_u)} overwrites the cell at index \lstinline{txg_u&3}.
         Updates must only be made from the \textit{open} or \textit{quiescing} txgs.
         \lstinline{zilpmem_sync} then reads then cell \lstinline{C} at index \lstinline{updates[syncing_txg&3]}.
@@ -3034,7 +3039,7 @@ Our high-level requirements for ZIL-PMEM were: simple administration, sharing of
     \item[Pooled Storage] PRB abstracts the PMEM SLOG device and shares it as a pool-wide resource among all HDLs / datasets.
     \item[Coexistence] The introduction of \textit{ZIL kinds} allows for coexistence of ZIL-LWB and ZIL-PMEM in code and at runtime.
         The layer at which ZIL kinds were introduced in the architecture allows for sharing of all code that deals with the ZIL's logical structure but enables coexistence of different persistence strategies.
-    \item[Same Guarantees] ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB towards userspace, courtesy of the shared logical structure and PRB/HDL's guarantees.
+    \item[Same Guarantees] ZIL-PMEM maintains the same crash consistency guarantees as ZIL-LWB towards userspace, courtesy of the shared logical structure and guarantees provided by PRB/HDL's.
 \end{description}
 
 \section{Correctness}
@@ -3077,7 +3082,7 @@ Whenever state needs to be kept for each of the unsynced txgs, a 4-ary array is 
 The \lstinline{txg&3}'th element in the array then contains the state for \lstinline{txg}.
 The value of \lstinline{txg} is repeated within the per-txg state to detect when an array element is re-used.
 
-With regard to PRB, an entry $E_i$ must only be written to PMEM if its txg $E_i.txg$ is newer than the HDL's highest-ever written txg $T_{max}$, or if it is one of $T_{max}$, $T_{max}-1$, or $T_{max}-2$.
+With regard to PRB, an entry $E_i$ must only be written to PMEM if its txg $E_i.txg$ is newer than the HDL's highest-ever written txg $T_{max}$, or if it is one of $T_{max}$, $T_{max}-1$, or \mbox{$T_{max}-2$}.
 The reason is the fixed number of three counters in the entry header that are used for dependency tracking (see Section~\ref{di:prb:deptrack}).
 We add tests that ensure that the \lstinline{prb_write_entry} API returns an error if entries are written that do not meet this criterion.
 We also test the behavior of replay to ensure that --- if the write path implementation were incorrect --- replay would identify the problem with a distinct error code.
@@ -3286,7 +3291,7 @@ The \lstinline{slog_replay_*} tests exercise the replay code path as follows:
     \item Use the \textit{diff} utility to compare the archived state, including metadata such as \textit{mtime} and extended attributes, against the replayed state of the filesystem.
         The test passes if no differences are found.
 \end{enumerate}
-The \lstinline|slog_replay_fs_00{1,2}| tests work directly on ZPL filesystems, whereas the \lstinline|slog_replay_volume| test exercises the ZVOL code paths by instantiating an external filesystem on top of the ZVOL (ext4 on Linux, UFS2 on FreeBSD).
+Whereas \lstinline|slog_replay_fs_00{1,2}| work directly on ZPL filesystems, the \lstinline|slog_replay_volume| test exercises the ZVOL code paths by instantiating an external filesystem on top of the ZVOL (ext4 on Linux, UFS2 on FreeBSD).
 
 We modify ZTS as follows:
 \begin{enumerate}[noitemsep]
@@ -3507,14 +3512,14 @@ The following items are examples for storage stacks used in the evaluation:
         The ext4 file system is mounted without the \lstinline{dax} mount option.
     \item[xfs-dax on devpmem] XFS deployed directly on the PMEM block device (/dev/pmem0).
     It is mounted with the \lstinline{dax} option.
-    \item[zfs-pmem] ZFS with the ZIL-PMEM ZIL kind and the default value of \lstinline{ncommitters=3}.
-        \lstinline{Zvol_request_sync} and the ITXG bypass are only relevant for ZVOLs and therefore are not part of the configuration name.
+    \item[zfs-pmem] ZFS with the ZIL-PMEM ZIL kind and the default value of \lstinline{3} for \lstinline{ncommitters}.
+        The \lstinline{zvol_request_sync} option and the ITXG bypass are only relevant for ZVOLs and therefore are not part of the configuration name.
 \end{description}
 
 We compare the performance of the storage stacks with the set of benchmarks described below.
 To facilitate the comparison, all benchmarks have the following properties:
 \begin{description}[noitemsep,leftmargin=1.5cm,labelindent=1cm]
-    \item[Scaling Factor] The scaling factor increases the degree of concurrent synchronous IO operations issued by the benchmark.
+    \item[Scaling Factor] The scaling factor increases the degree of concurrent synchro\-nous IO operations issued by the benchmark.
         We run each benchmark with three scaling factor values: 1, 4, and~8.
     \item[Result Metric] Each benchmark reports a single result metric per run.
         This allows us to compare performance across different storage stacks and scaling factor values.
@@ -3536,7 +3541,7 @@ What follows is a description of the benchmarks:
         ``emulates I/O activity of a simple mail server that stores each e-mail in a separate file (/var/mail/ server).
           The workload consists of a multi-threaded set of create-append-sync, read-append-sync, read and delete operations in a single directory.
         ''~\cite{FilebenchGitHubWiki}.
-        We use filebench in version \lstinline{1.5-alpha1-33-g22620e6} with the upstream workload definitions.
+        We compile filebench from source (\lstinline{1.5-alpha1-33-g22620e6}) and use the upstream workload definitions.
         The scaling factor maps to the workload's \lstinline{$nthreads} variable which determines the number threads that execute the operations described above.
         We use a runtime of 20 seconds per configuration and report filebench's \textit{ops per second} value as the result metric.
 
@@ -3721,7 +3726,7 @@ In the next section, we investigate whether a more relaxed log structure such as
 \subsubsection{Impact on ZVOL Performance \& ITXG Bypass}\label{sec:eval:zvols_ad_itxg_bypass}
 
 In this section, we examine the impact of ZIL-PMEM on ZVOLs.
-We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, \lstinline{zvol_request_sync} (\lstinline|rs_{0,1}|), and ITXG bypass setting (\lstinline|byp_{0,1}|).
+We compare the performance of XFS deployed on a ZVOL in a zpool with varying ZIL kinds, values for \lstinline{zvol_request_sync} (\lstinline|rs_{0,1}|), and ITXG bypass setting (\lstinline|byp_{0,1}|).
 The results are relative to \textit{zvol-pmem,rs=0,byp=0} as the baseline which is the standard configuration for ZIL-PMEM pools.
 Note that deploying a filesystem on a ZVOL generally makes little sense in practice because ZFS filesystems provide the same basic service with more additional features at less overhead.
 However, ZVOLs are a popular choice for storage virtualization where ZVOLs are used as virtual hard disks, either on the same host or via a SAN (e.g., iSCSI, Fibre Channel).
@@ -3761,7 +3766,7 @@ The most likely cause is latency overhead added by the filesystem that affects a
 
 \subsection{CPU-Efficient Handling Of PMEM Bandwidth Limits}\label{sec:eval:ncommitters_scalability}
 
-PRB's \textit{commit slot} mechanism limits the number of parallel writers to PMEM to \lstinline{ncommitters}.
+PRB's \textit{commit slot} mechanism limits the number of parallel writers to \lstinline{ncommitters}.
 The goal is to avoid wasteful on-CPU stall cycles which inevitably occur if the aggregate write bandwidth to PMEM exceeds the hardware capacity.
 (See Sections~\ref{sec:requirements} and \ref{di:prb:write} for a more detailed explanation.)
 
@@ -3806,25 +3811,25 @@ We use these namespaces as the zpool's main (non-SLOG) VDEVs.
 Figure~\ref{fig:eval:ncommitters_scalability:main} visualizes the results of this experiment.
 For the non-interleaved configuration, we observe that the system's peak IOPS is 400k, first achieved with \lstinline{ncommitters=3}.
 For \lstinline{ncommitters=3}, IOPS quickly decline to 263k IOPS for higher $numjobs$.
-With \lstinline{ncommitters=8}, the system is able to sustain the 400k IOPS for the for $numjobs \in 7 \dots 13$.
+But with \lstinline{ncommitters=8}, the system is able to sustain the 400k IOPS for the for \mbox{$numjobs \in 7 \dots 13$}.
 The price is significantly more on-CPU PMEM time per IOP:
-looking at $numjobs = 8$, the $T_{pmem_{iop}}$ is $3.3, 4.3, 6.5~\text{us}$ for \lstinline{ncommitters=3}, \lstinline{4} and \lstinline{8}.
-And at $numjobs = 12$, $T_{pmem_{iop}}$ climbs to $11.6, 20.6~\text{us}$ for \lstinline{ncommitters=8} and \lstinline{12} whereas \lstinline{ncommitters=3} is successfully limited to $2.7~\text{us}$ of PMEM write time per IOP.
-The \lstinline{ncommitters=12} and \lstinline{24} configurations do not achieve higher peak IOPS than \lstinline{ncommitters=8} but decline to lower values for high $numjobs$, e.g., only 237k IOPS for \lstinline{ncommitters=24}, $numjobs = 18$.
+looking at $numjobs=8$, the $T_{pmem_{iop}}$ is $3.3, 4.3, 6.5~\text{us}$ for \lstinline{ncommitters=3}, \lstinline{4} and \lstinline{8}.
+And at $numjobs=12$, $T_{pmem_{iop}}$ climbs to $11.6, 20.6~\text{us}$ for \lstinline{ncommitters=8} and \lstinline{12} whereas \lstinline{ncommitters=3} is successfully limited to $2.7~\text{us}$ of PMEM write time per IOP.
+The \lstinline{ncommitters=12} and \lstinline{24} configurations do not achieve higher peak IOPS than \lstinline{ncommitters=8} but decline to lower values for high $numjobs$, e.g., only 237k IOPS for \lstinline{ncommitters=24}, $numjobs=18$.
 This performance decline at high degrees of concurrency is an established property of the Intel Optane PMEM hardware~\cite{yangEmpiricalGuideBehavior2020}.
-The limitation to \lstinline{ncommitters=8} mitigates this effect (331k vs. 237k IOPS at $numjobs = 18$).
+The limitation to \lstinline{ncommitters=8} mitigates this effect (331k vs. 237k IOPS at $numjobs=18$).
 
 The four-way interleaved configuration exhibits very different behavior.
-We achieve the highest IOPS for the configuration where the \textit{commit slot} mechanism has no effect, i.e., \lstinline{ncommitters=24}, $numjobs = 18$ with 900k IOPS.
+We achieve the highest IOPS for the configuration where the \textit{commit slot} mechanism has no effect, i.e., \lstinline{ncommitters=24}, $numjobs=18$ with 900k IOPS.
 Given that the IOPS curve has not reached a plateau at this point, a higher value might be possible with higher $numjobs$.
 $T_{pmem_{iop}}$ is the same for all \lstinline{ncommitters} values at a given $numjobs$ value (+/- $0.1~\text{us}$).
-It is $1.66~\text{us}$ for $numjobs = 1$ and grows slightly unevenly towards $2.56~\text{us}$ at $numjobs = 24$.
+It is $1.66~\text{us}$ for $numjobs=1$ and grows slightly unevenly towards $2.56~\text{us}$ at $numjobs=24$.
 This is an increase of merely 54\% which is likely to be acceptable in any setup, given the 9.6x increase in IOPS (93k to 900k) that is possible with \lstinline{ncommitters=24}.
 
 To determine how the \textit{commit slot} abstraction impacts performance in configurations with ${\texttt{\footnotesize ncommitters}} > \max numjobs$, we add additional instrumentation that measures the average latency of commit slot acquisition and release.
 Figure~\ref{fig:eval:ncommitters_scalability:overhead} visualizes the results for \lstinline{ncommitters=24}.
 The absolute overhead is approximately the same for both PMEM configurations.
-It starts at $100~\text{ns}$ for $numjobs = 1$, climbs to $240~\text{ns}$ at $numjobs = 4$, and then scales linearly to $385~\text{ns}$ at $numjobs = 18$.
+It starts at $100~\text{ns}$ for $numjobs=1$, climbs to $240~\text{ns}$ at $numjobs=4$, and then scales linearly to $385~\text{ns}$ at $numjobs=18$.
 In the interleaved configuration, for any $numjobs > 4$, this corresponds to approximately 11--13\% of the overall write latency per log entry.
 Without \textit{commit slots}, \lstinline{zil_commit} could thus be $\frac{1}{1 - 0.13} = 14.9\%$ faster.
 However, due to the overhead of the other ZFS components, the contribution to overall IOP latency is only 2\%, which would constitute a rather meager improvement.
@@ -3952,7 +3957,7 @@ We would like to \textbf{extend our performance evaluation} with the following s
         However, performance during manual experimentation with this feature was unexpectedly low for both filesystems.
         Since both configurations seem rather exotic, we ultimately did not use them in the evaluation.
 
-    \item[XFS DAX Log Patch] XFS developer Christoph Hellwig has published an unfinished patch that adds DAX support for the code in XFS that writes its write-ahead log~\cite{LKMLChristophHellwig}.
+    \item[XFS DAX Log Patch] XFS developer Christoph Hellwig has published an unfinished patch that adds DAX support for the code in XFS that writes its write-ahead log~\cite{LKMLChristophHellwig_linebreaks}.
         Our understanding of the patch is that it bypasses the block IO layer but leaves the persistent structure unchanged.
         The experiment would be particularly interesting in combination with a (properly tuned) dedicated logdev configuration for XFS.
 \end{description}
@@ -3963,7 +3968,7 @@ Regarding \textbf{correctness and robustness} of our implementation, we would li
     \item[Validating PMEM Durability] PMTest is a tool which automatically validates that the software under test issues the architectually required instructions for durability and ordering (Section~\ref{sec:rel_work:pmemspecifictools}).
         In contrast to other tools, it supports kernel mode \textit{and} is publicly available.
 
-    \item[Fault Injection for PMEM Access] Whereas we are careful to always use \lstinline{memcpy_mcsafe} when accessing PMEM, we do not have tests that verify the error handling path.
+    \item[Fault Injection for PMEM Access] Whereas we are careful to always use the \lstinline{memcpy_mcsafe} function when accessing PMEM, we do not have tests that verify the error handling path.
         As described in our literature review (Section~\ref{sec:rel_work:fault_injection}), fault injection is the tool of choice for such tests.
         Either \textit{ndctl-inject} or an extension of ZFS's existing fault injection infrastructure that intercepts PRB's PMEM access could be used.
 
@@ -4001,7 +4006,7 @@ For the \textbf{integration into ZFS}, we anticipate the following future work i
         This will also be necessary to support hardware-accel\-erated encryption.
         We would like to investigate the practical impact of this aspect of the implementation on overall system performance.
 
-    \item[Redundancy Through Mirroring] Redundancy in ZIL-PMEM could be achieved through mirroring of PRB between two or more DIMMs.
+    \item[Redundancy Through Mirroring] Redundancy for ZIL-PMEM could be accomplished by mirroring PRB between two or more DIMMs.
         During recovery, we would always scan both PRBs and deduplicate the discovered entries.
 \end{description}
 
@@ -4039,7 +4044,7 @@ Use \\ \lstinline{git log --format=oneline --graph --remotes='*master-thesis-arc
     \item[evaluation/performance/main-evaluation-system\_i30pc61]                           The branch \\ used to run the performance evaluation, except the benchmarks on the scalability of \textit{commit slots} (Section~\ref{sec:eval:ncommitters_scalability}).
                                                                                             The code is slightly older than the \lstinline{zil-pmem} branch.
                                                                                             It does not include the fixes for crashes discovered by \lstinline{ztest} (none of them occurred during the performance evaluation).
-                                                                                            It also does not contain the code for the \textit{ZIL kinds} \textit{zpool feature}, i.e., for handling pools with the old ZIL header format (not relevant for performance evaluation).
+                                                                                            It also does not contain the code for the \textit{ZIL kinds} \textit{zpool feature}, i.e., for handling pools with the old ZIL header format (not relevant for performance evaluation). \\
                                                                                             {Commit: \footnotesize c38696bc367c79a86f579a55a1431a253a4eb3dd}
 
     \item[{\footnotesize evaluation/performance/ncommitters\_scalability\_evaluation\_system\_\_i30pc62}]   The \\ branch that we used on the system with higher core count and more Optane DIMMs per core on which we evaluated the scalability of \textit{commit slots}.
@@ -4051,7 +4056,7 @@ Use \\ \lstinline{git log --format=oneline --graph --remotes='*master-thesis-arc
 \appendixsection{Evaluation Repository}
 
 The repository that contains the code and data used for the evaluation (Chapter~\ref{ch:eval}).
-The branch \lstinline{master-thesis-archive/submitted_state} at commit a467b56f3\-ca60d60e9eb66967f4c8dcfbb44c99c contains:
+The branch \lstinline{master-thesis-archive/submitted_state} at commit \\ a467b56f3ca60d60e9eb66967f4c8dcfbb44c99c contains:
 \begin{itemize}[noitemsep]
     \item The code that was used to run the benchmarks.
     \item The raw result data produced by the benchmarks.
