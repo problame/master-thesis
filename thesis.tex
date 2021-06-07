@@ -29,6 +29,12 @@
 
 \usepackage{listings}
 
+\usepackage{geometry}
+\usepackage{afterpage}
+
+\usepackage{floatpag} % sudo dnf install texlive-sttools
+% needs to be imported before package float https://tex.stackexchange.com/questions/277913/floatpag-package-conflict-with-float
+
 \usepackage{float} % for the [H] option on figures
 
 % for core allocation pseudo-code mostly...
@@ -1282,7 +1288,7 @@ We present the design and implementation of PRB in a top-down manner.
 In Section~\ref{di:prb:analysis}, we isolate the requirements that ZIL-PMEM puts on PRB by recapitulating how the ZIL fits into ZFS's overall architecture.
 Afterward, in Section~\ref{di:prb:approach}, we give a high-level overview of our design.
 Section~\ref{di:prb:logstructure} presents the virtual log abstraction that is exposed by HDL and Section \ref{di:prb:replayapproach} describes the high-level approach for replay.
-Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash consistency is addressed by HDL.
+Sections \ref{di:prb:deptrack}, \ref{di:prb:modeldatacorruption}, and \ref{di:prb:ccrecovery} then progressively refine our understanding of replay and explain how data corruption and crash consistency is addressed by HDL, culminating in a comprehensive example in Section~\ref{di:prb:comprehensiveexample}.
 Subsequently, we describe PRB, which is the storage substrate that the HDLs use for persistence:
 Sections~\ref{di:prb:dramdatastructure} and \ref{di:prb:pmemdatastructure} present the data structures that we use for PMEM space management and log entry storage.
 In Section~\ref{di:prb:traversal}, we describe the algorithm that traverses the in-PMEM data structure during log recovery.
@@ -1686,6 +1692,27 @@ Specifically, it would provide infrastructure to store a variable amount of data
 ZIL-PMEM could use this facility to record the identity of all claimed WR\_INDIRECT entries in the main pool.
 Before replaying an entry, it would check whether the entry had been claimed and treat it as absent if that is not the case.
 Since this solution would be superior to $E_{seal}$, we have \textbf{not yet implemented handling of $E_{seal}$}.
+
+\section{HDL: Comprehensive Example For Replay}\label{di:prb:comprehensiveexample}
+
+In this section, we present a comprehensive example of the replay algorithm.
+Figure~\ref{fig:prb_replay_full_example} visualizes
+\begin{itemize}[noitemsep]
+    \item how $precrash\_txg$ controls which entries the algorithm considers for replay,
+    \item how $E_{last}$ causes already-replayed entries to be skipped after a crash (``last replayed'' in the figure), and
+    \item how we detect lost entries through the counters that the write path stores in each entry.
+\end{itemize}
+Due to the shortcomings of $E_{seal}$ that we mentioned in the previous section, we do not cover it in the example.
+However, the reader may imagine that entry "L" is $E_{seal}$ to get an idea of its effect.
+
+\newgeometry{includehead,includefoot,top=0.75cm,bottom=0.75cm,headsep=0.25cm,textwidth=1.2\textwidth}
+\begin{figure}[p]
+    \centering
+    \includegraphics[trim=0cm 0.3cm 0cm 0.3cm,clip]{fig/prb_replay_full_example.pdf}
+    \caption{Comprehensive example of the replay algorithm.}
+    \label{fig:prb_replay_full_example}
+\end{figure}
+\restoregeometry
 
 \section{PRB: DRAM Data Structure}\label{di:prb:dramdatastructure}
 After the description of HDL in the previous sections, we now move down to the level of PRB.
