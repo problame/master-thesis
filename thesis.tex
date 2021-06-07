@@ -1731,7 +1731,7 @@ PRB's role is to mediate access between HDLs and chunks.
 When a thread writes an entry to the conceptual \textit{set of entries} that is the PRB, it actually inserts the entry into one of the PRB's chunks.
 Once a chunk is full, PRB lets it sit unmodified until all entries in it are obsolete.
 Garbage collection then removes all entries in those obsolete-only chunks and makes them available for reuse by writers.
-The PRB scanning done by claiming and replay is implemented as an iteration over the entries in all chunks of the PRB.
+The PRB scan used by claiming and replay is an iteration over the entries of all chunks of the PRB.
 If a chunk contains at least one candidate entry for replay, the claiming HDL holds the chunk back from the write path and garbage collection.
 Note that this design fully decouples storage location (chunk) from log structure (encoded in entry metadata, see previous sections).
 
@@ -1769,24 +1769,23 @@ We move chunks between the following data structures to keep track of their curr
     The HDLs scan the chunks on this list.
     If a chunk contains at least one entry that needs to be held back for replay, the HDL increments the chunk's \textit{claim refcount}.
     Once claiming is done and \textit{txg sync} triggers the first garbage collection cycle, any chunk on this list that has a zero refcount is emptied and moved to the \textit{free list}.
-    The list is also scanned for zero refcounts during all future garbage collection cycles to garbage-collect chunks that are no longer held by any HDL because they finished replay.
+    This rule also applies to subsequent garbage collection cycles so that the write path can re-use a chunk after all of its holding HDLs have finished replay.
     Note that it is critical for replay crash consistency to defer garbage collection until \textit{after} the last txg of replay of the last HDL that held the chunk has synced.
-    If we did garbage-collect entries before the last holding HDL's ZIL header has transitioned to state \textit{nozil} on disk and crashed in between, the garbage-collected entries might be missing when resuming replay.
+    Suppose we would garbage-collect chunks immediately after the last holding HDL has finished replay. If we crashed before the on-disk ZIL header has transitioned from state \textit{replaying} to \textit{nozil}, the garbage-collected chunk's entries would be missing when resuming replay after the crash.
 \end{description}
 
-Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} visualizes transitions of the chunks over their lifetime.
-Figure~\ref{fig:prb_chunk_ownership_cycle__example} provides a corresponding example.
+Figure~\ref{fig:prb_chunk_ownership_cycle__transitions} visualizes the possible transitions of a chunk over its lifetime and Figure~\ref{fig:prb_chunk_ownership_cycle__example} provides an example.
 
 \begin{figure}[H]
     \centering
-    \includegraphics{fig/prb_chunk_ownership_cycle__transitions}
-    \caption{The different owners of a chunk and the events that cause transitions of ownership.}
+    \includegraphics[trim=0cm 0.3cm 0cm 0.3cm,clip]{fig/prb_chunk_ownership_cycle__transitions}
+    \caption{The different owners of a chunk over its lifetime and the events that cause ownership transitions.}
     \label{fig:prb_chunk_ownership_cycle__transitions}
-\end{figure}
 
-\begin{figure}[H]
+    \vspace{1cm}
+
     \centering
-    \includegraphics{fig/prb_chunk_ownership_cycle__example}
+    \includegraphics[trim=0cm 0.3cm 0cm 0.3cm,clip]{fig/prb_chunk_ownership_cycle__example}
     \caption{
         Example for transitions of chunk ownership.
         The PRB is constructed with all eight chunks added as \lstinline{_for_claim}.
@@ -1998,7 +1997,7 @@ We identify the following factors as particularly relevant:
         Since the counters are HDL-scoped, this only presents a scalability concern if a single HDL is written from multiple threads.
         Parallel writes to the same HDL do not happen in ZIL-PMEM proper but are relevant for our ZVOL-specific ITXG bypass (Section~\ref{sec:itxgbypass}).
     \item[Commit Slot Acquisition \& Chunk Replacement]
-        Both the commit slots and chunk lists are shared among all HDLs.
+        Both the commit slots and the chunk lists are shared among all HDLs.
         All threads that write to any HDL of the PRB compete for these resources, making it a multicore scalability challenge.
     \item[Optane Characteristics] We develop and evaluate ZIL-PMEM for/on Intel Optane DC Persistent Memory.
         The performance characteristics of Optane DIMMs are significantly different from regular DRAM.
@@ -2007,14 +2006,13 @@ We identify the following factors as particularly relevant:
         For the size of log entries written by ZIL-PMEM, the use of  AVX-512 non-temporal store instructions is recommended for highest possible performance.~\cite{yangEmpiricalGuideBehavior2020}.
     \item[PMEM Bandwidth Limits \& Multicore Scalability]
         It is inherent to the programming model for persistent memory that wait time for PMEM IO is spent on-CPU.
-        For example, instructions that architecturally depend on a preceding store+cacheflush+sfence to PMEM will stall until the flushed cache line reaches the power-fail protected domain of the CPU~\cite{Scargall2020}.
-        This is problematic from a CPU utilization perspective:
+        For example, instructions that architecturally depend on a preceding write to PMEM (store+cacheflush+sfence) will stall until the flushed cache line reaches the power-fail protected domain of the CPU~\cite{Scargall2020}.        This is problematic from a CPU utilization perspective:
         if multiple threads attempt to write at a higher bandwidth than PMEM can sustain, they still appear busy towards the OS thread scheduler and waste CPU time that could be used more productively by other threads in the system.
         \citeauthor{yangEmpiricalGuideBehavior2020} have shown that a single Optane DIMM's write bandwidth can be exhausted by one CPU core at 2~GB/s.
         Write bandwidth decreases to 1~GB/s at ten or more concurrently writing CPU cores ~\cite{yangEmpiricalGuideBehavior2020}.
         Whereas excessive on-CPU waiting might be the right trade-off in certain userspace applications of PMEM, a kernel file system such as ZFS cannot make assumptions about the system's overall CPU priorities.
         We expect that PMEM write bandwidth can be exhausted in real-world use cases for ZIL-PMEM.
-        Our design must therefore find a way to limit concurrent access to PMEM and shift PMEM wait time off the CPU.
+        Therefore, our design must find a way to limit concurrent access to PMEM and shift wait time off the CPU.
 \end{description}
 
 \subsection{Commit Slots}\label{di:prb:write:chunksel}
